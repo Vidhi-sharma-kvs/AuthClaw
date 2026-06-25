@@ -1,0 +1,7 @@
+AuthClaw security policy.
+Encryption: Enforce AES-256 for all data-at-rest. Enforce TLS 1.3 for data-in-transit.
+Access Control: Enforce role-based access control (RBAC).
+Multi-Factor Authentication: MFA is required for admin accounts.
+Data Retention: Customer PII is retained for 7 years.
+Audit Logging: Keep audit logs.
+Consent: Get consent.

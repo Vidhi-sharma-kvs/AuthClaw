@@ -1,0 +1,55 @@
+version: "1.0.0"
+
+blocked_keywords:
+  - bomb
+  - explosive
+  - hack
+  - weapon
+
+high_risk_keywords:
+  # Destructive operations
+  - delete
+  - remove
+  - drop
+  - shutdown
+  - terminate
+  - production
+  # Privilege escalation — must trigger approval workflow
+  - grant admin
+  - grant administrator
+  - grant root
+  - assign root
+  - assign administrator
+  - make admin
+  - make administrator
+  - super admin
+  - superuser
+  - elevate privileges
+  - privilege escalation
+  - elevate role
+  - role escalation
+  - modify permissions
+  - change permissions
+  - grant permissions
+  - mass permission
+  - access control modification
+  - rbac modification
+  - promote all users
+  - admin access to all
+
+medium_risk_keywords:
+  - update
+  - modify
+  - change
+  - edit
+
+redaction:
+  email: mask
+  phone: hash
+  aadhaar: mask
+  credit_card: synthetic
+
+approval:
+  require_mfa: true
+  default_mfa_code: "123456"
+  expiry_minutes: 30

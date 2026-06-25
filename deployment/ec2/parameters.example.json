@@ -1,0 +1,30 @@
+[
+  {
+    "ParameterKey": "VpcId",
+    "ParameterValue": "vpc-xxxxxxxx"
+  },
+  {
+    "ParameterKey": "PublicSubnetId",
+    "ParameterValue": "subnet-xxxxxxxx"
+  },
+  {
+    "ParameterKey": "KeyName",
+    "ParameterValue": "your-ec2-keypair-name"
+  },
+  {
+    "ParameterKey": "AllowedClientCidr",
+    "ParameterValue": "203.0.113.10/32"
+  },
+  {
+    "ParameterKey": "InstanceType",
+    "ParameterValue": "t3.small"
+  },
+  {
+    "ParameterKey": "UbuntuAmiId",
+    "ParameterValue": "ami-xxxxxxxxxxxxxxxxx"
+  },
+  {
+    "ParameterKey": "RootVolumeGiB",
+    "ParameterValue": "30"
+  }
+]

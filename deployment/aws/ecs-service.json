@@ -1,0 +1,28 @@
+{
+  "serviceName": "authclaw-gateway",
+  "cluster": "authclaw-production",
+  "taskDefinition": "authclaw-gateway",
+  "desiredCount": 1,
+  "launchType": "FARGATE",
+  "platformVersion": "LATEST",
+  "deploymentConfiguration": {
+    "maximumPercent": 200,
+    "minimumHealthyPercent": 100
+  },
+  "networkConfiguration": {
+    "awsvpcConfiguration": {
+      "subnets": ["subnet-public-a", "subnet-public-b"],
+      "securityGroups": ["sg-authclaw-api"],
+      "assignPublicIp": "ENABLED"
+    }
+  },
+  "loadBalancers": [
+    {
+      "targetGroupArn": "arn:aws:elasticloadbalancing:<region>:<account-id>:targetgroup/authclaw-api/<id>",
+      "containerName": "authclaw-api",
+      "containerPort": 8000
+    }
+  ],
+  "healthCheckGracePeriodSeconds": 60,
+  "enableExecuteCommand": false
+}

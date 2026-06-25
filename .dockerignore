@@ -1,0 +1,13 @@
+.git
+.pytest_cache
+__pycache__
+*.pyc
+venv
+venv_default
+venv_test
+frontend/node_modules
+frontend/dist
+logs
+watched_documents
+scratch
+.env

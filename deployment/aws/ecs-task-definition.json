@@ -1,0 +1,53 @@
+{
+  "family": "authclaw-gateway",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::<account-id>:role/authclaw-ecs-execution-role",
+  "taskRoleArn": "arn:aws:iam::<account-id>:role/authclaw-task-role",
+  "containerDefinitions": [
+    {
+      "name": "authclaw-api",
+      "image": "<account-id>.dkr.ecr.<region>.amazonaws.com/authclaw-api:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "AUTHCLAW_ENV", "value": "production" },
+        { "name": "AWS_SECRETS_MANAGER_ENABLED", "value": "true" },
+        { "name": "AWS_REGION", "value": "<region>" },
+        { "name": "AUTHCLAW_RATE_LIMIT_PER_MINUTE", "value": "120" },
+        { "name": "AUTHCLAW_ALLOWED_ORIGINS", "value": "https://app.authclaw.example.com" }
+      ],
+      "secrets": [
+        { "name": "DATABASE_URL", "valueFrom": "arn:aws:secretsmanager:<region>:<account-id>:secret:authclaw/production/database-url" },
+        { "name": "JWT_SECRET", "valueFrom": "arn:aws:secretsmanager:<region>:<account-id>:secret:authclaw/production/jwt-secret" },
+        { "name": "AUTHCLAW_ENCRYPTION_KEY", "valueFrom": "arn:aws:secretsmanager:<region>:<account-id>:secret:authclaw/production/encryption-key" },
+        { "name": "SMTP_HOST", "valueFrom": "arn:aws:secretsmanager:<region>:<account-id>:secret:authclaw/production/smtp-host" },
+        { "name": "SMTP_FROM", "valueFrom": "arn:aws:secretsmanager:<region>:<account-id>:secret:authclaw/production/smtp-from" },
+        { "name": "SMTP_USERNAME", "valueFrom": "arn:aws:secretsmanager:<region>:<account-id>:secret:authclaw/production/smtp-username" },
+        { "name": "SMTP_PASSWORD", "valueFrom": "arn:aws:secretsmanager:<region>:<account-id>:secret:authclaw/production/smtp-password" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/authclaw-gateway",
+          "awslogs-region": "<region>",
+          "awslogs-stream-prefix": "api"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)\""],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 30
+      }
+    }
+  ]
+}

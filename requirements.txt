@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+python-multipart
+sqlalchemy
+psycopg2-binary
+pydantic
+python-dotenv
+pyyaml
+cryptography
+requests
+dnspython
+langgraph
+google-genai
+pypdf
+python-docx
+reportlab
+boto3

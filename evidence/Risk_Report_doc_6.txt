@@ -1,0 +1,19 @@
+=========================================
+COMPLIANCE RISK ASSESSMENT REPORT
+=========================================
+Document Name: test_security_policy.txt
+Analysis Timestamp: 2026-06-18T12:51:02.770213+00:00
+-----------------------------------------
+Overall Risk Level: Medium
+-----------------------------------------
+Detailed Risk Analysis:
+This report evaluates the potential threats of missing policies.
+For each failed compliance control, security and privacy liabilities have been mapped.
+-----------------------------------------
+Top Recommendations:
+- [GDPR] Lack of Right to Erasure/Data Subject Request procedure (HIGH severity) - Recommendation: Explicitly document the process and timeline for handling Data Subject Requests (DSR) including the Right to Erasure.
+- [HIPAA] Incomplete ePHI Access Monitoring (HIGH severity) - Recommendation: Implement near real-time log monitoring and alerting for all access attempts to ePHI and conduct periodic access reviews beyond just administrative accounts.
+- [SOC2] Undefined Availability and Disaster Recovery policy (MEDIUM severity) - Recommendation: Add a section detailing the organization's commitment to system uptime, backup strategies, and recovery time objectives (RTO).
+- [SOC2] Limited Scope of Multi-Factor Authentication (MFA) (MEDIUM severity) - Recommendation: Extend the MFA requirement to all user accounts, not just administrative roles.
+
+=========================================

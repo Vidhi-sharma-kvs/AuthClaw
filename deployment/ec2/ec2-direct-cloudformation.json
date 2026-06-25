@@ -1,0 +1,213 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Direct EC2 testing host for AuthClaw without DNS, ALB, or Route53.",
+  "Parameters": {
+    "VpcId": {
+      "Type": "AWS::EC2::VPC::Id",
+      "Description": "VPC where the AuthClaw EC2 instance will run."
+    },
+    "PublicSubnetId": {
+      "Type": "AWS::EC2::Subnet::Id",
+      "Description": "Public subnet for the AuthClaw EC2 instance."
+    },
+    "KeyName": {
+      "Type": "AWS::EC2::KeyPair::KeyName",
+      "Description": "Existing EC2 key pair for SSH access."
+    },
+    "AllowedClientCidr": {
+      "Type": "String",
+      "Description": "Your public IP CIDR for SSH, frontend, and backend testing. Example: 203.0.113.10/32",
+      "AllowedPattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$"
+    },
+    "InstanceType": {
+      "Type": "String",
+      "Default": "t3.small",
+      "AllowedValues": [
+        "t3.small",
+        "t3.medium"
+      ],
+      "Description": "Use t3.small for budget testing; t3.medium if builds are slow."
+    },
+    "UbuntuAmiId": {
+      "Type": "AWS::EC2::Image::Id",
+      "Description": "Ubuntu 24.04 LTS AMI ID for your selected region."
+    },
+    "RootVolumeGiB": {
+      "Type": "Number",
+      "Default": 30,
+      "MinValue": 20,
+      "MaxValue": 100
+    }
+  },
+  "Resources": {
+    "AuthClawEc2SecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Direct AuthClaw EC2 testing access from one client CIDR.",
+        "VpcId": {
+          "Ref": "VpcId"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "CidrIp": {
+              "Ref": "AllowedClientCidr"
+            },
+            "Description": "SSH from tester IP"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": {
+              "Ref": "AllowedClientCidr"
+            },
+            "Description": "Frontend HTTP from tester IP"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8000,
+            "ToPort": 8000,
+            "CidrIp": {
+              "Ref": "AllowedClientCidr"
+            },
+            "Description": "Backend API from tester IP"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Outbound package, SMTP, AWS, and LLM provider access"
+          }
+        ]
+      }
+    },
+    "AuthClawInstanceRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ec2.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+        ]
+      }
+    },
+    "AuthClawInstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Roles": [
+          {
+            "Ref": "AuthClawInstanceRole"
+          }
+        ]
+      }
+    },
+    "AuthClawEc2Instance": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "ImageId": {
+          "Ref": "UbuntuAmiId"
+        },
+        "InstanceType": {
+          "Ref": "InstanceType"
+        },
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "IamInstanceProfile": {
+          "Ref": "AuthClawInstanceProfile"
+        },
+        "SubnetId": {
+          "Ref": "PublicSubnetId"
+        },
+        "SecurityGroupIds": [
+          {
+            "Ref": "AuthClawEc2SecurityGroup"
+          }
+        ],
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/sda1",
+            "Ebs": {
+              "VolumeSize": {
+                "Ref": "RootVolumeGiB"
+              },
+              "VolumeType": "gp3",
+              "Encrypted": true,
+              "DeleteOnTermination": true
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "authclaw-direct-test"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "InstanceId": {
+      "Value": {
+        "Ref": "AuthClawEc2Instance"
+      }
+    },
+    "PublicIp": {
+      "Value": {
+        "Fn::GetAtt": [
+          "AuthClawEc2Instance",
+          "PublicIp"
+        ]
+      }
+    },
+    "FrontendUrl": {
+      "Value": {
+        "Fn::Sub": [
+          "http://${PublicIp}",
+          {
+            "PublicIp": {
+              "Fn::GetAtt": [
+                "AuthClawEc2Instance",
+                "PublicIp"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "BackendHealthUrl": {
+      "Value": {
+        "Fn::Sub": [
+          "http://${PublicIp}:8000/health/ready",
+          {
+            "PublicIp": {
+              "Fn::GetAtt": [
+                "AuthClawEc2Instance",
+                "PublicIp"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "Ec2SecurityGroupId": {
+      "Value": {
+        "Ref": "AuthClawEc2SecurityGroup"
+      }
+    }
+  }
+}

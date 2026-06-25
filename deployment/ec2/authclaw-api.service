@@ -1,0 +1,18 @@
+[Unit]
+Description=AuthClaw FastAPI Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=authclaw
+Group=authclaw
+WorkingDirectory=/opt/authclaw
+EnvironmentFile=/opt/authclaw/.env
+ExecStart=/opt/authclaw/venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

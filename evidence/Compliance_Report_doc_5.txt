@@ -1,0 +1,12 @@
+=========================================
+COMPLIANCE ALIGNMENT REPORT
+=========================================
+Document Name: test_security_policy.txt
+Analysis Timestamp: 2026-06-18T12:43:25.406772+00:00
+-----------------------------------------
+Framework Readiness Scores:
+SOC2: 85%, GDPR: 80%, HIPAA: 60%, ISO 27001: Not Yet Evaluated
+-----------------------------------------
+Executive Summary:
+The policy provides a strong baseline for general data protection but lacks the granular controls required for specific regulatory compliance. While encryption and basic RBAC are implemented, the document fails to address critical areas such as ePHI handling for HIPAA, specific right-to-erasure workflows for GDPR, and comprehensive availability/incident response commitments for SOC2. To achieve full compliance, the organization must implement formal incident response procedures, specific ePHI safeguards, and automated user-accessible mechanisms for data subject rights.
+=========================================

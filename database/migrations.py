@@ -1,0 +1,571 @@
+import json
+import logging
+from datetime import datetime, timedelta
+from sqlalchemy import text
+from database import engine
+
+logger = logging.getLogger("authclaw.database.migrations")
+
+def run_startup_migrations():
+    """
+    Runs database migrations to create and seed all required tables.
+    Fails application startup if migrations fail.
+    """
+    migration_sql = """
+    -- Core Audit Logs
+    CREATE TABLE IF NOT EXISTS audit_logs (
+        id SERIAL PRIMARY KEY,
+        user_query TEXT,
+        response TEXT,
+        allowed BOOLEAN,
+        created_at TIMESTAMP,
+        risk_level VARCHAR(20),
+        approval_status VARCHAR(50),
+        integrity_hash VARCHAR(64),
+        previous_hash VARCHAR(64)
+    );
+
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_query TEXT;
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS response TEXT;
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS allowed BOOLEAN;
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS created_at TIMESTAMP;
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS risk_level VARCHAR(20);
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS approval_status VARCHAR(50);
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS integrity_hash VARCHAR(64);
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS previous_hash VARCHAR(64);
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS approval_id VARCHAR(100);
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS approver VARCHAR(100);
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS original_request TEXT;
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS approval_timestamp TIMESTAMP;
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS execution_timestamp TIMESTAMP;
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS execution_status VARCHAR(50);
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS policy_name VARCHAR(100);
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS policy_type VARCHAR(50);
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS matched_pattern VARCHAR(100);
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS redacted_value TEXT;
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS username VARCHAR(100);
+
+    -- Gateway Request Logs
+    CREATE TABLE IF NOT EXISTS gateway_requests (
+        id SERIAL PRIMARY KEY,
+        timestamp TIMESTAMP NOT NULL,
+        risk_level VARCHAR(20) DEFAULT 'LOW',
+        allowed BOOLEAN DEFAULT TRUE,
+        status VARCHAR(50) DEFAULT 'allowed',
+        request_id VARCHAR(50),
+        tenant_id VARCHAR(50) DEFAULT 'tenant-default',
+        route_id VARCHAR(50),
+        provider VARCHAR(50),
+        model VARCHAR(50),
+        latency INTEGER DEFAULT 0,
+        tokens_in INTEGER DEFAULT 0,
+        tokens_out INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        decision VARCHAR(50),
+        duration_ms INTEGER
+    );
+
+    ALTER TABLE gateway_requests ADD COLUMN IF NOT EXISTS timestamp TIMESTAMP;
+    ALTER TABLE gateway_requests ADD COLUMN IF NOT EXISTS risk_level VARCHAR(20);
+    ALTER TABLE gateway_requests ADD COLUMN IF NOT EXISTS allowed BOOLEAN;
+    ALTER TABLE gateway_requests ADD COLUMN IF NOT EXISTS status VARCHAR(50);
+    ALTER TABLE gateway_requests ADD COLUMN IF NOT EXISTS request_id VARCHAR(50);
+    ALTER TABLE gateway_requests ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(50);
+    ALTER TABLE gateway_requests ADD COLUMN IF NOT EXISTS route_id VARCHAR(50);
+    ALTER TABLE gateway_requests ADD COLUMN IF NOT EXISTS provider VARCHAR(50);
+    ALTER TABLE gateway_requests ADD COLUMN IF NOT EXISTS model VARCHAR(50);
+    ALTER TABLE gateway_requests ADD COLUMN IF NOT EXISTS latency INTEGER;
+    ALTER TABLE gateway_requests ADD COLUMN IF NOT EXISTS tokens_in INTEGER;
+    ALTER TABLE gateway_requests ADD COLUMN IF NOT EXISTS tokens_out INTEGER;
+    ALTER TABLE gateway_requests ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+    ALTER TABLE gateway_requests ADD COLUMN IF NOT EXISTS decision VARCHAR(50);
+    ALTER TABLE gateway_requests ADD COLUMN IF NOT EXISTS duration_ms INTEGER;
+
+    -- Gateway Routes
+    CREATE TABLE IF NOT EXISTS gateway_routes (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        provider VARCHAR(50) NOT NULL,
+        endpoint VARCHAR(255) NOT NULL,
+        model VARCHAR(50) NOT NULL,
+        rate_limit INTEGER DEFAULT 100,
+        redaction_enabled BOOLEAN DEFAULT TRUE,
+        enabled BOOLEAN DEFAULT TRUE,
+        tenant_assignment VARCHAR(100) DEFAULT 'tenant-default'
+    );
+
+    -- Tenants
+    CREATE TABLE IF NOT EXISTS tenants (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        status VARCHAR(20) DEFAULT 'active',
+        usage_count INTEGER DEFAULT 0,
+        tokens_used INTEGER DEFAULT 0,
+        domain VARCHAR(255),
+        email VARCHAR(255),
+        password_hash VARCHAR(255),
+        email_verified BOOLEAN DEFAULT FALSE,
+        email_verification_token VARCHAR(255),
+        domain_verified BOOLEAN DEFAULT FALSE,
+        domain_verification_token VARCHAR(255),
+        totp_secret VARCHAR(32),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    ALTER TABLE tenants ADD COLUMN IF NOT EXISTS domain VARCHAR(255);
+    ALTER TABLE tenants ADD COLUMN IF NOT EXISTS email VARCHAR(255);
+    ALTER TABLE tenants ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
+    ALTER TABLE tenants ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE;
+    ALTER TABLE tenants ADD COLUMN IF NOT EXISTS email_verification_token VARCHAR(255);
+    ALTER TABLE tenants ADD COLUMN IF NOT EXISTS domain_verified BOOLEAN DEFAULT FALSE;
+    ALTER TABLE tenants ADD COLUMN IF NOT EXISTS domain_verification_token VARCHAR(255);
+    ALTER TABLE tenants ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(32);
+    ALTER TABLE tenants ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+    ALTER TABLE tenants DROP CONSTRAINT IF EXISTS tenants_name_key;
+    ALTER TABLE gateway_routes ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+
+    -- Pending Customer Onboarding
+    CREATE TABLE IF NOT EXISTS onboarding_registrations (
+        id SERIAL PRIMARY KEY,
+        organization_name VARCHAR(255) NOT NULL,
+        full_name VARCHAR(255) NOT NULL,
+        work_email VARCHAR(255) NOT NULL UNIQUE,
+        domain VARCHAR(255) NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        email_verification_token VARCHAR(255) NOT NULL UNIQUE,
+        domain_verification_token VARCHAR(255) NOT NULL,
+        email_verified BOOLEAN DEFAULT FALSE,
+        domain_verified BOOLEAN DEFAULT FALSE,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE SET NULL,
+        totp_secret VARCHAR(32) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        email_verified_at TIMESTAMP,
+        domain_verified_at TIMESTAMP,
+        activated_at TIMESTAMP
+    );
+
+    ALTER TABLE onboarding_registrations ADD COLUMN IF NOT EXISTS full_name VARCHAR(255);
+    ALTER TABLE onboarding_registrations ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE SET NULL;
+    ALTER TABLE onboarding_registrations ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMP;
+    ALTER TABLE onboarding_registrations ADD COLUMN IF NOT EXISTS domain_verified_at TIMESTAMP;
+    ALTER TABLE onboarding_registrations ADD COLUMN IF NOT EXISTS activated_at TIMESTAMP;
+    ALTER TABLE onboarding_registrations DROP CONSTRAINT IF EXISTS onboarding_registrations_domain_key;
+
+    -- Tenant-Scoped Users
+    CREATE TABLE IF NOT EXISTS tenant_users (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        first_name VARCHAR(100),
+        last_name VARCHAR(100),
+        email VARCHAR(255) NOT NULL UNIQUE,
+        password_hash VARCHAR(255) NOT NULL,
+        role VARCHAR(50) NOT NULL DEFAULT 'Super Admin',
+        permissions TEXT NOT NULL DEFAULT 'all_access',
+        email_verified BOOLEAN DEFAULT FALSE,
+        mfa_enabled BOOLEAN DEFAULT TRUE,
+        totp_secret VARCHAR(32),
+        status VARCHAR(20) DEFAULT 'active',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_login_at TIMESTAMP
+    );
+
+    ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS first_name VARCHAR(100);
+    ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS last_name VARCHAR(100);
+    ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE;
+    ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN DEFAULT TRUE;
+    ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(32);
+    ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'active';
+    ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+    ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP;
+
+    -- Persistent Refresh Token Lifecycle
+    CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
+        jti VARCHAR(100) PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES tenant_users(id) ON DELETE CASCADE,
+        subject VARCHAR(255) NOT NULL,
+        issued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL,
+        revoked_at TIMESTAMP
+    );
+
+    -- Tenant API Keys (SHA-256 Hashed)
+    CREATE TABLE IF NOT EXISTS tenant_api_keys (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        name VARCHAR(100) NOT NULL,
+        key_hash VARCHAR(64) NOT NULL UNIQUE,
+        key_prefix VARCHAR(16),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_used_at TIMESTAMP,
+        expires_at TIMESTAMP,
+        revoked_at TIMESTAMP
+    );
+
+    ALTER TABLE tenant_api_keys ADD COLUMN IF NOT EXISTS key_prefix VARCHAR(16);
+    ALTER TABLE tenant_api_keys ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP;
+    ALTER TABLE tenant_api_keys ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP;
+
+    -- Persistent MFA Sessions
+    CREATE TABLE IF NOT EXISTS auth_mfa_sessions (
+        session_id VARCHAR(100) PRIMARY KEY,
+        username VARCHAR(255) NOT NULL,
+        role VARCHAR(50) NOT NULL,
+        permissions TEXT NOT NULL,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES tenant_users(id) ON DELETE CASCADE,
+        email_verified BOOLEAN DEFAULT FALSE,
+        domain_verified BOOLEAN DEFAULT FALSE,
+        step VARCHAR(20) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL
+    );
+
+    ALTER TABLE auth_mfa_sessions ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES tenant_users(id) ON DELETE CASCADE;
+
+    -- Provider Credentials (Encrypted)
+    CREATE TABLE IF NOT EXISTS tenant_credentials (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        provider VARCHAR(50) NOT NULL,
+        encrypted_payload TEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT uniq_tenant_prov UNIQUE(tenant_id, provider)
+    );
+
+    -- Agent Trace Events
+    CREATE TABLE IF NOT EXISTS agent_events (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        session_id VARCHAR(100) NOT NULL,
+        message_id VARCHAR(100),
+        request_id VARCHAR(50),
+        sequence INTEGER,
+        agent_name VARCHAR(50) NOT NULL,
+        event_type VARCHAR(100) NOT NULL,
+        details TEXT NOT NULL,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    ALTER TABLE agent_events ADD COLUMN IF NOT EXISTS request_id VARCHAR(50);
+    ALTER TABLE agent_events ADD COLUMN IF NOT EXISTS sequence INTEGER;
+
+    -- Persistent Gateway Approvals
+    CREATE TABLE IF NOT EXISTS gateway_approvals (
+        id SERIAL PRIMARY KEY,
+        approval_id VARCHAR(100) NOT NULL UNIQUE,
+        request_id VARCHAR(100),
+        correlation_id VARCHAR(100),
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE SET NULL,
+        status VARCHAR(50) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP,
+        approved_at TIMESTAMP,
+        rejected_at TIMESTAMP,
+        executed_at TIMESTAMP,
+        requested_action TEXT,
+        query TEXT,
+        risk_level VARCHAR(20),
+        audit_id INTEGER REFERENCES audit_logs(id) ON DELETE SET NULL,
+        metadata TEXT
+    );
+
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS approval_id VARCHAR(100);
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS request_id VARCHAR(100);
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(100);
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE SET NULL;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS status VARCHAR(50);
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS created_at TIMESTAMP;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMP;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS executed_at TIMESTAMP;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS requested_action TEXT;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS query TEXT;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS risk_level VARCHAR(20);
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS audit_id INTEGER REFERENCES audit_logs(id) ON DELETE SET NULL;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS metadata TEXT;
+
+    -- Usage Events
+    CREATE TABLE IF NOT EXISTS usage_events (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        tokens_in INTEGER DEFAULT 0,
+        tokens_out INTEGER DEFAULT 0,
+        provider VARCHAR(50) NOT NULL,
+        cost_estimation NUMERIC(8, 4) DEFAULT 0.0
+    );
+
+    -- Secrets/API Keys (Existing Legacy)
+    CREATE TABLE IF NOT EXISTS secrets (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        provider VARCHAR(50) NOT NULL,
+        key_hash VARCHAR(100) NOT NULL,
+        expiry VARCHAR(20) NOT NULL,
+        last_rotated VARCHAR(20) NOT NULL,
+        rotation_count INTEGER DEFAULT 0
+    );
+
+    -- Policies (Database-Driven)
+    CREATE TABLE IF NOT EXISTS policies (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        type VARCHAR(50) NOT NULL,
+        rules TEXT NOT NULL,
+        enabled BOOLEAN DEFAULT TRUE,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        severity_level VARCHAR(20) DEFAULT 'MEDIUM'
+    );
+
+    ALTER TABLE policies ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+    ALTER TABLE policies ADD COLUMN IF NOT EXISTS severity_level VARCHAR(20) DEFAULT 'MEDIUM';
+
+    -- RAG Documents
+    CREATE TABLE IF NOT EXISTS knowledge_documents (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        type VARCHAR(20) NOT NULL, -- PDF, DOCX, TXT
+        size_bytes INTEGER NOT NULL,
+        status VARCHAR(20) DEFAULT 'indexed',
+        last_indexed VARCHAR(20) NOT NULL,
+        chunks_count INTEGER DEFAULT 0
+    );
+
+    -- RAG Chunks
+    CREATE TABLE IF NOT EXISTS knowledge_chunks (
+        id SERIAL PRIMARY KEY,
+        document_id INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        embedding_preview VARCHAR(100) NOT NULL,
+        embedding_vector TEXT
+    );
+
+    ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS embedding_vector TEXT;
+
+    -- Ephemeral Workers
+    CREATE TABLE IF NOT EXISTS ephemeral_workers (
+        id SERIAL PRIMARY KEY,
+        provider VARCHAR(50) NOT NULL, -- AWS, GCP, GitHub
+        status VARCHAR(20) DEFAULT 'completed',
+        lifespan_seconds INTEGER DEFAULT 30,
+        started_at VARCHAR(30) NOT NULL,
+        logs TEXT NOT NULL,
+        cost NUMERIC(6, 2) DEFAULT 0.00,
+        tokens_used INTEGER DEFAULT 0
+    );
+
+    -- Remediation findings
+    CREATE TABLE IF NOT EXISTS remediation_findings (
+        id SERIAL PRIMARY KEY,
+        finding VARCHAR(255) NOT NULL,
+        recommendation TEXT NOT NULL,
+        severity VARCHAR(20) NOT NULL, -- HIGH, MEDIUM, LOW
+        fix_plan TEXT NOT NULL,
+        approval_status VARCHAR(20) DEFAULT 'pending'
+    );
+
+    -- Access Control Users & Roles
+    CREATE TABLE IF NOT EXISTS user_roles (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(100) NOT NULL UNIQUE,
+        role VARCHAR(50) NOT NULL,
+        permissions TEXT NOT NULL
+    );
+
+    -- Security Penetration Simulator
+    CREATE TABLE IF NOT EXISTS pentest_simulations (
+        id SERIAL PRIMARY KEY,
+        type VARCHAR(100) NOT NULL,
+        payload TEXT NOT NULL,
+        status VARCHAR(20) NOT NULL, -- PASS, FAIL
+        timestamp VARCHAR(30) NOT NULL
+    );
+
+    -- Red Team Attack Simulator
+    CREATE TABLE IF NOT EXISTS redteam_attacks (
+        id SERIAL PRIMARY KEY,
+        type VARCHAR(100) NOT NULL,
+        success BOOLEAN DEFAULT FALSE,
+        findings TEXT NOT NULL,
+        vulnerability VARCHAR(100) NOT NULL,
+        timestamp VARCHAR(30) NOT NULL
+    );
+
+    -- Compliance Evidence Vault
+    CREATE TABLE IF NOT EXISTS compliance_evidence (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        category VARCHAR(20) NOT NULL, -- SOC2, GDPR, HIPAA
+        file_path VARCHAR(255) NOT NULL,
+        collected_at VARCHAR(20) NOT NULL,
+        hash VARCHAR(64) NOT NULL
+    );
+
+    -- High Availability failsafe status
+    CREATE TABLE IF NOT EXISTS ha_status (
+        id SERIAL PRIMARY KEY,
+        active_region VARCHAR(50) NOT NULL,
+        backup_region VARCHAR(50) NOT NULL,
+        failover_status VARCHAR(30) DEFAULT 'nominal', -- nominal, failing_over, failed_over
+        last_failover VARCHAR(30) NOT NULL
+    );
+
+    -- Chat Sessions
+    CREATE TABLE IF NOT EXISTS chat_sessions (
+        id SERIAL PRIMARY KEY,
+        session_id VARCHAR(100) NOT NULL UNIQUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        title TEXT,
+        user_id VARCHAR(100) DEFAULT 'admin_user',
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE
+    );
+
+    ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+
+    -- Chat Messages
+    CREATE TABLE IF NOT EXISTS chat_messages (
+        id SERIAL PRIMARY KEY,
+        session_id VARCHAR(100) NOT NULL,
+        role VARCHAR(20) NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        trace TEXT,
+        CONSTRAINT fk_session FOREIGN KEY (session_id) REFERENCES chat_sessions(session_id) ON DELETE CASCADE
+    );
+
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS trace TEXT;
+
+    -- New Document Security & Compliance Engine Tables
+    CREATE TABLE IF NOT EXISTS documents (
+        id SERIAL PRIMARY KEY,
+        filename VARCHAR(255) NOT NULL,
+        source VARCHAR(50) NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        size_bytes INTEGER NOT NULL,
+        risk_score INTEGER DEFAULT 0,
+        severity VARCHAR(20) DEFAULT 'LOW',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS document_findings (
+        id SERIAL PRIMARY KEY,
+        document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
+        finding_type VARCHAR(50) NOT NULL,
+        matched_pattern VARCHAR(100) NOT NULL,
+        matched_text TEXT NOT NULL,
+        risk_level VARCHAR(20) NOT NULL,
+        recommendation TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS document_scans (
+        id SERIAL PRIMARY KEY,
+        document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        scan_duration_ms INTEGER DEFAULT 0,
+        raw_findings TEXT,
+        status VARCHAR(50) DEFAULT 'completed'
+    );
+
+    CREATE TABLE IF NOT EXISTS document_audits (
+        id SERIAL PRIMARY KEY,
+        document_id INTEGER NOT NULL,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        action VARCHAR(100) NOT NULL,
+        actor VARCHAR(100) NOT NULL,
+        details TEXT NOT NULL,
+        integrity_hash VARCHAR(64),
+        previous_hash VARCHAR(64)
+    );
+
+    CREATE TABLE IF NOT EXISTS compliance_score_history (
+        id SERIAL PRIMARY KEY,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        framework VARCHAR(50) NOT NULL,
+        score INTEGER NOT NULL,
+        details TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS compliance_drift_alerts (
+        id SERIAL PRIMARY KEY,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        framework VARCHAR(50) NOT NULL,
+        score_drop INTEGER NOT NULL,
+        previous_score INTEGER NOT NULL,
+        current_score INTEGER NOT NULL,
+        details TEXT NOT NULL
+    );
+
+    ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS impact VARCHAR(255);
+    ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS priority VARCHAR(10);
+    ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS location_evidence TEXT;
+
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+    """
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(migration_sql))
+            conn.execute(text("""
+                INSERT INTO tenant_users (
+                    tenant_id, first_name, last_name, email, password_hash,
+                    role, permissions, email_verified, mfa_enabled,
+                    totp_secret, status
+                )
+                SELECT
+                    id,
+                    NULL,
+                    NULL,
+                    email,
+                    password_hash,
+                    'Super Admin',
+                    'all_access',
+                    COALESCE(email_verified, FALSE),
+                    CASE WHEN totp_secret IS NOT NULL THEN TRUE ELSE FALSE END,
+                    totp_secret,
+                    status
+                FROM tenants
+                WHERE email IS NOT NULL
+                  AND password_hash IS NOT NULL
+                ON CONFLICT (email) DO NOTHING
+            """))
+            conn.commit()
+            
+        seed_data()
+        
+        success_log = {
+            "event": "database_migration",
+            "status": "success",
+            "message": "AuthClaw database migrations completed.",
+            "details": {
+                "tables": [
+                    "audit_logs", "gateway_requests", "gateway_routes", "gateway_approvals", "tenants", 
+                    "secrets", "policies", "knowledge_documents", "knowledge_chunks", 
+                    "ephemeral_workers", "remediation_findings", "user_roles", 
+                    "pentest_simulations", "redteam_attacks", "compliance_evidence", "ha_status",
+                    "chat_sessions", "chat_messages", "documents", "document_findings", 
+                    "document_scans", "document_audits"
+                ]
+            }
+        }
+        logger.info(json.dumps(success_log))
+        print(json.dumps(success_log), flush=True)
+
+    except Exception as e:
+        failure_log = {
+            "event": "database_migration",
+            "status": "failed",
+            "message": f"Database migrations failed: {str(e)}"
+        }
+        logger.error(json.dumps(failure_log))
+        print(json.dumps(failure_log), flush=True)
+        raise RuntimeError("Database migration failed. Aborting startup.") from e
+
+def seed_data():
+    """
+    Intentionally empty. Production databases start without demo records.
+    """
+    pass

@@ -1,0 +1,138 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "AuthClaw pilot PostgreSQL database using RDS db.t3.small.",
+  "Parameters": {
+    "VpcId": {
+      "Type": "AWS::EC2::VPC::Id",
+      "Description": "VPC where AuthClaw runs."
+    },
+    "PrivateSubnetIds": {
+      "Type": "List<AWS::EC2::Subnet::Id>",
+      "Description": "At least two private subnets for the RDS subnet group."
+    },
+    "ApiTaskSecurityGroupId": {
+      "Type": "AWS::EC2::SecurityGroup::Id",
+      "Description": "Security group used by the AuthClaw ECS API task."
+    },
+    "DatabaseName": {
+      "Type": "String",
+      "Default": "authclaw",
+      "AllowedPattern": "^[a-zA-Z][a-zA-Z0-9_]*$"
+    },
+    "DatabaseUsername": {
+      "Type": "String",
+      "Default": "authclaw",
+      "NoEcho": true
+    },
+    "DatabasePassword": {
+      "Type": "String",
+      "NoEcho": true,
+      "MinLength": 16,
+      "Description": "Use a generated password and store it in AWS Secrets Manager."
+    },
+    "AllocatedStorageGiB": {
+      "Type": "Number",
+      "Default": 20,
+      "MinValue": 20,
+      "MaxValue": 100
+    }
+  },
+  "Resources": {
+    "AuthClawDatabaseSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "AuthClaw RDS PostgreSQL access from ECS API tasks only.",
+        "VpcId": {
+          "Ref": "VpcId"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 5432,
+            "ToPort": 5432,
+            "SourceSecurityGroupId": {
+              "Ref": "ApiTaskSecurityGroupId"
+            }
+          }
+        ],
+        "SecurityGroupEgress": []
+      }
+    },
+    "AuthClawDatabaseSubnetGroup": {
+      "Type": "AWS::RDS::DBSubnetGroup",
+      "Properties": {
+        "DBSubnetGroupDescription": "Private subnets for AuthClaw PostgreSQL.",
+        "SubnetIds": {
+          "Ref": "PrivateSubnetIds"
+        }
+      }
+    },
+    "AuthClawDatabase": {
+      "Type": "AWS::RDS::DBInstance",
+      "DeletionPolicy": "Snapshot",
+      "UpdateReplacePolicy": "Snapshot",
+      "Properties": {
+        "DBInstanceIdentifier": "authclaw-postgres",
+        "Engine": "postgres",
+        "EngineVersion": "16.4",
+        "DBInstanceClass": "db.t3.small",
+        "AllocatedStorage": {
+          "Ref": "AllocatedStorageGiB"
+        },
+        "StorageType": "gp3",
+        "DBName": {
+          "Ref": "DatabaseName"
+        },
+        "MasterUsername": {
+          "Ref": "DatabaseUsername"
+        },
+        "MasterUserPassword": {
+          "Ref": "DatabasePassword"
+        },
+        "DBSubnetGroupName": {
+          "Ref": "AuthClawDatabaseSubnetGroup"
+        },
+        "VPCSecurityGroups": [
+          {
+            "Ref": "AuthClawDatabaseSecurityGroup"
+          }
+        ],
+        "MultiAZ": false,
+        "PubliclyAccessible": false,
+        "BackupRetentionPeriod": 0,
+        "PreferredBackupWindow": "03:00-04:00",
+        "PreferredMaintenanceWindow": "sun:04:00-sun:05:00",
+        "DeletionProtection": true,
+        "StorageEncrypted": true,
+        "AutoMinorVersionUpgrade": true,
+        "CopyTagsToSnapshot": true
+      }
+    }
+  },
+  "Outputs": {
+    "DatabaseEndpoint": {
+      "Description": "RDS PostgreSQL endpoint address.",
+      "Value": {
+        "Fn::GetAtt": [
+          "AuthClawDatabase",
+          "Endpoint.Address"
+        ]
+      }
+    },
+    "DatabasePort": {
+      "Description": "RDS PostgreSQL endpoint port.",
+      "Value": {
+        "Fn::GetAtt": [
+          "AuthClawDatabase",
+          "Endpoint.Port"
+        ]
+      }
+    },
+    "DatabaseSecurityGroupId": {
+      "Description": "Security group for RDS PostgreSQL.",
+      "Value": {
+        "Ref": "AuthClawDatabaseSecurityGroup"
+      }
+    }
+  }
+}

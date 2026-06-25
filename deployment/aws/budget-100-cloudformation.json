@@ -1,0 +1,67 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "AuthClaw monthly AWS budget alert for a low-cost production deployment.",
+  "Parameters": {
+    "BudgetEmail": {
+      "Type": "String",
+      "Description": "Email address that receives budget alerts."
+    },
+    "BudgetLimitUsd": {
+      "Type": "Number",
+      "Default": 100,
+      "Description": "Monthly budget limit in USD."
+    }
+  },
+  "Resources": {
+    "AuthClawMonthlyBudget": {
+      "Type": "AWS::Budgets::Budget",
+      "Properties": {
+        "Budget": {
+          "BudgetName": "authclaw-monthly-100-usd",
+          "BudgetLimit": {
+            "Amount": {
+              "Ref": "BudgetLimitUsd"
+            },
+            "Unit": "USD"
+          },
+          "BudgetType": "COST",
+          "TimeUnit": "MONTHLY"
+        },
+        "NotificationsWithSubscribers": [
+          {
+            "Notification": {
+              "NotificationType": "ACTUAL",
+              "ComparisonOperator": "GREATER_THAN",
+              "Threshold": 80,
+              "ThresholdType": "PERCENTAGE"
+            },
+            "Subscribers": [
+              {
+                "SubscriptionType": "EMAIL",
+                "Address": {
+                  "Ref": "BudgetEmail"
+                }
+              }
+            ]
+          },
+          {
+            "Notification": {
+              "NotificationType": "FORECASTED",
+              "ComparisonOperator": "GREATER_THAN",
+              "Threshold": 100,
+              "ThresholdType": "PERCENTAGE"
+            },
+            "Subscribers": [
+              {
+                "SubscriptionType": "EMAIL",
+                "Address": {
+                  "Ref": "BudgetEmail"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

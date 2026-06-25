@@ -1,0 +1,39 @@
+services:
+  authclaw-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: authclaw-api:production
+    env_file:
+      - deployment/aws/env.production.template
+    environment:
+      AUTHCLAW_ENV: production
+      DATABASE_URL: postgresql://authclaw:${POSTGRES_PASSWORD}@postgres:5432/authclaw
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: authclaw
+      POSTGRES_USER: authclaw
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - authclaw-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U authclaw -d authclaw"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  authclaw-postgres:
