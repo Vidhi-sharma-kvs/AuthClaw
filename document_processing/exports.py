@@ -9,7 +9,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
-def generate_audit_csv() -> bytes:
+def generate_audit_csv(tenant_id: int = None) -> bytes:
     """Generates a CSV byte stream of all audit logs."""
     output = io.StringIO()
     writer = csv.writer(output)
@@ -23,8 +23,9 @@ def generate_audit_csv() -> bytes:
         res = conn.execute(text("""
             SELECT id, created_at, user_query, response, allowed, risk_level, approval_status, integrity_hash, previous_hash 
             FROM audit_logs 
+            WHERE (:tenant_id IS NULL OR tenant_id = :tenant_id)
             ORDER BY id ASC
-        """))
+        """), {"tenant_id": tenant_id})
         for row in res:
             allowed_str = "Allowed" if row[4] else "Blocked"
             created_at_str = row[1].isoformat() if hasattr(row[1], "isoformat") else str(row[1])
@@ -35,7 +36,7 @@ def generate_audit_csv() -> bytes:
             
     return output.getvalue().encode("utf-8")
 
-def generate_evidence_csv() -> bytes:
+def generate_evidence_csv(tenant_id: int = None) -> bytes:
     """Generates a CSV byte stream of all vaulted evidence."""
     output = io.StringIO()
     writer = csv.writer(output)
@@ -47,8 +48,9 @@ def generate_evidence_csv() -> bytes:
         res = conn.execute(text("""
             SELECT id, name, category, file_path, collected_at, hash 
             FROM compliance_evidence 
+            WHERE (:tenant_id IS NULL OR tenant_id = :tenant_id)
             ORDER BY id ASC
-        """))
+        """), {"tenant_id": tenant_id})
         for row in res:
             writer.writerow([
                 row[0], row[1], row[2], row[3], row[4], row[5]
@@ -56,7 +58,7 @@ def generate_evidence_csv() -> bytes:
             
     return output.getvalue().encode("utf-8")
 
-def generate_audit_pdf() -> bytes:
+def generate_audit_pdf(tenant_id: int = None) -> bytes:
     """Generates a professional PDF compliance assessment report of the Audit Logs."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -147,9 +149,10 @@ def generate_audit_pdf() -> bytes:
         res = conn.execute(text("""
             SELECT id, created_at, user_query, risk_level, approval_status, integrity_hash, allowed 
             FROM audit_logs 
+            WHERE (:tenant_id IS NULL OR tenant_id = :tenant_id)
             ORDER BY id DESC 
             LIMIT 50
-        """)).fetchall()
+        """), {"tenant_id": tenant_id}).fetchall()
         
     for row in res:
         created_str = row[1].strftime('%Y-%m-%d %H:%M') if hasattr(row[1], "strftime") else str(row[1])[:16]
@@ -191,7 +194,7 @@ def generate_audit_pdf() -> bytes:
     buffer.close()
     return pdf_bytes
 
-def generate_evidence_pdf() -> bytes:
+def generate_evidence_pdf(tenant_id: int = None) -> bytes:
     """Generates a professional PDF compliance assessment report of the vaulted evidence."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -276,8 +279,9 @@ def generate_evidence_pdf() -> bytes:
         res = conn.execute(text("""
             SELECT id, name, category, file_path, collected_at, hash 
             FROM compliance_evidence 
+            WHERE (:tenant_id IS NULL OR tenant_id = :tenant_id)
             ORDER BY id DESC
-        """)).fetchall()
+        """), {"tenant_id": tenant_id}).fetchall()
         
     for row in res:
         table_data.append([

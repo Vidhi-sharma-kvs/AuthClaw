@@ -21,6 +21,25 @@ services:
       retries: 3
       start_period: 30s
 
+  authclaw-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    image: authclaw-frontend:production
+    ports:
+      - "8080:80"
+    depends_on:
+      authclaw-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   postgres:
     image: postgres:16
     environment:

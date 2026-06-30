@@ -7,6 +7,8 @@ import logging
 
 logger = logging.getLogger("authclaw.rag.embeddings")
 
+_remote_embeddings_disabled = False
+
 def get_deterministic_fallback_embedding(text: str) -> list[float]:
     """
     Generates a deterministic 768-dimensional word-aware embedding vector.
@@ -47,6 +49,14 @@ def generate_embedding(text: str) -> list[float]:
     Tries the Gemini Embeddings API first if GOOGLE_API_KEY is configured.
     Falls back to a local, deterministic, word-overlap projection embedding if offline.
     """
+    global _remote_embeddings_disabled
+
+    if os.getenv("AUTHCLAW_DISABLE_REMOTE_EMBEDDINGS", "").lower() in {"1", "true", "yes", "on"}:
+        return get_deterministic_fallback_embedding(text)
+
+    if _remote_embeddings_disabled:
+        return get_deterministic_fallback_embedding(text)
+
     api_key = os.getenv("GOOGLE_API_KEY")
     api_url = os.getenv("GOOGLE_API_URL", "https://generativelanguage.googleapis.com")
     
@@ -54,7 +64,7 @@ def generate_embedding(text: str) -> list[float]:
     
     if is_key_valid:
         try:
-            model = "text-embedding-004"
+            model = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
             url = f"{api_url}/v1beta/models/{model}:embedContent?key={api_key}"
             payload = {
                 "model": f"models/{model}",
@@ -77,8 +87,16 @@ def generate_embedding(text: str) -> list[float]:
                         return [float(x) for x in embedding[:768]]
             else:
                 logger.warning(f"Gemini API returned status {res.status_code}: {res.text}")
+                if res.status_code in {400, 401, 403, 404, 429}:
+                    _remote_embeddings_disabled = True
+                    logger.warning(
+                        "Remote embeddings disabled for this process after Gemini status %s. "
+                        "Using deterministic local embeddings until restart.",
+                        res.status_code,
+                    )
         except Exception as e:
             logger.warning(f"Gemini embedding generation failed: {str(e)}")
+            _remote_embeddings_disabled = True
             
     # Local deterministic offline fallback
     return get_deterministic_fallback_embedding(text)

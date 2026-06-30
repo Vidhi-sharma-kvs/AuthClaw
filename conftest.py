@@ -101,6 +101,37 @@ def mock_resolve(self, qname, rdtype='A', *args, **kwargs):
 
 dns.resolver.Resolver.resolve = mock_resolve
 
+
+class GatewayTestProvider:
+    model_name = "pytest-gateway-model"
+    api_url = "pytest://gateway-provider"
+
+    def generate(self, prompt: str, **kwargs) -> str:
+        if "P987654321" in prompt or "[REDACTED]" in prompt:
+            return "The requested sensitive value is [REDACTED]."
+        return "Gateway test provider response."
+
+
+@pytest.fixture(autouse=True)
+def use_deterministic_gateway_provider(monkeypatch, request):
+    if request.node.fspath.basename in {"test_provider_router.py", "test_phase9_secrets_management.py"}:
+        return
+
+    from services.provider_router import ProviderSelection, ProviderRouter
+
+    def select_test_provider(self):
+        return ProviderSelection(
+            route_id="pytest-route",
+            provider_name="pytest",
+            model="pytest-gateway-model",
+            endpoint="pytest://gateway-provider",
+            provider=GatewayTestProvider(),
+            source="pytest_fixture",
+        )
+
+    monkeypatch.setattr(ProviderRouter, "select", select_test_provider)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_db():
     yield

@@ -48,6 +48,8 @@ const GatewayCenter = () => {
   const [providerModalOpen, setProviderModalOpen] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState('openai');
   const [apiKeyInput, setApiKeyInput] = useState('');
+  const [providerModalMode, setProviderModalMode] = useState('connect');
+  const [liveProviderTest, setLiveProviderTest] = useState(false);
   
   // Additional fields for Azure OpenAI
   const [azureEndpoint, setAzureEndpoint] = useState('');
@@ -170,19 +172,35 @@ const GatewayCenter = () => {
     }
 
     try {
-      await apiClient.post('/providers/connect', {
+      const endpoint = providerModalMode === 'rotate'
+        ? `/providers/${selectedProvider}/rotate`
+        : '/providers/connect';
+
+      await apiClient.post(endpoint, {
         provider: selectedProvider,
-        payload: payload
+        payload: { ...payload, live_test: liveProviderTest }
       });
-      addToast(`${selectedProvider.toUpperCase()} credentials connected.`, 'success');
+      addToast(`${selectedProvider.toUpperCase()} credentials ${providerModalMode === 'rotate' ? 'rotated' : 'connected'}.`, 'success');
       setProviderModalOpen(false);
       setApiKeyInput('');
       setAzureEndpoint('');
       setAzureVersion('');
+      setLiveProviderTest(false);
       fetchData();
     } catch (error) {
       console.error(error);
       addToast('Failed to connect provider secrets.', 'error');
+    }
+  };
+
+  const handleTestProvider = async (providerName, live = false) => {
+    try {
+      const res = await apiClient.post(`/providers/${providerName.toLowerCase()}/test?live=${live ? 'true' : 'false'}`);
+      addToast(res.data.message || `${providerName.toUpperCase()} connection checked.`, res.data.status === 'unhealthy' ? 'error' : 'success');
+      fetchData();
+    } catch (error) {
+      console.error(error);
+      addToast('Provider connection test failed.', 'error');
     }
   };
 
@@ -200,7 +218,7 @@ const GatewayCenter = () => {
 
   const getProviderConnectionStatus = (providerKey) => {
     const conn = connectedProviders.find(p => p.provider === providerKey.toLowerCase());
-    return conn ? { connected: true, updated_at: conn.updated_at } : { connected: false };
+    return conn ? { connected: true, ...conn } : { connected: false };
   };
 
   if (loading) {
@@ -355,6 +373,8 @@ const GatewayCenter = () => {
                 setApiKeyInput('');
                 setAzureEndpoint('');
                 setAzureVersion('');
+                setProviderModalMode('connect');
+                setLiveProviderTest(false);
                 setProviderModalOpen(true);
               }}
               className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-xs font-semibold hover:opacity-90 shadow-lg shadow-violet-500/10 transition-all"
@@ -377,7 +397,7 @@ const GatewayCenter = () => {
             ].map(p => {
               const status = getProviderConnectionStatus(p.id);
               return (
-                <div key={p.id} className="glass-card p-6 flex flex-col justify-between h-[210px] space-y-4 hover:border-white/10 transition-all duration-300">
+                <div key={p.id} className="glass-card p-6 flex flex-col justify-between min-h-[250px] space-y-4 hover:border-white/10 transition-all duration-300">
                   <div className="flex justify-between items-start">
                     <div className="p-3 bg-violet-600/10 rounded-lg text-violet-400">
                       <Cpu className="w-6 h-6" />
@@ -402,21 +422,45 @@ const GatewayCenter = () => {
                     <span className="text-[10px] text-gray-500 font-mono">
                       {status.connected && status.updated_at ? `Linked: ${status.updated_at.split('T')[0]}` : 'Secrets encrypted at rest'}
                     </span>
-                    
+
                     {status.connected ? (
-                      <button 
-                        onClick={() => handleDisconnectProvider(p.id)} 
-                        className="text-rose-400 hover:text-rose-600 font-semibold flex items-center gap-1 transition-colors text-xs"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" /> Disconnect
-                      </button>
+                      <div className="flex flex-wrap justify-end gap-3 text-xs">
+                        <button
+                          onClick={() => handleTestProvider(p.id, false)}
+                          className="text-emerald-300 hover:text-emerald-200 font-semibold flex items-center gap-1 transition-colors"
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5" /> Check
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedProvider(p.id);
+                            setProviderModalMode('rotate');
+                            setApiKeyInput('');
+                            setAzureEndpoint('');
+                            setAzureVersion('');
+                            setLiveProviderTest(false);
+                            setProviderModalOpen(true);
+                          }}
+                          className="text-violet-300 hover:text-violet-200 font-semibold flex items-center gap-1 transition-colors"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" /> Rotate
+                        </button>
+                        <button
+                          onClick={() => handleDisconnectProvider(p.id)}
+                          className="text-rose-400 hover:text-rose-600 font-semibold flex items-center gap-1 transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> Disconnect
+                        </button>
+                      </div>
                     ) : (
-                      <button 
+                      <button
                         onClick={() => {
                           setSelectedProvider(p.id);
+                          setProviderModalMode('connect');
                           setApiKeyInput('');
                           setAzureEndpoint('');
                           setAzureVersion('');
+                          setLiveProviderTest(false);
                           setProviderModalOpen(true);
                         }} 
                         className="text-violet-400 hover:text-violet-300 font-semibold flex items-center gap-1 transition-colors text-xs"
@@ -425,6 +469,14 @@ const GatewayCenter = () => {
                       </button>
                     )}
                   </div>
+                  {status.connected && (
+                    <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-500">
+                      <div>Storage: <span className="text-gray-300">{status.storage || 'database_fernet'}</span></div>
+                      <div>Key: <span className="text-gray-300">{status.key_prefix || 'masked'}</span></div>
+                      <div>Health: <span className={status.health_status === 'healthy' || status.health_status === 'validated' ? 'text-emerald-400' : 'text-amber-300'}>{status.health_status || 'unknown'}</span></div>
+                      <div>Rotated: <span className="text-gray-300">{status.rotated_at ? status.rotated_at.split('T')[0] : 'N/A'}</span></div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -549,7 +601,7 @@ const GatewayCenter = () => {
       </Modal>
 
       {/* Connect Provider Secrets Modal */}
-      <Modal isOpen={providerModalOpen} onClose={() => setProviderModalOpen(false)} title={`Connect ${selectedProvider.replace('_', ' ').toUpperCase()} Secrets`}>
+      <Modal isOpen={providerModalOpen} onClose={() => setProviderModalOpen(false)} title={`${providerModalMode === 'rotate' ? 'Rotate' : 'Connect'} ${selectedProvider.replace('_', ' ').toUpperCase()} Secrets`}>
         <form onSubmit={handleConnectProviderSubmit} className="space-y-4 text-sm">
           <div>
             <label className="block text-xs font-semibold text-gray-400 mb-1">Provider Node</label>
@@ -612,9 +664,19 @@ const GatewayCenter = () => {
           <div className="p-3 bg-violet-950/20 border border-violet-500/10 rounded-lg flex items-start gap-2.5">
             <Lock className="w-4 h-4 text-violet-400 shrink-0 mt-0.5" />
             <p className="text-[10px] text-gray-400 leading-normal">
-              <strong>Symmetric Cryptographic Shield:</strong> Your credentials are symmetrically encrypted using AES-GCM-256 before storage in our PostgreSQL database. Decryption occurs entirely in-memory at execution time.
+              <strong>Production Secret Shield:</strong> Your provider key is stored behind AuthClaw secret management. In AWS mode, the raw key lives in AWS Secrets Manager; otherwise it is encrypted locally for development. Raw keys are never returned after saving.
             </p>
           </div>
+
+          <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={liveProviderTest}
+              onChange={(e) => setLiveProviderTest(e.target.checked)}
+              className="w-4 h-4 accent-violet-600 rounded border-white/10"
+            />
+            Run live provider connection test before saving
+          </label>
 
           <div className="flex justify-end gap-3 pt-4 border-t border-white/5">
             <button
@@ -628,7 +690,7 @@ const GatewayCenter = () => {
               type="submit"
               className="px-4 py-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg font-semibold hover:opacity-90 shadow-lg shadow-violet-500/10 transition-all"
             >
-              Verify & Connect Secrets
+              {providerModalMode === 'rotate' ? 'Rotate Secret' : 'Verify & Connect Secrets'}
             </button>
           </div>
         </form>

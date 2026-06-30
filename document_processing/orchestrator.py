@@ -16,7 +16,7 @@ from approval_store import create_approval
 
 logger = logging.getLogger("authclaw.document_processing.orchestrator")
 
-def run_document_scan_pipeline(doc_id: int, file_bytes: bytes, filename: str, source: str = "local") -> dict:
+def run_document_scan_pipeline(doc_id: int, file_bytes: bytes, filename: str, source: str = "local", tenant_id: int = None) -> dict:
     """
     Executes the complete document security & compliance scanning pipeline.
     """
@@ -33,20 +33,27 @@ def run_document_scan_pipeline(doc_id: int, file_bytes: bytes, filename: str, so
             text("""
             UPDATE documents 
             SET size_bytes = :size, status = 'scanning', updated_at = :now 
-            WHERE id = :id
+            WHERE id = :id AND (:tenant_id IS NULL OR tenant_id = :tenant_id)
             """),
-            {"size": len(file_bytes), "now": datetime.now(timezone.utc), "id": doc_id}
+            {"size": len(file_bytes), "now": datetime.now(timezone.utc), "id": doc_id, "tenant_id": tenant_id}
         )
         conn.commit()
         
-    create_document_audit(doc_id, "scan_started", "system", f"Scan pipeline initiated for document: {filename}")
+    create_document_audit(doc_id, "scan_started", "system", f"Scan pipeline initiated for document: {filename}", tenant_id=tenant_id)
     
     # 2. Chunk text and save to RAG vector database (knowledge_chunks)
     chunks = split_text_into_chunks(text_content)
     from rag.vector_store import save_document_chunks
     try:
         with engine.connect() as conn:
-            row = conn.execute(text("SELECT id FROM knowledge_documents WHERE name = :name"), {"name": filename}).fetchone()
+            row = conn.execute(
+                text("""
+                    SELECT id
+                    FROM knowledge_documents
+                    WHERE name = :name AND (:tenant_id IS NULL OR tenant_id = :tenant_id)
+                """),
+                {"name": filename, "tenant_id": tenant_id}
+            ).fetchone()
             if row:
                 k_doc_id = row[0]
             else:
@@ -54,11 +61,12 @@ def run_document_scan_pipeline(doc_id: int, file_bytes: bytes, filename: str, so
                 ext = _os.path.splitext(filename)[1].upper().replace(".", "") or "TXT"
                 res = conn.execute(
                     text("""
-                    INSERT INTO knowledge_documents (name, type, size_bytes, status, last_indexed, chunks_count)
-                    VALUES (:name, :type, :size_bytes, 'indexed', :last_indexed, :chunks_count)
+                    INSERT INTO knowledge_documents (tenant_id, name, type, size_bytes, status, last_indexed, chunks_count)
+                    VALUES (:tenant_id, :name, :type, :size_bytes, 'indexed', :last_indexed, :chunks_count)
                     RETURNING id
                     """),
                     {
+                        "tenant_id": tenant_id,
                         "name": filename,
                         "type": ext,
                         "size_bytes": len(file_bytes),
@@ -69,7 +77,7 @@ def run_document_scan_pipeline(doc_id: int, file_bytes: bytes, filename: str, so
                 k_doc_id = res.fetchone()[0]
                 conn.commit()
                 
-        save_document_chunks(k_doc_id, chunks)
+        save_document_chunks(k_doc_id, chunks, tenant_id=tenant_id)
     except Exception as ex:
         logger.error(f"Failed to index chunks into RAG: {ex}")
         
@@ -272,10 +280,11 @@ Do not include markdown packaging like ```json.
             doc_id, 
             "approval_requested", 
             "system", 
-            f"Document flagged as {severity} risk (Score: {risk_score}). Verification requested in Approval Queue."
+            f"Document flagged as {severity} risk (Score: {risk_score}). Verification requested in Approval Queue.",
+            tenant_id=tenant_id
         )
     else:
-        create_document_audit(doc_id, "auto_approved", "system", f"Document automatically approved. Risk level: {severity}.")
+        create_document_audit(doc_id, "auto_approved", "system", f"Document automatically approved. Risk level: {severity}.", tenant_id=tenant_id)
         
     # 9. Save results to database
     duration_ms = int((time.perf_counter() - start_time) * 1000)
@@ -286,25 +295,27 @@ Do not include markdown packaging like ```json.
             text("""
             UPDATE documents 
             SET risk_score = :score, severity = :severity, status = :status, updated_at = :now
-            WHERE id = :id
+            WHERE id = :id AND (:tenant_id IS NULL OR tenant_id = :tenant_id)
             """),
             {
                 "score": risk_score,
                 "severity": severity,
                 "status": status,
                 "now": datetime.now(timezone.utc),
-                "id": doc_id
+                "id": doc_id,
+                "tenant_id": tenant_id,
             }
         )
         
         # Save scan run
         scan_res = conn.execute(
             text("""
-            INSERT INTO document_scans (document_id, timestamp, scan_duration_ms, raw_findings, status)
-            VALUES (:doc_id, :timestamp, :duration, :findings_json, :status)
+            INSERT INTO document_scans (tenant_id, document_id, timestamp, scan_duration_ms, raw_findings, status)
+            VALUES (:tenant_id, :doc_id, :timestamp, :duration, :findings_json, :status)
             RETURNING id
             """),
             {
+                "tenant_id": tenant_id,
                 "doc_id": doc_id,
                 "timestamp": datetime.now(timezone.utc),
                 "duration": duration_ms,
@@ -317,10 +328,11 @@ Do not include markdown packaging like ```json.
         for f in all_findings:
             conn.execute(
                 text("""
-                INSERT INTO document_findings (document_id, finding_type, matched_pattern, matched_text, risk_level, recommendation, impact, priority, location_evidence)
-                VALUES (:doc_id, :ftype, :pattern, :text, :risk, :rec, :impact, :priority, :loc)
+                INSERT INTO document_findings (tenant_id, document_id, finding_type, matched_pattern, matched_text, risk_level, recommendation, impact, priority, location_evidence)
+                VALUES (:tenant_id, :doc_id, :ftype, :pattern, :text, :risk, :rec, :impact, :priority, :loc)
                 """),
                 {
+                    "tenant_id": tenant_id,
                     "doc_id": doc_id,
                     "ftype": f.get("finding_type", "Regulatory"),
                     "pattern": f.get("matched_pattern", "UNKNOWN"),
@@ -335,7 +347,7 @@ Do not include markdown packaging like ```json.
             
         conn.commit()
         
-    create_document_audit(doc_id, "scan_completed", "system", f"Analysis completed in {duration_ms}ms. Risk Score: {risk_score} ({severity}). Findings Count: {len(all_findings)}")
+    create_document_audit(doc_id, "scan_completed", "system", f"Analysis completed in {duration_ms}ms. Risk Score: {risk_score} ({severity}). Findings Count: {len(all_findings)}", tenant_id=tenant_id)
     logger.info(f"Completed scan pipeline for doc {doc_id}: {filename} ({severity} - {risk_score})")
     
     # 10. Record Snapshot in Score History & Calculate Drift

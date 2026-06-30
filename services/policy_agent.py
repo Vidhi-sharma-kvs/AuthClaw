@@ -2,7 +2,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List
 
-from policy import check_policy_violations, enforce_policy
+from services.policy_engine import (
+    ACTION_ALLOW,
+    ACTION_BLOCK,
+    ACTION_REDACT,
+    ACTION_REQUIRE_APPROVAL,
+    PolicyEngine,
+)
 
 
 @dataclass
@@ -12,36 +18,28 @@ class PolicyAgentResult:
     violated_policies: List[Dict[str, Any]] = field(default_factory=list)
     reason: str = ""
     category: str = ""
+    redacted_text: str = ""
+    risk_level: str = "LOW"
+    policy_versions: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class PolicyAgent:
     def evaluate(self, text: str, username: str = "system", tenant_id: int = None) -> PolicyAgentResult:
-        is_blocked, reason, category = enforce_policy(text)
-        if is_blocked:
-            return PolicyAgentResult(
-                approved=False,
-                policy_decision="block",
-                reason=reason,
-                category=category,
-                violated_policies=[{
-                    "policy_name": "Active Policy Enforcement",
-                    "policy_type": category,
-                    "matched_pattern": reason,
-                    "redacted_value": "N/A",
-                    "username": username,
-                    "timestamp": datetime.now(),
-                    "tenant_id": tenant_id,
-                }],
-            )
+        result = PolicyEngine().evaluate(text, tenant_id=tenant_id, username=username)
+        for policy in result.findings:
+            policy.setdefault("username", username)
+            policy.setdefault("timestamp", datetime.now())
+            policy.setdefault("tenant_id", tenant_id)
 
-        allowed, triggered_blocks = check_policy_violations(text, tenant_id)
-        for policy in triggered_blocks:
-            policy["username"] = username
-            policy["timestamp"] = datetime.now()
-            policy["tenant_id"] = tenant_id
-
+        approved = result.action in {ACTION_ALLOW, ACTION_REDACT}
+        category = result.triggered_categories[0].lower() if result.triggered_categories else ""
         return PolicyAgentResult(
-            approved=allowed,
-            policy_decision="allow" if allowed else "block",
-            violated_policies=triggered_blocks,
+            approved=approved,
+            policy_decision=result.action,
+            violated_policies=result.findings,
+            reason=result.reason,
+            category=category,
+            redacted_text=result.redacted_text,
+            risk_level=result.risk_level,
+            policy_versions=result.policy_versions,
         )

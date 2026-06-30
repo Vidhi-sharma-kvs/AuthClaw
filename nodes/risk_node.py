@@ -30,6 +30,13 @@ def risk_node(state: AuthState):
     finally:
         executor.shutdown(wait=False)
 
+    security_findings = state.get("security_findings") or []
+    finding_actions = {str(finding.get("action", "")).lower() for finding in security_findings}
+    if "block" in finding_actions or "require_approval" in finding_actions:
+        risk_level = "HIGH"
+    elif security_findings and risk_level == "LOW":
+        risk_level = "MEDIUM"
+
     state["risk_level"] = risk_level
 
     log_agent_event(

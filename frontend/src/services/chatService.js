@@ -1,5 +1,7 @@
 import apiClient from './api';
-import { sendGatewayChatMessage } from './gatewayService';
+import { redactGatewayDocument, sendGatewayChatMessage } from './gatewayService';
+
+export { redactGatewayDocument };
 
 export const sendChatMessage = async (sessionId, message, mode = 'gateway') => {
   if (mode === 'gateway') {

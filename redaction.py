@@ -1,6 +1,20 @@
 import re
 import hashlib
+import hmac
+import os
 from policy import get_policy
+from services.sensitive_data_detection import SensitiveDataDetector, sanitize_finding_metadata
+
+
+def _redaction_fingerprint(value: str) -> str:
+    salt = (
+        os.getenv("AUTHCLAW_REDACTION_SALT")
+        or os.getenv("JWT_SECRET")
+        or os.getenv("AUTHCLAW_JWT_SECRET")
+        or os.getenv("AUTHCLAW_ENCRYPTION_KEY")
+        or "authclaw-local-redaction-salt"
+    )
+    return hmac.new(salt.encode("utf-8"), str(value).encode("utf-8"), hashlib.sha256).hexdigest()[:16]
 
 def apply_redaction(field: str, match, action: str) -> str:
     """
@@ -38,7 +52,7 @@ def apply_redaction(field: str, match, action: str) -> str:
             return "".join(masked)
             
     elif action_lower == "hash":
-        h = hashlib.sha256(val.encode("utf-8")).hexdigest()[:16]
+        h = _redaction_fingerprint(val)
         return f"[HASH_{h}]"
         
     elif action_lower == "synthetic":
@@ -74,6 +88,10 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
     from policy import get_db_policies
 
     triggered_policies = []
+
+    strong_detector = SensitiveDataDetector(tenant_id)
+    text, strong_findings = strong_detector.redact(text, username)
+    triggered_policies.extend(strong_findings)
 
     def record_baseline_trigger(policy_name: str, field: str, value: str):
         triggered_policies.append({
@@ -292,46 +310,7 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
     # ── API KEY / SECRET TOKEN DETECTION (always active, baseline security) ──────
     # Detects: OpenAI keys, Gemini keys, AWS keys, JWTs, Bearer tokens,
     #          and generic api_key=/secret=/token= patterns.
-    import os as _os
-    from datetime import datetime as _dt
-
-    _api_key_patterns = [
-        # OpenAI / generic sk- keys:  sk-prod-xxxxx, sk-xxxx
-        (r"\bsk-[A-Za-z0-9\-_]{8,}\b",                           "openai_api_key"),
-        # Google / Gemini:  AIzaSyXXX...
-        (r"\bAIza[A-Za-z0-9\-_]{20,}\b",                         "google_api_key"),
-        # AWS Access Key ID:  AKIA..., ASIA..., AROA...
-        (r"\b(?:AKIA|ASIA|AROA|ANPA)[A-Z0-9]{16}\b",             "aws_access_key"),
-        # JWT tokens:  eyJhbGci...
-        (r"\beyJ[A-Za-z0-9\-_=]{20,}\.[A-Za-z0-9\-_=]+\.[A-Za-z0-9\-_=]+\b", "jwt_token"),
-        # Bearer tokens in text:  Bearer <token>
-        (r"\bBearer\s+[A-Za-z0-9\-_.~+/]{8,}={0,2}\b",           "bearer_token"),
-        # Generic api_key=VALUE or api-key=VALUE (URL / query string / code)
-        (r"(?i)\bapi[_\-]?key\s*[=:]\s*['\"]?([A-Za-z0-9\-_./+]{8,})['\"]?", "api_key_param"),
-        # Generic secret=VALUE
-        (r"(?i)\bsecret\s*[=:]\s*['\"]?([A-Za-z0-9\-_./+]{8,})['\"]?",        "secret_param"),
-        # Generic token=VALUE
-        (r"(?i)\btoken\s*[=:]\s*['\"]?([A-Za-z0-9\-_./+]{8,})['\"]?",         "token_param"),
-        # Generic access_token=VALUE
-        (r"(?i)\baccess[_\-]token\s*[=:]\s*['\"]?([A-Za-z0-9\-_./+]{8,})['\"]?", "access_token"),
-        # Generic private_key / private-key
-        (r"(?i)\bprivate[_\-]?key\s*[=:]\s*['\"]?([A-Za-z0-9\-_./+]{8,})['\"]?", "private_key"),
-    ]
-
-    for pattern, key_type in _api_key_patterns:
-        for m in re.finditer(pattern, text):
-            val = m.group(0)
-            if "[REDACTED" not in val:
-                triggered_policies.append({
-                    "policy_name": "API Key Detection",
-                    "policy_type": "Security",
-                    "matched_pattern": key_type,
-                    "redacted_value": val[:30] + ("..." if len(val) > 30 else ""),
-                    "username": username,
-                    "timestamp": _dt.now()
-                })
-        # Replace full match with redaction label
-        text = re.sub(pattern, "[REDACTED_API_KEY]", text)
+    # API key and secret scanning is handled by SensitiveDataDetector above.
 
     # ─────────────────────────────────────────────────────────────────────────────
 
@@ -377,6 +356,8 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
         lambda m: apply_redaction("phone", m, phone_action),
         text
     )
+
+    triggered_policies = sanitize_finding_metadata(triggered_policies)
 
     # Standardize all target redactions to [REDACTED] for triggered compliance fields
     if triggered_policies:

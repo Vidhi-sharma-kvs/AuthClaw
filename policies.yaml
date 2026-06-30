@@ -49,6 +49,34 @@ redaction:
   aadhaar: mask
   credit_card: synthetic
 
+sensitive_data:
+  default_action: redact
+  approval_confidence_threshold: 1.01
+  actions:
+    secrets: block
+    openai_api_key: block
+    google_api_key: block
+    aws_access_key: block
+    jwt_token: block
+    bearer_token: block
+    api_key_param: block
+    secret_param: block
+    token_param: block
+    access_token: block
+    private_key: block
+    email: mask
+    phone: hash
+    aadhaar: mask
+    pan: tokenize
+    gstin: tokenize
+    credit_card: redact
+    ssn: redact
+    name: redact
+    person: redact
+    address: redact
+    medical_identifier: redact
+    financial_identifier: tokenize
+
 approval:
   require_mfa: true
   default_mfa_code: "123456"

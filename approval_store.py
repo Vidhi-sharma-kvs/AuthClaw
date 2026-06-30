@@ -12,7 +12,7 @@ kept so existing imports in main.py continue to work during the transition.
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from sqlalchemy import text
 
@@ -75,7 +75,15 @@ def _check_expiry(record: dict) -> dict:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if datetime.now(timezone.utc) >= expires_at:
             record["status"] = "expired"
+            record["last_action_at"] = _now_iso()
             _persist_record(record)
+            append_approval_audit(
+                record,
+                action="expired",
+                actor="system",
+                comment="Approval expired before a human decision.",
+                metadata={"expires_at": record["expires_at"]},
+            )
             # Emit audit event lazily — import here to avoid circular deps
             try:
                 from startup.audit import log_approval_event
@@ -100,12 +108,16 @@ def _persist_record(record: dict) -> None:
                     INSERT INTO gateway_approvals (
                         approval_id, request_id, correlation_id, tenant_id, status,
                         created_at, expires_at, approved_at, rejected_at, executed_at,
-                        requested_action, query, risk_level, audit_id, metadata
+                        requested_action, query, risk_level, audit_id, reason, comments,
+                        approved_by, rejected_by, executed_by, mfa_verified, last_action_at,
+                        metadata
                     )
                     VALUES (
                         :approval_id, :request_id, :correlation_id, :tenant_id, :status,
                         :created_at, :expires_at, :approved_at, :rejected_at, :executed_at,
-                        :requested_action, :query, :risk_level, :audit_id, :metadata
+                        :requested_action, :query, :risk_level, :audit_id, :reason, :comments,
+                        :approved_by, :rejected_by, :executed_by, :mfa_verified, :last_action_at,
+                        :metadata
                     )
                     ON CONFLICT (approval_id) DO UPDATE SET
                         request_id = EXCLUDED.request_id,
@@ -120,6 +132,13 @@ def _persist_record(record: dict) -> None:
                         query = EXCLUDED.query,
                         risk_level = EXCLUDED.risk_level,
                         audit_id = EXCLUDED.audit_id,
+                        reason = EXCLUDED.reason,
+                        comments = EXCLUDED.comments,
+                        approved_by = EXCLUDED.approved_by,
+                        rejected_by = EXCLUDED.rejected_by,
+                        executed_by = EXCLUDED.executed_by,
+                        mfa_verified = EXCLUDED.mfa_verified,
+                        last_action_at = EXCLUDED.last_action_at,
                         metadata = EXCLUDED.metadata
                     """
                 ),
@@ -138,6 +157,13 @@ def _persist_record(record: dict) -> None:
                     "query": record.get("query"),
                     "risk_level": record.get("risk_level"),
                     "audit_id": record.get("audit_id"),
+                    "reason": record.get("reason"),
+                    "comments": json.dumps(record.get("comments", [])),
+                    "approved_by": record.get("approved_by"),
+                    "rejected_by": record.get("rejected_by"),
+                    "executed_by": record.get("executed_by"),
+                    "mfa_verified": bool(record.get("mfa_verified", False)),
+                    "last_action_at": _parse_optional_dt(record.get("last_action_at")),
                     "metadata": json.dumps(record.get("metadata", {})),
                 },
             )
@@ -153,6 +179,11 @@ def _row_to_record(row) -> PersistentApprovalRecord:
         if value is None:
             return None
         return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+    try:
+        comments = json.loads(mapping.get("comments") or "[]")
+    except Exception:
+        comments = []
 
     return PersistentApprovalRecord(
         {
@@ -170,6 +201,13 @@ def _row_to_record(row) -> PersistentApprovalRecord:
             "query": mapping.get("query"),
             "risk_level": mapping.get("risk_level"),
             "audit_id": mapping.get("audit_id"),
+            "reason": mapping.get("reason"),
+            "comments": comments,
+            "approved_by": mapping.get("approved_by"),
+            "rejected_by": mapping.get("rejected_by"),
+            "executed_by": mapping.get("executed_by"),
+            "mfa_verified": bool(mapping.get("mfa_verified")),
+            "last_action_at": as_iso(mapping.get("last_action_at")),
             "metadata": json.loads(mapping.get("metadata") or "{}"),
         }
     )
@@ -187,10 +225,16 @@ def _load_record(approval_id: str) -> Optional[PersistentApprovalRecord]:
         return None
 
 
-def _load_all_records() -> None:
+def _load_all_records(tenant_id: int = None) -> None:
     try:
         with engine.connect() as conn:
-            rows = conn.execute(text("SELECT * FROM gateway_approvals ORDER BY created_at DESC")).fetchall()
+            if tenant_id is None:
+                rows = conn.execute(text("SELECT * FROM gateway_approvals ORDER BY created_at DESC")).fetchall()
+            else:
+                rows = conn.execute(
+                    text("SELECT * FROM gateway_approvals WHERE tenant_id = :tenant_id ORDER BY created_at DESC"),
+                    {"tenant_id": tenant_id},
+                ).fetchall()
         for row in rows:
             record = _row_to_record(row)
             _approvals[record["approval_id"]] = record
@@ -206,6 +250,8 @@ def create_approval(
     session_id: str = "",
     tenant_id: int = None,
     request_id: str = None,
+    reason: str = None,
+    metadata: dict = None,
 ) -> dict:
     """
     Creates a new approval record, stores it, and returns it.
@@ -232,10 +278,24 @@ def create_approval(
         "query":             query,
         "risk_level":        risk_level,
         "audit_id":          None,
-        "metadata":          {},
+        "reason":            reason or "high_risk",
+        "comments":          [],
+        "approved_by":       None,
+        "rejected_by":       None,
+        "executed_by":       None,
+        "mfa_verified":      False,
+        "last_action_at":    now.isoformat(),
+        "metadata":          metadata or {},
     })
     _approvals[approval_id] = record
     _persist_record(record)
+    append_approval_audit(
+        record,
+        action="created",
+        actor="system",
+        comment=f"Approval created for reason: {record['reason']}",
+        metadata={"risk_level": risk_level, "expires_at": expires_at.isoformat()},
+    )
 
     try:
         from startup.audit import log_approval_event
@@ -244,7 +304,7 @@ def create_approval(
             approval_id=approval_id,
             request_id=request_id,
             correlation_id=correlation_id,
-            extra={"risk_level": risk_level, "expires_at": expires_at.isoformat()},
+            extra={"risk_level": risk_level, "reason": record["reason"], "expires_at": expires_at.isoformat()},
         )
     except Exception:
         pass
@@ -268,15 +328,119 @@ def get_approval(approval_id: str) -> Optional[dict]:
     return _check_expiry(record)
 
 
-def get_all_approvals() -> Dict[str, dict]:
+def get_all_approvals(tenant_id: int = None) -> Dict[str, dict]:
     """
     Returns all approval records as a dict keyed by approval_id.
     Lazily marks any expired pending records.
     """
-    _load_all_records()
-    for record in _approvals.values():
+    _load_all_records(tenant_id=tenant_id)
+    records = list(_approvals.values())
+    if tenant_id is not None:
+        records = [record for record in records if record.get("tenant_id") == tenant_id]
+    for record in records:
         _check_expiry(record)
-    return _approvals
+    if tenant_id is None:
+        return _approvals
+    return {record["approval_id"]: record for record in records}
+
+
+def append_approval_audit(
+    record: dict,
+    action: str,
+    actor: str = "system",
+    comment: str = None,
+    mfa_verified: bool = False,
+    metadata: dict = None,
+) -> None:
+    event = {
+        "action": action,
+        "actor": actor,
+        "comment": comment,
+        "mfa_verified": bool(mfa_verified),
+        "reason": record.get("reason"),
+        "created_at": _now_iso(),
+        "metadata": metadata or {},
+    }
+    try:
+        if comment:
+            comments = record.get("comments") or []
+            comments.append(event)
+            record["comments"] = comments
+    except Exception:
+        pass
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO approval_audit_events (
+                        tenant_id, approval_id, request_id, action, actor,
+                        comment, mfa_verified, reason, metadata, created_at
+                    )
+                    VALUES (
+                        :tenant_id, :approval_id, :request_id, :action, :actor,
+                        :comment, :mfa_verified, :reason, :metadata, :created_at
+                    )
+                    """
+                ),
+                {
+                    "tenant_id": record.get("tenant_id"),
+                    "approval_id": record.get("approval_id"),
+                    "request_id": record.get("request_id"),
+                    "action": action,
+                    "actor": actor,
+                    "comment": comment,
+                    "mfa_verified": bool(mfa_verified),
+                    "reason": record.get("reason"),
+                    "metadata": json.dumps(metadata or {}),
+                    "created_at": _parse_optional_dt(event["created_at"]),
+                },
+            )
+            conn.commit()
+    except Exception:
+        pass
+
+
+def get_approval_history(approval_id: str, tenant_id: int = None) -> List[dict]:
+    try:
+        with engine.connect() as conn:
+            if tenant_id is None:
+                rows = conn.execute(
+                    text("SELECT * FROM approval_audit_events WHERE approval_id = :approval_id ORDER BY created_at ASC, id ASC"),
+                    {"approval_id": approval_id},
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    text(
+                        """
+                        SELECT * FROM approval_audit_events
+                        WHERE approval_id = :approval_id AND tenant_id = :tenant_id
+                        ORDER BY created_at ASC, id ASC
+                        """
+                    ),
+                    {"approval_id": approval_id, "tenant_id": tenant_id},
+                ).fetchall()
+        history = []
+        for row in rows:
+            mapping = dict(row._mapping)
+            created_at = mapping.get("created_at")
+            try:
+                metadata = json.loads(mapping.get("metadata") or "{}")
+            except Exception:
+                metadata = {}
+            history.append({
+                "action": mapping.get("action"),
+                "actor": mapping.get("actor"),
+                "comment": mapping.get("comment"),
+                "mfa_verified": bool(mapping.get("mfa_verified")),
+                "reason": mapping.get("reason"),
+                "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at),
+                "metadata": metadata,
+            })
+        return history
+    except Exception:
+        return []
 
 
 def remaining_seconds(record: dict) -> int:

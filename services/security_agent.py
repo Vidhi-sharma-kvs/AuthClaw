@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-import re
 from typing import Any, Dict, List, Tuple
 
 from redaction import redact_sensitive_data_rich
@@ -16,12 +15,6 @@ class SecurityAgentResult:
 
 
 class SecurityAgent:
-    secret_patterns = {
-        "api_key": re.compile(r"\b(?:sk-[A-Za-z0-9_-]{16,}|AIza[0-9A-Za-z_-]{20,}|AKIA[0-9A-Z]{16})\b"),
-        "bearer_token": re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{20,}\b", re.IGNORECASE),
-        "password_assignment": re.compile(r"\b(password|passwd|secret)\s*[:=]\s*\S+", re.IGNORECASE),
-    }
-
     prompt_injection_terms = (
         "ignore previous instructions",
         "ignore all instructions",
@@ -45,24 +38,17 @@ class SecurityAgent:
                     "policy_type": "prompt_injection",
                     "matched_pattern": term,
                     "redacted_value": "N/A",
+                    "confidence": 0.97,
+                    "action": "block",
                     "username": username,
                 })
 
-        for finding_type, pattern in self.secret_patterns.items():
-            for match in pattern.finditer(text):
-                findings.append({
-                    "policy_name": "Security Agent",
-                    "policy_type": finding_type,
-                    "matched_pattern": finding_type,
-                    "redacted_value": match.group(0),
-                    "username": username,
-                })
-                sanitized_text = sanitized_text.replace(match.group(0), "[REDACTED_SECRET]")
-
-        approved = not any(
-            finding.get("policy_type") in {"prompt_injection", "api_key", "bearer_token", "password_assignment"}
-            for finding in findings
-        )
+        actions = {str(finding.get("action", "")).lower() for finding in findings}
+        approved = "block" not in actions
+        if "block" in actions or "require_approval" in actions:
+            risk_level = "HIGH"
+        elif findings and risk_level == "LOW":
+            risk_level = "MEDIUM"
         return SecurityAgentResult(
             approved=approved,
             risk_level=risk_level,

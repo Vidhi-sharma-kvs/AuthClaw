@@ -50,8 +50,8 @@ const ProtectedRoute = ({ children }) => {
   const allowedRoles = ROUTE_PERMISSIONS[permissionPath];
 
   if (allowedRoles && !allowedRoles.includes(user?.role)) {
-    const homePath = user?.role === 'Platform Admin' ? '/platform/dashboard' : '/dashboard';
-    const homeLabel = user?.role === 'Platform Admin' ? 'Return to Platform Dashboard' : 'Return to Security Dashboard';
+    const homePath = user?.role === 'Platform Admin' ? '/platform/dashboard' : '/chat';
+    const homeLabel = user?.role === 'Platform Admin' ? 'Return to Platform Dashboard' : 'Return to Gateway Chat';
 
     return (
       <div className="flex-1 min-h-[70vh] flex items-center justify-center p-6">

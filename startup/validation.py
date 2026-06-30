@@ -70,6 +70,34 @@ def load_and_validate_policy(filepath: str) -> dict:
     if not isinstance(expiry_minutes, (int, float)) or expiry_minutes <= 0:
         raise ValueError("approval.expiry_minutes must be a positive number.")
 
+    sensitive_data_raw = data.get("sensitive_data", {})
+    if not isinstance(sensitive_data_raw, dict):
+        raise ValueError("Policy key 'sensitive_data' must be a dictionary.")
+    allowed_sensitive_actions = {"allow", "redact", "block", "require_approval", "mask", "hash", "tokenize"}
+    default_sensitive_action = str(sensitive_data_raw.get("default_action", "redact")).lower()
+    if default_sensitive_action not in allowed_sensitive_actions:
+        raise ValueError(
+            f"Invalid sensitive_data.default_action '{default_sensitive_action}'. "
+            f"Must be one of: {allowed_sensitive_actions}"
+        )
+    approval_confidence_threshold = sensitive_data_raw.get("approval_confidence_threshold", 1.01)
+    if not isinstance(approval_confidence_threshold, (int, float)):
+        raise ValueError("sensitive_data.approval_confidence_threshold must be numeric.")
+    sensitive_actions_raw = sensitive_data_raw.get("actions", {})
+    if not isinstance(sensitive_actions_raw, dict):
+        raise ValueError("sensitive_data.actions must be a dictionary.")
+    sensitive_actions = {}
+    for key, action in sensitive_actions_raw.items():
+        if not isinstance(key, str) or not isinstance(action, str):
+            raise ValueError("sensitive_data.actions keys and values must be strings.")
+        action_lower = action.lower()
+        if action_lower not in allowed_sensitive_actions:
+            raise ValueError(
+                f"Invalid sensitive_data action '{action}' for entity '{key}'. "
+                f"Must be one of: {allowed_sensitive_actions}"
+            )
+        sensitive_actions[key.lower()] = action_lower
+
     # Normalize keys/actions to lowercase
     normalized = {
         "version": str(version),
@@ -81,7 +109,12 @@ def load_and_validate_policy(filepath: str) -> dict:
             "require_mfa": require_mfa,
             "default_mfa_code": default_mfa_code,
             "expiry_minutes": int(expiry_minutes),
-        }
+        },
+        "sensitive_data": {
+            "default_action": default_sensitive_action,
+            "approval_confidence_threshold": float(approval_confidence_threshold),
+            "actions": sensitive_actions,
+        },
     }
     return normalized
 
@@ -198,5 +231,14 @@ def validate_production_environment() -> list:
     if os.getenv("AWS_SECRETS_MANAGER_ENABLED", "false").lower() in {"1", "true", "yes"}:
         if not (os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION")):
             errors.append("AWS_REGION or AWS_DEFAULT_REGION is required when AWS Secrets Manager is enabled.")
+
+    document_storage = os.getenv("AUTHCLAW_DOCUMENT_STORAGE_BACKEND", "local").lower()
+    if document_storage not in {"local", "s3"}:
+        errors.append("AUTHCLAW_DOCUMENT_STORAGE_BACKEND must be either local or s3.")
+    if document_storage == "s3":
+        if not os.getenv("AUTHCLAW_DOCUMENT_S3_BUCKET"):
+            errors.append("AUTHCLAW_DOCUMENT_S3_BUCKET is required when AUTHCLAW_DOCUMENT_STORAGE_BACKEND=s3.")
+        if not (os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION")):
+            errors.append("AWS_REGION or AWS_DEFAULT_REGION is required when document storage uses S3.")
 
     return errors

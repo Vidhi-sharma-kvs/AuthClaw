@@ -1,0 +1,300 @@
+from datetime import datetime, timezone
+from typing import Any, Dict, List
+
+from database import engine
+from sqlalchemy import text
+from verify_audit import verify_audit_chain
+
+
+def _iso(value: Any) -> str:
+    if value is None:
+        return None
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
+def _int(value: Any) -> int:
+    return int(value or 0)
+
+
+def _float(value: Any) -> float:
+    return round(float(value or 0), 2)
+
+
+class ObservabilityService:
+    def governance_analytics(self, tenant_id: int) -> Dict[str, Any]:
+        tenant_id_text = str(tenant_id)
+
+        with engine.connect() as conn:
+            gateway = self._gateway_summary(conn, tenant_id_text)
+            providers = self._provider_usage(conn, tenant_id_text)
+            blocked = self._blocked_requests(conn, tenant_id_text)
+            redactions = self._redaction_summary(conn, tenant_id, tenant_id_text)
+            approvals = self._approval_summary(conn, tenant_id)
+            recent_requests = self._recent_requests(conn, tenant_id_text)
+            latest_hash = self._latest_audit_hash(conn, tenant_id)
+
+        verification = verify_audit_chain(tenant_id=tenant_id)
+        audit = {
+            "valid": bool(verification.get("valid", True)),
+            "records_checked": _int(verification.get("records_checked")),
+            "chain_started_at": verification.get("chain_started_at"),
+            "failed_record_id": verification.get("failed_record_id"),
+            "reason": verification.get("reason"),
+            "latest_hash": latest_hash,
+            "export_endpoints": {
+                "csv": "/audit/export/csv",
+                "pdf": "/audit/export/pdf",
+            },
+        }
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "tenant_id": tenant_id,
+            "gateway": gateway,
+            "providers": providers,
+            "blocked_requests": blocked,
+            "redactions": redactions,
+            "approvals": approvals,
+            "audit": audit,
+            "recent_requests": recent_requests,
+            "clickhouse_pipeline": {
+                "enabled": False,
+                "status": "planned",
+                "message": "Optional ClickHouse analytics pipeline is not enabled for this deployment.",
+            },
+        }
+
+    def _gateway_summary(self, conn, tenant_id_text: str) -> Dict[str, Any]:
+        row = conn.execute(
+            text(
+                """
+                SELECT
+                    COUNT(*) AS total_requests,
+                    SUM(CASE WHEN allowed = TRUE OR upper(COALESCE(decision, '')) = 'ALLOW' THEN 1 ELSE 0 END) AS allowed_requests,
+                    SUM(CASE WHEN allowed = FALSE OR upper(COALESCE(decision, status, '')) = 'BLOCK' THEN 1 ELSE 0 END) AS blocked_requests,
+                    SUM(CASE WHEN upper(COALESCE(decision, status, '')) IN ('REQUIRE_APPROVAL', 'PENDING_APPROVAL') THEN 1 ELSE 0 END) AS pending_requests,
+                    AVG(COALESCE(duration_ms, latency, 0)) AS avg_duration_ms,
+                    SUM(COALESCE(tokens_in, 0)) AS tokens_in,
+                    SUM(COALESCE(tokens_out, 0)) AS tokens_out
+                FROM gateway_requests
+                WHERE tenant_id = :tenant_id
+                """
+            ),
+            {"tenant_id": tenant_id_text},
+        ).fetchone()
+
+        return {
+            "total_requests": _int(row[0]),
+            "allowed_requests": _int(row[1]),
+            "blocked_requests": _int(row[2]),
+            "pending_requests": _int(row[3]),
+            "avg_duration_ms": _float(row[4]),
+            "tokens_in": _int(row[5]),
+            "tokens_out": _int(row[6]),
+            "tokens_total": _int(row[5]) + _int(row[6]),
+        }
+
+    def _provider_usage(self, conn, tenant_id_text: str) -> List[Dict[str, Any]]:
+        rows = conn.execute(
+            text(
+                """
+                SELECT
+                    COALESCE(NULLIF(provider, ''), 'unknown') AS provider_name,
+                    COUNT(*) AS request_count,
+                    SUM(CASE WHEN allowed = FALSE OR upper(COALESCE(decision, status, '')) = 'BLOCK' THEN 1 ELSE 0 END) AS blocked_count,
+                    AVG(COALESCE(duration_ms, latency, 0)) AS avg_duration_ms,
+                    SUM(COALESCE(tokens_in, 0) + COALESCE(tokens_out, 0)) AS tokens_total,
+                    MAX(COALESCE(created_at, timestamp)) AS last_seen
+                FROM gateway_requests
+                WHERE tenant_id = :tenant_id
+                GROUP BY COALESCE(NULLIF(provider, ''), 'unknown')
+                ORDER BY request_count DESC, provider_name ASC
+                """
+            ),
+            {"tenant_id": tenant_id_text},
+        ).fetchall()
+
+        return [
+            {
+                "provider": row[0],
+                "requests": _int(row[1]),
+                "blocked": _int(row[2]),
+                "avg_duration_ms": _float(row[3]),
+                "tokens_total": _int(row[4]),
+                "last_seen": _iso(row[5]),
+            }
+            for row in rows
+        ]
+
+    def _blocked_requests(self, conn, tenant_id_text: str) -> Dict[str, Any]:
+        risk_rows = conn.execute(
+            text(
+                """
+                SELECT COALESCE(NULLIF(upper(risk_level), ''), 'UNKNOWN') AS risk_level, COUNT(*)
+                FROM gateway_requests
+                WHERE tenant_id = :tenant_id
+                  AND (allowed = FALSE OR upper(COALESCE(decision, status, '')) = 'BLOCK')
+                GROUP BY COALESCE(NULLIF(upper(risk_level), ''), 'UNKNOWN')
+                ORDER BY COUNT(*) DESC, risk_level ASC
+                """
+            ),
+            {"tenant_id": tenant_id_text},
+        ).fetchall()
+        recent_rows = conn.execute(
+            text(
+                """
+                SELECT request_id, provider, model, risk_level, decision, status, COALESCE(created_at, timestamp)
+                FROM gateway_requests
+                WHERE tenant_id = :tenant_id
+                  AND (allowed = FALSE OR upper(COALESCE(decision, status, '')) = 'BLOCK')
+                ORDER BY COALESCE(created_at, timestamp) DESC
+                LIMIT 8
+                """
+            ),
+            {"tenant_id": tenant_id_text},
+        ).fetchall()
+
+        return {
+            "by_risk_level": {row[0]: _int(row[1]) for row in risk_rows},
+            "recent": [
+                {
+                    "request_id": row[0],
+                    "provider": row[1],
+                    "model": row[2],
+                    "risk_level": row[3],
+                    "decision": row[4],
+                    "status": row[5],
+                    "timestamp": _iso(row[6]),
+                }
+                for row in recent_rows
+            ],
+        }
+
+    def _redaction_summary(self, conn, tenant_id: int, tenant_id_text: str) -> Dict[str, Any]:
+        doc_rows = conn.execute(
+            text(
+                """
+                SELECT COALESCE(NULLIF(finding_type, ''), 'Unknown') AS finding_type, COUNT(*)
+                FROM document_findings
+                WHERE tenant_id = :tenant_id
+                GROUP BY COALESCE(NULLIF(finding_type, ''), 'Unknown')
+                ORDER BY COUNT(*) DESC, finding_type ASC
+                """
+            ),
+            {"tenant_id": tenant_id},
+        ).fetchall()
+        agent_redactions = conn.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM agent_events
+                WHERE tenant_id = :tenant_id
+                  AND (
+                    upper(event_type) LIKE '%REDACT%'
+                    OR upper(event_type) LIKE '%PII_DETECTED%'
+                    OR upper(event_type) LIKE '%SECRET%'
+                  )
+                """
+            ),
+            {"tenant_id": tenant_id},
+        ).scalar()
+        audit_redactions = conn.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM audit_logs
+                WHERE tenant_id = :tenant_id
+                  AND redacted_value IS NOT NULL
+                  AND redacted_value <> ''
+                """
+            ),
+            {"tenant_id": tenant_id},
+        ).scalar()
+        redacted_gateway_requests = conn.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM gateway_requests
+                WHERE tenant_id = :tenant_id
+                  AND lower(COALESCE(status, decision, '')) LIKE '%redact%'
+                """
+            ),
+            {"tenant_id": tenant_id_text},
+        ).scalar()
+
+        by_type = {row[0]: _int(row[1]) for row in doc_rows}
+        return {
+            "total_fields": sum(by_type.values()) + _int(audit_redactions),
+            "document_findings": sum(by_type.values()),
+            "agent_redaction_events": _int(agent_redactions),
+            "audit_redaction_records": _int(audit_redactions),
+            "redacted_gateway_requests": _int(redacted_gateway_requests),
+            "by_type": by_type,
+        }
+
+    def _approval_summary(self, conn, tenant_id: int) -> Dict[str, Any]:
+        rows = conn.execute(
+            text(
+                """
+                SELECT COALESCE(NULLIF(lower(status), ''), 'unknown') AS status, COUNT(*)
+                FROM gateway_approvals
+                WHERE tenant_id = :tenant_id
+                GROUP BY COALESCE(NULLIF(lower(status), ''), 'unknown')
+                """
+            ),
+            {"tenant_id": tenant_id},
+        ).fetchall()
+        by_status = {row[0]: _int(row[1]) for row in rows}
+        return {
+            "total": sum(by_status.values()),
+            "pending": by_status.get("pending", 0),
+            "approved": by_status.get("approved", 0),
+            "rejected": by_status.get("rejected", 0),
+            "executed": by_status.get("executed", 0),
+            "expired": by_status.get("expired", 0),
+            "by_status": by_status,
+        }
+
+    def _recent_requests(self, conn, tenant_id_text: str) -> List[Dict[str, Any]]:
+        rows = conn.execute(
+            text(
+                """
+                SELECT request_id, provider, model, risk_level, decision, status,
+                       COALESCE(duration_ms, latency, 0), COALESCE(created_at, timestamp)
+                FROM gateway_requests
+                WHERE tenant_id = :tenant_id
+                ORDER BY COALESCE(created_at, timestamp) DESC
+                LIMIT 10
+                """
+            ),
+            {"tenant_id": tenant_id_text},
+        ).fetchall()
+        return [
+            {
+                "request_id": row[0],
+                "provider": row[1],
+                "model": row[2],
+                "risk_level": row[3],
+                "decision": row[4],
+                "status": row[5],
+                "duration_ms": _int(row[6]),
+                "timestamp": _iso(row[7]),
+            }
+            for row in rows
+        ]
+
+    def _latest_audit_hash(self, conn, tenant_id: int) -> str:
+        row = conn.execute(
+            text(
+                """
+                SELECT integrity_hash
+                FROM audit_logs
+                WHERE tenant_id = :tenant_id
+                  AND integrity_hash IS NOT NULL
+                ORDER BY id DESC
+                LIMIT 1
+                """
+            ),
+            {"tenant_id": tenant_id},
+        ).fetchone()
+        return row[0] if row else None

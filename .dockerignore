@@ -11,3 +11,13 @@ logs
 watched_documents
 scratch
 .env
+*.env
+*.pem
+*.ppk
+authclaw-key.pem
+authclaw.pem
+deployment/ec2/generated
+deployment/ec2/parameters.json
+frontend/.env
+frontend/.env.local
+frontend/.env.production

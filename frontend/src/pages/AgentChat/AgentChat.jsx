@@ -14,11 +14,13 @@ import {
   ShieldCheck,
   CheckCircle,
   FileText,
+  Download,
   HelpCircle,
   ArrowRight
 } from 'lucide-react';
 import { 
   sendChatMessage, 
+  redactGatewayDocument,
   createChatSession, 
   getChatSessions, 
   getSessionMessages, 
@@ -34,11 +36,13 @@ const AgentChat = () => {
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [documentContext, setDocumentContext] = useState(null);
   
   // Trace drawer state
   const [activeTrace, setActiveTrace] = useState(null);
 
   const messagesEndRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const extractGatewayMeta = (data) => ({
     request_id: data.request_id,
@@ -114,6 +118,9 @@ const AgentChat = () => {
     if (!input.trim() || loading) return;
 
     const userMessage = input.trim();
+    const outboundMessage = documentContext
+      ? `Use this sanitized uploaded document context to answer. Do not infer or restore redacted personal data.\n\nDocument: ${documentContext.filename}\n\nSanitized document text:\n${documentContext.redactedText}\n\nUser question: ${userMessage}`
+      : userMessage;
     setInput('');
 
     // Optimistically add user message to UI
@@ -121,7 +128,7 @@ const AgentChat = () => {
     setLoading(true);
 
     try {
-      const data = await sendChatMessage(sessionId, userMessage);
+      const data = await sendChatMessage(sessionId, outboundMessage);
       const gatewayMeta = extractGatewayMeta(data);
 
       // ── CASE A: Policy Violation Block ────────────────────────────────────
@@ -235,6 +242,56 @@ const AgentChat = () => {
     }
   };
 
+  const handleDocumentUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || loading) return;
+    e.target.value = '';
+
+    setMessages((prev) => [
+      ...prev,
+      { role: 'user', content: `Attached document for gateway redaction: ${file.name}` }
+    ]);
+    setLoading(true);
+
+    try {
+      const data = await redactGatewayDocument(file);
+      const gatewayMeta = extractGatewayMeta(data);
+      if (data.redacted_text) {
+        setDocumentContext({
+          filename: data.filename,
+          redactedText: data.redacted_text,
+          requestId: data.request_id,
+        });
+      }
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'document',
+          content: `${data.filename} inspected by AuthClaw gateway document redaction.`,
+          documentResult: data,
+          gatewayMeta,
+          trace: data.trace || []
+        }
+      ]);
+      if (data.trace && data.trace.length > 0) {
+        setActiveTrace(data.trace);
+      }
+    } catch (err) {
+      console.error('[AgentChat] Document redaction error:', err);
+      const status = err.response?.status;
+      const backendDetail = err.response?.data?.detail;
+      const detail = status === 404
+        ? 'Document redaction endpoint was not found on the running backend. Restart or redeploy the backend so /gateway/documents/redact is registered.'
+        : backendDetail || 'Document redaction failed. Please check the file type and backend logs.';
+      setMessages((prev) => [
+        ...prev,
+        { role: 'error', content: detail }
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleNewSession = async () => {
     const newId = `session-${Math.random().toString(36).substr(2, 9)}`;
     try {
@@ -310,6 +367,29 @@ const AgentChat = () => {
         ))}
       </div>
     );
+  };
+
+  const downloadBase64File = (base64, filename, mimeType) => {
+    if (!base64) return;
+    const byteCharacters = atob(base64);
+    const byteNumbers = Array.from(byteCharacters, (char) => char.charCodeAt(0));
+    const blob = new Blob([new Uint8Array(byteNumbers)], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadJsonFile = (payload, filename) => {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   // ── Message Renderers ──────────────────────────────────────────────────────
@@ -442,6 +522,113 @@ const AgentChat = () => {
           <div className="glass-card max-w-lg p-4 bg-slate-900/60 border border-white/10 text-gray-300 text-sm flex gap-3">
             <AlertTriangle className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" />
             <p>{msg.content}</p>
+          </div>
+        </div>
+      );
+    }
+
+    if (msg.role === 'document') {
+      const result = msg.documentResult || {};
+      const redactedPreview = result.redacted_text || '';
+      const findings = result.findings || result.triggered_policies || [];
+      return (
+        <div key={index} className="flex gap-4 justify-start">
+          <div className="w-8 h-8 rounded-lg bg-violet-600/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shrink-0 shadow-lg">
+            <FileText className="w-4 h-4" />
+          </div>
+          <div className="glass-card text-gray-300 rounded-xl rounded-tl-none p-4 max-w-2xl text-sm leading-relaxed shadow-lg">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="font-semibold text-white truncate">{result.filename || 'Document inspected'}</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Status: <span className="text-gray-300 font-semibold">{result.status || 'processed'}</span>
+                  <span className="mx-2 text-gray-700">|</span>
+                  Redacted fields: <span className="text-violet-300 font-semibold">{result.redacted_count ?? 0}</span>
+                  <span className="mx-2 text-gray-700">|</span>
+                  OCR: <span className="text-gray-300 font-semibold">{result.ocr_status || 'not_required'}</span>
+                </p>
+              </div>
+              <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${
+                result.decision === 'REDACT'
+                  ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
+                  : 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'
+              }`}>
+                {result.decision || 'ALLOW'}
+              </span>
+            </div>
+
+            {renderGatewayMeta(msg.gatewayMeta)}
+
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="bg-slate-950/45 border border-white/5 rounded-lg px-2.5 py-2">
+                <p className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">Security Agent</p>
+                <p className="text-[11px] text-emerald-300 font-semibold mt-0.5">
+                  Scanned {findings.length} field{findings.length === 1 ? '' : 's'}
+                </p>
+              </div>
+              <div className="bg-slate-950/45 border border-white/5 rounded-lg px-2.5 py-2">
+                <p className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">Policy Agent</p>
+                <p className="text-[11px] text-violet-300 font-semibold mt-0.5">{result.decision || 'ALLOW'}</p>
+              </div>
+              <div className="bg-slate-950/45 border border-white/5 rounded-lg px-2.5 py-2">
+                <p className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">Audit Agent</p>
+                <p className="text-[11px] text-gray-300 font-mono truncate mt-0.5">{result.request_id || 'recorded'}</p>
+              </div>
+            </div>
+
+            {findings.length > 0 && (
+              <div className="mt-3 border border-white/5 rounded-lg bg-slate-950/40 overflow-hidden">
+                <div className="px-3 py-2 border-b border-white/5 text-[10px] font-bold uppercase tracking-wider text-violet-300">
+                  Findings Report
+                </div>
+                <div className="max-h-48 overflow-y-auto divide-y divide-white/5">
+                  {findings.slice(0, 12).map((finding, idx) => (
+                    <div key={`${finding.token_id || finding.value_hash || idx}`} className="grid grid-cols-4 gap-2 px-3 py-2 text-[11px]">
+                      <span className="text-gray-200 font-semibold">{finding.field_type || finding.matched_pattern}</span>
+                      <span className="text-gray-400">{finding.location || `page ${finding.page || 1}`}</span>
+                      <span className="text-gray-400">{Math.round((finding.confidence || 0.8) * 100)}%</span>
+                      <span className="text-violet-300 font-semibold">{finding.action_taken || finding.action || 'redact'}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-3 border border-white/5 rounded-lg bg-slate-950/50 overflow-hidden">
+              <div className="px-3 py-2 border-b border-white/5 text-[10px] font-bold uppercase tracking-wider text-violet-300">
+                Inspected Output
+              </div>
+              <pre className="p-3 text-xs text-gray-300 whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
+                {redactedPreview || 'No redacted text returned.'}
+              </pre>
+            </div>
+
+            <div className="mt-3 pt-3 border-t border-white/5 flex flex-wrap justify-end gap-2">
+              {result.redacted_pdf_base64 && (
+                <button
+                  onClick={() => downloadBase64File(result.redacted_pdf_base64, `${result.request_id || 'authclaw'}-redacted.pdf`, 'application/pdf')}
+                  className="flex items-center gap-1.5 text-xs text-emerald-300 hover:text-emerald-200 font-semibold transition"
+                >
+                  <Download className="w-3.5 h-3.5" /> Redacted PDF
+                </button>
+              )}
+              {result.findings_report && (
+                <button
+                  onClick={() => downloadJsonFile(result.findings_report, `${result.request_id || 'authclaw'}-findings.json`)}
+                  className="flex items-center gap-1.5 text-xs text-sky-300 hover:text-sky-200 font-semibold transition"
+                >
+                  <Download className="w-3.5 h-3.5" /> JSON Report
+                </button>
+              )}
+              {hasTrace && (
+                <button
+                  onClick={() => setActiveTrace(msg.trace)}
+                  className="flex items-center gap-1 text-xs text-violet-400 hover:text-violet-300 font-semibold transition"
+                >
+                  <Activity className="w-3.5 h-3.5" /> View Document Trace
+                </button>
+              )}
+            </div>
           </div>
         </div>
       );
@@ -587,10 +774,26 @@ const AgentChat = () => {
         <form onSubmit={handleSend} className="p-4 border-t border-white/5 bg-slate-950/45">
           <div className="flex gap-3">
             <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.docx,.txt,.text,.md,.markdown,.csv,.xlsx,.xls,.png,.jpg,.jpeg,.webp"
+              className="hidden"
+              onChange={handleDocumentUpload}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={loading}
+              title="Upload document for gateway redaction"
+              className="px-4 py-3 glass-card hover:border-violet-500/40 rounded-lg text-violet-300 font-semibold transition disabled:opacity-50 flex items-center justify-center"
+            >
+              <FileText className="w-4 h-4" />
+            </button>
+            <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Send a prompt through the AuthClaw Gateway..."
+              placeholder={documentContext ? `Ask about sanitized ${documentContext.filename}...` : 'Send a prompt through the AuthClaw Gateway...'}
               disabled={loading}
               className="flex-1 glass-input py-3"
             />

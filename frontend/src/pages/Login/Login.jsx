@@ -28,7 +28,7 @@ const Login = () => {
   // Redirect on successful authentication
   useEffect(() => {
     if (isAuthenticated) {
-      const fallback = user?.role === 'Platform Admin' ? '/platform/dashboard' : '/dashboard';
+      const fallback = user?.role === 'Platform Admin' ? '/platform/dashboard' : '/chat';
       const from = location.state?.from?.pathname || fallback;
       const safeFrom = user?.role === 'Platform Admin' && !from.startsWith('/platform') ? fallback : from;
       navigate(safeFrom, { replace: true });
@@ -383,7 +383,7 @@ const Login = () => {
             AuthClaw Console
           </h1>
           <p className="text-xs text-gray-500 max-w-[320px]">
-            Enterprise SaaS Multi-Agent AI Governance & Control Platform
+            Enterprise AI Security Gateway and Governance Platform
           </p>
         </div>
 
@@ -434,7 +434,7 @@ const Login = () => {
                   <input
                     type="text"
                     required
-                    placeholder="e.g. admin@organization.com or admin_user"
+                    placeholder="e.g. admin@organization.com"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     className="w-full bg-slate-900 border border-white/10 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:border-violet-500 transition-colors placeholder-gray-600"

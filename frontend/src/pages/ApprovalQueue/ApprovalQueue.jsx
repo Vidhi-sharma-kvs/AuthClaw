@@ -27,6 +27,7 @@ const ApprovalQueue = () => {
   const [loading, setLoading] = useState(true);
   const [selectedApproval, setSelectedApproval] = useState(null);
   const [mfaCode, setMfaCode] = useState('');
+  const [approvalComment, setApprovalComment] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
 
   const { addToast } = useToast();
@@ -68,13 +69,18 @@ const ApprovalQueue = () => {
   const handleApproveClick = (app) => {
     setSelectedApproval(app);
     setMfaCode('');
+    setApprovalComment('');
   };
 
   const handleApproveConfirm = async () => {
     if (!selectedApproval) return;
+    if (!mfaCode.trim()) {
+      addToast('Enter the MFA code before approving this request.', 'error');
+      return;
+    }
     setActionLoading(true);
     try {
-      await approveApproval(selectedApproval.approval_id, mfaCode || null);
+      await approveApproval(selectedApproval.approval_id, mfaCode || null, approvalComment);
       addToast(`Approval ${selectedApproval.approval_id.substr(0, 8)} approved.`, 'success');
       setSelectedApproval(null);
       fetchApprovals();
@@ -90,8 +96,9 @@ const ApprovalQueue = () => {
 
   const handleReject = async (id) => {
     if (!window.confirm('Are you sure you want to reject this request?')) return;
+    const comment = window.prompt('Add a rejection comment for the audit trail:', '') || '';
     try {
-      await rejectApproval(id);
+      await rejectApproval(id, comment);
       addToast(`Request rejected successfully.`, 'success');
       fetchApprovals();
       window.dispatchEvent(new CustomEvent('audit-updated'));
@@ -101,8 +108,9 @@ const ApprovalQueue = () => {
   };
 
   const handleExecute = async (id) => {
+    const comment = window.prompt('Add an execution comment for the audit trail:', '') || '';
     try {
-      const result = await executeApproval(id);
+      const result = await executeApproval(id, comment);
       addToast(`Action executed successfully! Output: ${result.response?.substr(0, 40)}...`, 'success');
       fetchApprovals();
       window.dispatchEvent(new CustomEvent('audit-updated'));
@@ -146,6 +154,16 @@ const ApprovalQueue = () => {
     if (!value) return 'N/A';
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
+  };
+
+  const formatReason = (reason) => {
+    const labels = {
+      high_risk: 'High risk',
+      policy_violation: 'Policy violation',
+      sensitive_data: 'Sensitive data',
+      unknown_provider_risk: 'Unknown provider risk',
+    };
+    return labels[reason] || String(reason || 'High risk').replace(/_/g, ' ');
   };
 
   // State timeline helper
@@ -246,6 +264,9 @@ const ApprovalQueue = () => {
                       </span>
                     )}
                     {getStatusBadge(app.status)}
+                    <span className="px-2.5 py-0.5 rounded text-xs font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+                      {formatReason(app.reason)}
+                    </span>
                     {app.status === 'pending' && (
                       <span className="flex items-center gap-1.5 text-amber-400 text-xs font-mono">
                         <Clock className="w-4 h-4" />
@@ -292,6 +313,10 @@ const ApprovalQueue = () => {
                     <div>Created: <span className="text-white">{formatDate(app.created_at)}</span></div>
                     {app.approved_at && <div>Approved: <span className="text-white">{formatDate(app.approved_at)}</span></div>}
                     {app.executed_at && <div>Executed: <span className="text-white">{formatDate(app.executed_at)}</span></div>}
+                    {app.approved_by && <div>Approved By: <span className="text-white">{app.approved_by}</span></div>}
+                    {app.rejected_by && <div>Rejected By: <span className="text-white">{app.rejected_by}</span></div>}
+                    {app.executed_by && <div>Executed By: <span className="text-white">{app.executed_by}</span></div>}
+                    <div>MFA: <span className={app.mfa_verified ? 'text-emerald-400' : 'text-gray-500'}>{app.mfa_verified ? 'Verified' : 'Not verified'}</span></div>
                   </div>
 
                   <div className="flex gap-3 ml-auto shrink-0">
@@ -322,6 +347,24 @@ const ApprovalQueue = () => {
                     )}
                   </div>
                 </div>
+
+                {Array.isArray(app.history) && app.history.length > 0 && (
+                  <div className="bg-slate-950/40 border border-white/5 rounded-xl p-4 space-y-2">
+                    <div className="text-xs font-bold text-gray-300 uppercase tracking-wider">Approval Audit Trail</div>
+                    <div className="space-y-2">
+                      {app.history.slice(-4).map((event, idx) => (
+                        <div key={`${event.action}-${idx}`} className="flex flex-col md:flex-row md:items-center md:justify-between gap-1 text-xs text-gray-400 border-t border-white/5 pt-2 first:border-t-0 first:pt-0">
+                          <span>
+                            <span className="text-white font-semibold">{event.action}</span>
+                            {event.actor && <span> by {event.actor}</span>}
+                            {event.comment && <span className="text-gray-300"> - {event.comment}</span>}
+                          </span>
+                          <span className="font-mono text-gray-500">{formatDate(event.created_at)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -373,6 +416,17 @@ const ApprovalQueue = () => {
                 value={mfaCode}
                 onChange={(e) => setMfaCode(e.target.value)}
                 className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-gray-400 uppercase tracking-wider font-semibold block">Approval Comment</label>
+              <textarea
+                rows={3}
+                placeholder="Why are you approving this request?"
+                value={approvalComment}
+                onChange={(e) => setApprovalComment(e.target.value)}
+                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors resize-none"
               />
             </div>
 

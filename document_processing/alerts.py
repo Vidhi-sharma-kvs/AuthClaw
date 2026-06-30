@@ -59,12 +59,17 @@ Remediation Recommendation:
         logger.error(f"Failed to write to alerts.log: {e}")
 
     # 2. SMTP Email Dispatching
+    if os.getenv("SKIP_EMAIL_DELIVERY_FOR_TESTING", "").lower() in {"1", "true", "yes", "on"}:
+        logger.info("SMTP alert delivery skipped by SKIP_EMAIL_DELIVERY_FOR_TESTING. Alert logged to alerts.log.")
+        return
+
     smtp_host = os.getenv("SMTP_HOST")
     smtp_port = os.getenv("SMTP_PORT", "587")
     smtp_user = os.getenv("SMTP_USERNAME")
     smtp_pass = os.getenv("SMTP_PASSWORD")
-    from_email = os.getenv("SMTP_FROM_EMAIL", "no-reply@authclaw.co")
+    from_email = os.getenv("SMTP_FROM") or os.getenv("SMTP_FROM_EMAIL", "no-reply@authclaw.co")
     admin_email = os.getenv("ADMIN_EMAIL", "compliance-admin@authclaw.co")
+    smtp_use_tls = os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes", "on"}
 
     if smtp_host:
         try:
@@ -74,12 +79,12 @@ Remediation Recommendation:
             msg["Subject"] = subject
             msg.attach(MIMEText(body, "plain"))
             
-            server = smtplib.SMTP(smtp_host, int(smtp_port), timeout=10)
-            server.starttls()
-            if smtp_user and smtp_pass:
-                server.login(smtp_user, smtp_pass)
-            server.sendmail(from_email, [admin_email], msg.as_string())
-            server.quit()
+            with smtplib.SMTP(smtp_host, int(smtp_port), timeout=10) as server:
+                if smtp_use_tls:
+                    server.starttls()
+                if smtp_user and smtp_pass:
+                    server.login(smtp_user, smtp_pass)
+                server.sendmail(from_email, [admin_email], msg.as_string())
             logger.info(f"Successfully sent security alert email to {admin_email}")
         except Exception as e:
             logger.error(f"Failed to send email alert: {e}")

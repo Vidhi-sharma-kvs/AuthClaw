@@ -17,6 +17,17 @@ def redact_node(state):
     triggered = result.findings
     state["security_approved"] = result.approved
     state["security_findings"] = triggered
+    state["security_policy_action"] = "allow"
+    finding_actions = {str(t.get("action", "redact")).lower() for t in triggered}
+    if "block" in finding_actions:
+        state["allowed"] = False
+        state["block_reason"] = "Sensitive data policy blocked the request before provider execution."
+        state["block_category"] = "sensitive_data"
+        state["policy_decision"] = "block"
+        state["security_policy_action"] = "block"
+    elif "require_approval" in finding_actions:
+        state["security_policy_action"] = "require_approval"
+        state["risk_level"] = "HIGH"
 
     # Log Security Agent events
     if triggered:
@@ -26,7 +37,7 @@ def redact_node(state):
             session_id=session_id,
             agent_name="Security Agent",
             event_type="PII_DETECTED",
-            details=f"Sensitive items matching {policy_names} identified in user query."
+            details=f"Sensitive items matching {policy_names} identified in user query. Actions: {', '.join(sorted(finding_actions))}."
         )
         log_agent_event(
             tenant_id=tenant_id,

@@ -5,11 +5,11 @@ import uuid
 import logging
 import json
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional
+from typing import Dict, List, Optional
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException, Response, status, Request, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from graph import graph
@@ -18,6 +18,8 @@ from approval_store import (
     approved_results,
     get_approval,
     get_all_approvals,
+    get_approval_history,
+    append_approval_audit,
     remaining_seconds,
 )
 from memory import get_history, add_message
@@ -48,12 +50,17 @@ async def lifespan(app: FastAPI):
     validate_environment()
     initialize_provider()
     
-    # 4. Start background compliance watcher for watched_documents folder
-    from document_processing.monitoring import start_background_monitoring
-    try:
-        start_background_monitoring()
-    except Exception as ex:
-        logger.error(f"Failed to start background document monitoring: {ex}")
+    # 4. Start background compliance watcher for watched_documents folder.
+    # Local smoke tests can disable this so provider/email limits do not obscure
+    # the core gateway, auth, and UI startup path.
+    if env_bool("AUTHCLAW_DISABLE_BACKGROUND_MONITOR", False):
+        logger.info("Background document compliance monitor disabled by AUTHCLAW_DISABLE_BACKGROUND_MONITOR.")
+    else:
+        from document_processing.monitoring import start_background_monitoring
+        try:
+            start_background_monitoring()
+        except Exception as ex:
+            logger.error(f"Failed to start background document monitoring: {ex}")
         
     yield
     
@@ -247,6 +254,65 @@ def get_current_user_from_authorization(authorization: str = Header(None)) -> di
         raise HTTPException(status_code=401, detail="Invalid session token.")
     return payload
 
+def optional_user_from_request(request: Request) -> dict:
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        return {}
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else auth_header
+    payload = decode_jwt(token)
+    return payload or {}
+
+def approval_actor_from_payload(payload: dict) -> str:
+    return payload.get("email") or payload.get("sub") or "System Admin"
+
+def ensure_approval_tenant_access(record: dict, payload: dict) -> None:
+    tenant_id = payload.get("tenant_id")
+    if tenant_id is not None and record.get("tenant_id") is not None and record.get("tenant_id") != tenant_id:
+        raise HTTPException(status_code=404, detail="Approval ID not found")
+
+def approval_response_record(record: dict, tenant_id: int = None) -> dict:
+    return {
+        "approval_id": record["approval_id"],
+        "status": record["status"],
+        "created_at": record["created_at"],
+        "expires_at": record["expires_at"],
+        "remaining_seconds": remaining_seconds(record),
+        "approved_at": record["approved_at"],
+        "rejected_at": record["rejected_at"],
+        "executed_at": record["executed_at"],
+        "requested_action": record["requested_action"],
+        "query": record["query"],
+        "request_id": record["request_id"],
+        "correlation_id": record["correlation_id"],
+        "tenant_id": record.get("tenant_id"),
+        "risk_level": record.get("risk_level"),
+        "reason": record.get("reason") or "high_risk",
+        "comments": record.get("comments") or [],
+        "approved_by": record.get("approved_by"),
+        "rejected_by": record.get("rejected_by"),
+        "executed_by": record.get("executed_by"),
+        "mfa_verified": bool(record.get("mfa_verified", False)),
+        "last_action_at": record.get("last_action_at"),
+        "history": get_approval_history(record["approval_id"], tenant_id=tenant_id),
+        "metadata": record.get("metadata", {}),
+    }
+
+async def parse_approval_action_payload(request: Request) -> dict:
+    body_bytes = await request.body()
+    if not body_bytes:
+        return {"_body_present": False}
+    try:
+        payload = json.loads(body_bytes)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid JSON payload"
+        )
+    if not isinstance(payload, dict):
+        payload = {}
+    payload["_body_present"] = True
+    return payload
+
 def require_platform_admin(payload: dict = Depends(get_current_user_from_authorization)) -> dict:
     if payload.get("role") != "Platform Admin":
         raise HTTPException(status_code=403, detail="Platform admin access required.")
@@ -323,6 +389,79 @@ class ChatCompletionResponse(BaseModel):
     created: int = Field(default_factory=lambda: int(time.time()))
     model: str = "authclaw-gateway"
     choices: List[ChatCompletionResponseChoice]
+
+
+def _stream_text_chunks(text: str, chunk_size: int = 80):
+    if not text:
+        return
+    for start in range(0, len(text), chunk_size):
+        yield text[start:start + chunk_size]
+
+
+def _openai_completion_stream(
+    *,
+    content: str,
+    model: str,
+    request_id: str,
+    tenant_id: int,
+    trace: list,
+):
+    completion_id = f"chatcmpl-{uuid.uuid4()}"
+    created = int(time.time())
+
+    def sse(payload: dict) -> str:
+        return f"data: {json.dumps(payload)}\n\n"
+
+    yield sse({
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "request_id": request_id,
+        "tenant_id": tenant_id,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"role": "assistant"},
+                "finish_reason": None,
+            }
+        ],
+    })
+
+    for chunk in _stream_text_chunks(content):
+        yield sse({
+            "id": completion_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "request_id": request_id,
+            "tenant_id": tenant_id,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": chunk},
+                    "finish_reason": None,
+                }
+            ],
+        })
+
+    yield sse({
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "request_id": request_id,
+        "tenant_id": tenant_id,
+        "trace": trace,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {},
+                "finish_reason": "stop",
+            }
+        ],
+    })
+    yield "data: [DONE]\n\n"
 
 
 @app.get("/")
@@ -583,59 +722,55 @@ def redact_playground(
     triggered_names = "None"
     if triggered:
         triggered_names = ", ".join(list(set([t["policy_name"] for t in triggered])))
+    confidence = 100
+    if triggered:
+        confidence = round(max(float(t.get("confidence", 0.8)) for t in triggered) * 100)
 
     return {
         "redacted_text": redacted_text,
         "count": len(triggered),
-        "confidence": 98 if len(triggered) > 0 else 100,
-        "triggered": triggered_names
+        "confidence": confidence,
+        "triggered": triggered_names,
+        "findings": triggered
     }
 
 
 @app.get("/approvals")
-def get_approvals_list():
-    approvals = get_all_approvals()
-    result = []
-    for aid, record in approvals.items():
-        result.append({
-            "approval_id": record["approval_id"],
-            "status": record["status"],
-            "created_at": record["created_at"],
-            "expires_at": record["expires_at"],
-            "remaining_seconds": remaining_seconds(record),
-            "approved_at": record["approved_at"],
-            "rejected_at": record["rejected_at"],
-            "executed_at": record["executed_at"],
-            "requested_action": record["requested_action"],
-            "query": record["query"],
-            "request_id": record["request_id"],
-            "correlation_id": record["correlation_id"]
-        })
-    return result
+def get_approvals_list(authorization: Optional[str] = Header(None)):
+    tenant_id = None
+    if authorization:
+        tenant_id = resolve_tenant_from_authorization(authorization)
+    approvals = get_all_approvals(tenant_id=tenant_id)
+    return [approval_response_record(record, tenant_id=tenant_id) for record in approvals.values()]
 
 
 @app.get("/approvals/{approval_id}")
-def get_approval_by_id(approval_id: str):
+def get_approval_by_id(approval_id: str, authorization: Optional[str] = Header(None)):
     record = get_approval(approval_id)
     if record is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Approval ID not found"
         )
-    return {
-        "approval_id": record["approval_id"],
-        "status": record["status"],
-        "created_at": record["created_at"],
-        "expires_at": record["expires_at"],
-        "remaining_seconds": remaining_seconds(record),
-        "approved_at": record["approved_at"],
-        "rejected_at": record["rejected_at"],
-        "executed_at": record["executed_at"],
-        "requested_action": record["requested_action"],
-        "query": record["query"],
-        "request_id": record["request_id"],
-        "correlation_id": record["correlation_id"]
-    }
+    tenant_id = None
+    if authorization:
+        payload = get_current_user_from_authorization(authorization)
+        ensure_approval_tenant_access(record, payload)
+        tenant_id = payload.get("tenant_id")
+    return approval_response_record(record, tenant_id=tenant_id)
+
+
+@app.get("/approvals/{approval_id}/history")
+def get_approval_history_by_id(approval_id: str, authorization: Optional[str] = Header(None)):
+    record = get_approval(approval_id)
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval ID not found")
+    tenant_id = None
+    if authorization:
+        payload = get_current_user_from_authorization(authorization)
+        ensure_approval_tenant_access(record, payload)
+        tenant_id = payload.get("tenant_id")
+    return get_approval_history(approval_id, tenant_id=tenant_id)
 
 
 @app.post("/approve/{approval_id}")
@@ -647,6 +782,10 @@ async def approve_request(approval_id: str, request: Request):
             status_code=status.HTTP_404_NOT_FOUND,
             content={"error": "Approval ID not found"}
         )
+
+    user_payload = optional_user_from_request(request)
+    ensure_approval_tenant_access(record, user_payload)
+    approver = approval_actor_from_payload(user_payload)
 
     # Expiry check is handled by get_approval() lazily updating to 'expired'
     if record["status"] == "expired":
@@ -670,18 +809,14 @@ async def approve_request(approval_id: str, request: Request):
     approval_policy = policy.get("approval", {})
     require_mfa = approval_policy.get("require_mfa", True)
 
-    body_bytes = await request.body()
-    try:
-        payload = json.loads(body_bytes) if body_bytes else {}
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid JSON payload"
-        )
+    payload = await parse_approval_action_payload(request)
+    body_present = bool(payload.pop("_body_present", False))
+    comment = (payload.get("comment") or "").strip() or None
 
     from startup.audit import log_approval_event
 
-    if require_mfa and body_bytes:
+    mfa_verified = False
+    if require_mfa and body_present:
         mfa_code = payload.get("mfa_code") if isinstance(payload, dict) else None
         if not mfa_code:
             raise HTTPException(
@@ -729,28 +864,32 @@ async def approve_request(approval_id: str, request: Request):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid MFA code"
             )
+        mfa_verified = True
 
     # Transition status to approved
     record["status"] = "approved"
     record["approved_at"] = datetime.now(timezone.utc).isoformat()
+    record["approved_by"] = approver
+    record["mfa_verified"] = mfa_verified
+    record["last_action_at"] = record["approved_at"]
+    append_approval_audit(
+        record,
+        action="approved",
+        actor=approver,
+        comment=comment,
+        mfa_verified=mfa_verified,
+        metadata={"legacy_empty_body_bypass": require_mfa and not body_present},
+    )
 
     log_approval_event(
         event="approval_approved",
         approval_id=record["approval_id"],
         request_id=record["request_id"],
         correlation_id=record["correlation_id"],
-        extra={"approved_at": record["approved_at"]}
+        extra={"approved_at": record["approved_at"], "approved_by": approver, "mfa_verified": mfa_verified}
     )
 
     # Create blockchain audit record for approval decision
-    auth_header = request.headers.get("Authorization")
-    approver = "System Admin"
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.split(" ")[1]
-        payload = decode_jwt(token)
-        if payload and "sub" in payload:
-            approver = payload["sub"]
-
     from verify_audit import create_audit_block
     create_audit_block(
         query=record["query"],
@@ -782,13 +921,20 @@ async def approve_request(approval_id: str, request: Request):
 
 
 @app.post("/reject/{approval_id}")
-def reject_request(approval_id: str, request: Request):
+async def reject_request(approval_id: str, request: Request):
     record = get_approval(approval_id)
     if record is None:
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
             content={"error": "Approval ID not found"}
         )
+
+    user_payload = optional_user_from_request(request)
+    ensure_approval_tenant_access(record, user_payload)
+    approver = approval_actor_from_payload(user_payload)
+    payload = await parse_approval_action_payload(request)
+    payload.pop("_body_present", None)
+    comment = (payload.get("comment") or "").strip() or None
 
     if record["status"] == "expired":
         raise HTTPException(
@@ -808,6 +954,15 @@ def reject_request(approval_id: str, request: Request):
 
     record["status"] = "rejected"
     record["rejected_at"] = datetime.now(timezone.utc).isoformat()
+    record["rejected_by"] = approver
+    record["last_action_at"] = record["rejected_at"]
+    append_approval_audit(
+        record,
+        action="rejected",
+        actor=approver,
+        comment=comment,
+        metadata={"reason": record.get("reason")},
+    )
 
     from startup.audit import log_approval_event
     log_approval_event(
@@ -815,18 +970,10 @@ def reject_request(approval_id: str, request: Request):
         approval_id=record["approval_id"],
         request_id=record["request_id"],
         correlation_id=record["correlation_id"],
-        extra={"rejected_at": record["rejected_at"]}
+        extra={"rejected_at": record["rejected_at"], "rejected_by": approver}
     )
 
     # Create blockchain audit record for rejection decision
-    auth_header = request.headers.get("Authorization")
-    approver = "System Admin"
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.split(" ")[1]
-        payload = decode_jwt(token)
-        if payload and "sub" in payload:
-            approver = payload["sub"]
-
     from verify_audit import create_audit_block
     create_audit_block(
         query=record["query"],
@@ -856,13 +1003,20 @@ def reject_request(approval_id: str, request: Request):
 
 
 @app.post("/execute/{approval_id}")
-def execute_request(approval_id: str, request: Request):
+async def execute_request(approval_id: str, request: Request):
     record = get_approval(approval_id)
     if record is None:
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
             content={"error": "Request not approved"} # Match legacy error message
         )
+
+    user_payload = optional_user_from_request(request)
+    ensure_approval_tenant_access(record, user_payload)
+    approver = approval_actor_from_payload(user_payload)
+    payload = await parse_approval_action_payload(request)
+    payload.pop("_body_present", None)
+    comment = (payload.get("comment") or "").strip() or None
 
     if record["status"] != "approved":
         # Check if legacy expected error body
@@ -876,6 +1030,8 @@ def execute_request(approval_id: str, request: Request):
     # Transition status to executed
     record["status"] = "executed"
     record["executed_at"] = datetime.now(timezone.utc).isoformat()
+    record["executed_by"] = approver
+    record["last_action_at"] = record["executed_at"]
 
     # Execute the approved query through the canonical gateway lifecycle.
     try:
@@ -906,6 +1062,17 @@ def execute_request(approval_id: str, request: Request):
         )
 
     from startup.audit import log_approval_event
+    append_approval_audit(
+        record,
+        action="executed",
+        actor=approver,
+        comment=comment,
+        metadata={
+            "execution_request_id": execution.request_id,
+            "provider": execution.provider,
+            "model": execution.model,
+        },
+    )
     log_approval_event(
         event="approval_executed",
         approval_id=record["approval_id"],
@@ -919,14 +1086,6 @@ def execute_request(approval_id: str, request: Request):
     )
 
     # Create blockchain audit record for execution
-    auth_header = request.headers.get("Authorization")
-    approver = "System Admin"
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.split(" ")[1]
-        payload = decode_jwt(token)
-        if payload and "sub" in payload:
-            approver = payload["sub"]
-
     app_ts = None
     if record.get("approved_at"):
         try:
@@ -1204,18 +1363,37 @@ def chat_completions(
             }
         )
 
+    response_text = result.get("response", "No response generated")
+    response_model = execution.model or request.model or "authclaw-gateway"
+
+    if request.stream:
+        return StreamingResponse(
+            _openai_completion_stream(
+                content=response_text,
+                model=response_model,
+                request_id=execution.request_id,
+                tenant_id=execution.tenant_id,
+                trace=execution.trace,
+            ),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     response_payload = {
         "id": f"chatcmpl-{uuid.uuid4()}",
         "object": "chat.completion",
         "created": int(time.time()),
-        "model": "authclaw-gateway",
+        "model": response_model,
         "request_id": execution.request_id,
         "choices": [
             {
                 "index": 0,
                 "message": {
                     "role": "assistant",
-                    "content": result.get("response", "No response generated")
+                    "content": response_text
                 },
                 "finish_reason": "stop"
             }
@@ -1325,6 +1503,7 @@ def get_readiness():
     checks = {
         "database": "unknown",
         "production_validation": "not_applicable",
+        "document_storage": os.getenv("AUTHCLAW_DOCUMENT_STORAGE_BACKEND", "local"),
     }
     http_status = 200
     try:
@@ -1577,6 +1756,16 @@ class PolicyRequest(BaseModel):
     type: str
     rules: str
     enabled: bool
+    status: Optional[str] = None
+    severity_level: Optional[str] = None
+
+class PolicySimulationRequest(BaseModel):
+    name: Optional[str] = "Simulation Policy"
+    type: Optional[str] = "Custom"
+    rules: str
+    enabled: Optional[bool] = True
+    severity_level: Optional[str] = "MEDIUM"
+    sample_text: str
 
 class DocumentUploadRequest(BaseModel):
     name: str
@@ -1884,7 +2073,16 @@ def list_policies(authorization: Optional[str] = Header(None)):
         ensure_default_tenant_policies(conn, tenant_id)
         conn.commit()
         res = conn.execute(
-            text("SELECT id, name, type, rules, enabled, tenant_id FROM policies WHERE tenant_id = :tenant_id ORDER BY id ASC"),
+            text("""
+                SELECT id, name, type, rules, enabled, tenant_id,
+                       COALESCE(version, 1) AS version,
+                       COALESCE(status, 'published') AS status,
+                       COALESCE(severity_level, 'MEDIUM') AS severity_level,
+                       published_at, created_at, updated_at
+                FROM policies
+                WHERE tenant_id = :tenant_id
+                ORDER BY id ASC
+            """),
             {"tenant_id": tenant_id},
         )
         return [dict(r._mapping) for r in res]
@@ -1894,60 +2092,179 @@ def create_policy(policy: PolicyRequest, authorization: Optional[str] = Header(N
     from database import engine
     from sqlalchemy import text
     from verify_audit import create_audit_block
+    from services.policy_engine import PolicyEngine, record_policy_history
     tenant_id = resolve_tenant_from_authorization(authorization)
+    actor = "system"
+    try:
+        actor = get_current_user_from_authorization(authorization).get("sub") or actor
+    except Exception:
+        pass
+    rules = PolicyEngine().parse_rules(policy.rules)
+    status = policy.status or "published"
+    severity_level = policy.severity_level or "MEDIUM"
     with engine.connect() as conn:
-        conn.execute(
-            text("INSERT INTO policies (name, type, rules, enabled, tenant_id) VALUES (:name, :type, :rules, :enabled, :tenant_id)"),
-            {"name": policy.name, "type": policy.type, "rules": policy.rules, "enabled": policy.enabled, "tenant_id": tenant_id}
-        )
+        row = conn.execute(
+            text("""
+                INSERT INTO policies (
+                    name, type, rules, enabled, tenant_id, severity_level,
+                    version, status, published_at, created_by, updated_by, created_at, updated_at
+                )
+                VALUES (
+                    :name, :type, :rules, :enabled, :tenant_id, :severity_level,
+                    1, :status, CASE WHEN :status = 'published' THEN NOW() ELSE NULL END,
+                    :actor, :actor, NOW(), NOW()
+                )
+                RETURNING id
+            """),
+            {
+                "name": policy.name,
+                "type": policy.type,
+                "rules": json.dumps(rules),
+                "enabled": policy.enabled,
+                "tenant_id": tenant_id,
+                "severity_level": severity_level,
+                "status": status,
+                "actor": actor,
+            }
+        ).fetchone()
         conn.commit()
+    policy_id = row[0]
+    record_policy_history(
+        tenant_id=tenant_id,
+        policy_id=policy_id,
+        action="created",
+        actor=actor,
+        after_rules=rules,
+        version=1,
+        status=status,
+    )
     create_audit_block(
         query=f"Create Guardrail Policy: {policy.name}",
-        response=f"Compliance policy type {policy.type} configured and saved.",
+        response=f"Compliance policy type {policy.type} configured and saved at version 1.",
         allowed=True,
         risk_level="MEDIUM",
         approval_status="N/A",
         tenant_id=tenant_id
     )
-    return {"status": "success", "message": "Policy created."}
+    return {"status": "success", "message": "Policy created.", "policy_id": policy_id, "version": 1}
 
 @app.put("/policies/{policy_id}")
 def update_policy(policy_id: int, policy: PolicyRequest, authorization: Optional[str] = Header(None)):
     from database import engine
     from sqlalchemy import text
     from verify_audit import create_audit_block
+    from services.policy_engine import PolicyEngine, record_policy_history
     tenant_id = resolve_tenant_from_authorization(authorization)
+    actor = "system"
+    try:
+        actor = get_current_user_from_authorization(authorization).get("sub") or actor
+    except Exception:
+        pass
+    rules = PolicyEngine().parse_rules(policy.rules)
+    severity_level = policy.severity_level or "MEDIUM"
     with engine.connect() as conn:
+        before = conn.execute(
+            text("""
+                SELECT rules, COALESCE(version, 1) AS version, COALESCE(status, 'published') AS status
+                FROM policies
+                WHERE id = :id AND tenant_id = :tenant_id
+            """),
+            {"id": policy_id, "tenant_id": tenant_id},
+        ).fetchone()
+        if before is None:
+            raise HTTPException(status_code=404, detail="Policy not found.")
+        before_rules = PolicyEngine().parse_rules(before[0])
+        next_version = int(before[1] or 1) + 1
+        status = policy.status or before[2] or "published"
         result = conn.execute(
-            text("UPDATE policies SET name = :name, type = :type, rules = :rules, enabled = :enabled WHERE id = :id AND tenant_id = :tenant_id"),
-            {"name": policy.name, "type": policy.type, "rules": policy.rules, "enabled": policy.enabled, "id": policy_id, "tenant_id": tenant_id}
+            text("""
+                UPDATE policies
+                SET name = :name,
+                    type = :type,
+                    rules = :rules,
+                    enabled = :enabled,
+                    severity_level = :severity_level,
+                    version = :version,
+                    status = :status,
+                    published_at = CASE WHEN :status = 'published' THEN COALESCE(published_at, NOW()) ELSE published_at END,
+                    updated_by = :actor,
+                    updated_at = NOW()
+                WHERE id = :id AND tenant_id = :tenant_id
+            """),
+            {
+                "name": policy.name,
+                "type": policy.type,
+                "rules": json.dumps(rules),
+                "enabled": policy.enabled,
+                "severity_level": severity_level,
+                "version": next_version,
+                "status": status,
+                "actor": actor,
+                "id": policy_id,
+                "tenant_id": tenant_id,
+            }
         )
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="Policy not found.")
         conn.commit()
+    record_policy_history(
+        tenant_id=tenant_id,
+        policy_id=policy_id,
+        action="updated",
+        actor=actor,
+        before_rules=before_rules,
+        after_rules=rules,
+        version=next_version,
+        status=status,
+    )
     create_audit_block(
         query=f"Update Policy (ID {policy_id}): {policy.name}",
-        response=f"Guardrail configurations modified. Active status is: {policy.enabled}.",
+        response=f"Guardrail configurations modified. Active status is: {policy.enabled}. Version: {next_version}.",
         allowed=True,
         risk_level="MEDIUM",
         approval_status="N/A",
         tenant_id=tenant_id
     )
-    return {"status": "success", "message": "Policy updated."}
+    return {"status": "success", "message": "Policy updated.", "version": next_version}
 
 @app.delete("/policies/{policy_id}")
 def delete_policy(policy_id: int, authorization: Optional[str] = Header(None)):
     from database import engine
     from sqlalchemy import text
     from verify_audit import create_audit_block
+    from services.policy_engine import PolicyEngine, record_policy_history
     tenant_id = resolve_tenant_from_authorization(authorization)
+    actor = "system"
+    try:
+        actor = get_current_user_from_authorization(authorization).get("sub") or actor
+    except Exception:
+        pass
     with engine.connect() as conn:
-        row = conn.execute(text("SELECT name FROM policies WHERE id = :id AND tenant_id = :tenant_id"), {"id": policy_id, "tenant_id": tenant_id}).fetchone()
+        row = conn.execute(
+            text("""
+                SELECT name, rules, COALESCE(version, 1) AS version, COALESCE(status, 'published') AS status
+                FROM policies
+                WHERE id = :id AND tenant_id = :tenant_id
+            """),
+            {"id": policy_id, "tenant_id": tenant_id}
+        ).fetchone()
         name = row[0] if row else f"ID {policy_id}"
+        before_rules = PolicyEngine().parse_rules(row[1]) if row else {}
+        version = int(row[2] or 1) if row else 1
+        status = row[3] if row else "deleted"
         result = conn.execute(text("DELETE FROM policies WHERE id = :id AND tenant_id = :tenant_id"), {"id": policy_id, "tenant_id": tenant_id})
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="Policy not found.")
         conn.commit()
+    record_policy_history(
+        tenant_id=tenant_id,
+        policy_id=None,
+        action="deleted",
+        actor=actor,
+        before_rules=before_rules,
+        version=version,
+        status=status,
+    )
     create_audit_block(
         query=f"Delete Compliance Policy: {name}",
         response=f"Policy '{name}' deleted.",
@@ -1958,32 +2275,171 @@ def delete_policy(policy_id: int, authorization: Optional[str] = Header(None)):
     )
     return {"status": "success", "message": "Policy deleted."}
 
+@app.post("/policies/simulate")
+def simulate_policy(policy: PolicySimulationRequest, authorization: Optional[str] = Header(None)):
+    from services.policy_engine import PolicyEngine
+    tenant_id = resolve_tenant_from_authorization(authorization)
+    actor = "system"
+    try:
+        actor = get_current_user_from_authorization(authorization).get("sub") or actor
+    except Exception:
+        pass
+    policy_payload = policy.model_dump() if hasattr(policy, "model_dump") else policy.dict()
+    return PolicyEngine().simulate(policy_payload, policy.sample_text, tenant_id, actor)
+
+@app.post("/policies/{policy_id}/simulate")
+def simulate_existing_policy(policy_id: int, payload: Dict[str, str], authorization: Optional[str] = Header(None)):
+    from database import engine
+    from sqlalchemy import text
+    from services.policy_engine import PolicyEngine
+    tenant_id = resolve_tenant_from_authorization(authorization)
+    actor = "system"
+    try:
+        actor = get_current_user_from_authorization(authorization).get("sub") or actor
+    except Exception:
+        pass
+    sample_text = payload.get("sample_text", "")
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("""
+                SELECT id, name, type, rules, enabled, COALESCE(version, 1) AS version, COALESCE(severity_level, 'MEDIUM') AS severity_level
+                FROM policies
+                WHERE id = :id AND tenant_id = :tenant_id
+            """),
+            {"id": policy_id, "tenant_id": tenant_id},
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Policy not found.")
+    policy_payload = dict(row._mapping)
+    policy_payload["sample_text"] = sample_text
+    return PolicyEngine().simulate(policy_payload, sample_text, tenant_id, actor)
+
+@app.post("/policies/{policy_id}/publish")
+def publish_policy(policy_id: int, authorization: Optional[str] = Header(None)):
+    from database import engine
+    from sqlalchemy import text
+    from verify_audit import create_audit_block
+    from services.policy_engine import PolicyEngine, record_policy_history
+    tenant_id = resolve_tenant_from_authorization(authorization)
+    actor = "system"
+    try:
+        actor = get_current_user_from_authorization(authorization).get("sub") or actor
+    except Exception:
+        pass
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("""
+                SELECT name, rules, COALESCE(version, 1) AS version
+                FROM policies
+                WHERE id = :id AND tenant_id = :tenant_id
+            """),
+            {"id": policy_id, "tenant_id": tenant_id},
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Policy not found.")
+        rules = PolicyEngine().parse_rules(row[1])
+        version = int(row[2] or 1)
+        conn.execute(
+            text("""
+                UPDATE policies
+                SET status = 'published', published_at = NOW(), updated_by = :actor, updated_at = NOW()
+                WHERE id = :id AND tenant_id = :tenant_id
+            """),
+            {"id": policy_id, "tenant_id": tenant_id, "actor": actor},
+        )
+        conn.commit()
+    record_policy_history(
+        tenant_id=tenant_id,
+        policy_id=policy_id,
+        action="published",
+        actor=actor,
+        after_rules=rules,
+        version=version,
+        status="published",
+    )
+    create_audit_block(
+        query=f"Publish Policy (ID {policy_id}): {row[0]}",
+        response=f"Policy '{row[0]}' published at version {version}.",
+        allowed=True,
+        risk_level="MEDIUM",
+        approval_status="N/A",
+        tenant_id=tenant_id,
+    )
+    return {"status": "success", "message": "Policy published.", "version": version}
+
+@app.get("/policies/{policy_id}/history")
+def policy_history(policy_id: int, authorization: Optional[str] = Header(None)):
+    from database import engine
+    from sqlalchemy import text
+    tenant_id = resolve_tenant_from_authorization(authorization)
+    with engine.connect() as conn:
+        exists = conn.execute(
+            text("SELECT id FROM policies WHERE id = :id AND tenant_id = :tenant_id"),
+            {"id": policy_id, "tenant_id": tenant_id},
+        ).fetchone()
+        if not exists:
+            historical = conn.execute(
+                text("SELECT id FROM policy_audit_history WHERE policy_id = :id AND tenant_id = :tenant_id LIMIT 1"),
+                {"id": policy_id, "tenant_id": tenant_id},
+            ).fetchone()
+            if not historical:
+                raise HTTPException(status_code=404, detail="Policy not found.")
+        rows = conn.execute(
+            text("""
+                SELECT id, tenant_id, policy_id, action, actor, before_rules, after_rules,
+                       version, status, created_at
+                FROM policy_audit_history
+                WHERE policy_id = :id AND tenant_id = :tenant_id
+                ORDER BY id DESC
+            """),
+            {"id": policy_id, "tenant_id": tenant_id},
+        ).fetchall()
+    return [dict(row._mapping) for row in rows]
+
 
 # 6. RAG DOCUMENTS
 @app.get("/rag/documents")
-def get_documents():
+def get_documents(
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
     from database import engine
     from sqlalchemy import text
+    tenant_id = resolve_tenant(x_api_key, authorization)
     with engine.connect() as conn:
-        res = conn.execute(text("SELECT id, name, type, size_bytes, status, last_indexed, chunks_count FROM knowledge_documents ORDER BY id DESC"))
+        res = conn.execute(
+            text("""
+                SELECT id, name, type, size_bytes, status, last_indexed, chunks_count
+                FROM knowledge_documents
+                WHERE tenant_id = :tenant_id
+                ORDER BY id DESC
+            """),
+            {"tenant_id": tenant_id}
+        )
         return [dict(r._mapping) for r in res]
 
 @app.post("/rag/documents")
-def create_document(doc: DocumentUploadRequest):
+def create_document(
+    doc: DocumentUploadRequest,
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
     from database import engine
     from sqlalchemy import text
     from verify_audit import create_audit_block
     from rag.embeddings import generate_embedding
+    tenant_id = resolve_tenant(x_api_key, authorization)
     today = datetime.now(timezone.utc).date().isoformat()
     chunks_count = max(1, int(doc.size_bytes // 50000))
     with engine.connect() as conn:
         res = conn.execute(
             text("""
-            INSERT INTO knowledge_documents (name, type, size_bytes, status, last_indexed, chunks_count)
-            VALUES (:name, :type, :size_bytes, 'indexed', :last_indexed, :chunks_count)
+            INSERT INTO knowledge_documents (tenant_id, name, type, size_bytes, status, last_indexed, chunks_count)
+            VALUES (:tenant_id, :name, :type, :size_bytes, 'indexed', :last_indexed, :chunks_count)
             RETURNING id
             """),
             {
+                "tenant_id": tenant_id,
                 "name": doc.name,
                 "type": doc.type,
                 "size_bytes": doc.size_bytes,
@@ -2000,10 +2456,11 @@ def create_document(doc: DocumentUploadRequest):
             vector = generate_embedding(content_text)
             conn.execute(
                 text("""
-                INSERT INTO knowledge_chunks (document_id, content, embedding_preview, embedding_vector)
-                VALUES (:doc_id, :content, :emb, :vec)
+                INSERT INTO knowledge_chunks (tenant_id, document_id, content, embedding_preview, embedding_vector)
+                VALUES (:tenant_id, :doc_id, :content, :emb, :vec)
                 """),
                 {
+                    "tenant_id": tenant_id,
                     "doc_id": inserted_id,
                     "content": content_text,
                     "emb": f"[{round(0.1*i,2)}, {round(-0.15*i,2)}, ...]",
@@ -2016,7 +2473,8 @@ def create_document(doc: DocumentUploadRequest):
         response=f"Document uploaded and indexed successfully into {chunks_count} vector chunks.",
         allowed=True,
         risk_level="LOW",
-        approval_status="N/A"
+        approval_status="N/A",
+        tenant_id=tenant_id
     )
     return {"status": "success", "message": "Document uploaded and indexed successfully."}
 
@@ -2028,13 +2486,35 @@ def parse_document_id(doc_id_str: str) -> int:
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid document ID format. Must be like 'doc_123' or '123'")
 
+def resolve_document_record(conn, doc_id: int, tenant_id: int):
+    from sqlalchemy import text
+
+    row = conn.execute(
+        text("SELECT id, filename FROM documents WHERE id = :id AND tenant_id = :tenant_id"),
+        {"id": doc_id, "tenant_id": tenant_id}
+    ).fetchone()
+    if row:
+        return row
+
+    k_doc = conn.execute(
+        text("SELECT name FROM knowledge_documents WHERE id = :id AND tenant_id = :tenant_id"),
+        {"id": doc_id, "tenant_id": tenant_id}
+    ).fetchone()
+    if not k_doc:
+        return None
+
+    return conn.execute(
+        text("SELECT id, filename FROM documents WHERE filename = :name AND tenant_id = :tenant_id ORDER BY id DESC LIMIT 1"),
+        {"name": k_doc[0], "tenant_id": tenant_id}
+    ).fetchone()
+
 @app.post("/documents/upload")
 async def upload_document(
     file: UploadFile = File(...),
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None)
 ):
-    resolve_tenant(x_api_key, authorization)
+    tenant_id = resolve_tenant(x_api_key, authorization)
     
     contents = await file.read()
     filename = file.filename
@@ -2048,11 +2528,12 @@ async def upload_document(
     with engine.connect() as conn:
         res = conn.execute(
             text("""
-            INSERT INTO documents (filename, source, size_bytes, status, risk_score, severity)
-            VALUES (:filename, 'local', :size_bytes, 'pending', 0, 'LOW')
+            INSERT INTO documents (tenant_id, filename, source, size_bytes, status, risk_score, severity)
+            VALUES (:tenant_id, :filename, 'local', :size_bytes, 'pending', 0, 'LOW')
             RETURNING id
             """),
             {
+                "tenant_id": tenant_id,
                 "filename": filename,
                 "size_bytes": size_bytes
             }
@@ -2063,7 +2544,7 @@ async def upload_document(
     # 2. Run compliance scanning pipeline
     from document_processing.orchestrator import run_document_scan_pipeline
     try:
-        pipeline_res = run_document_scan_pipeline(doc_id, contents, filename, source="local")
+        pipeline_res = run_document_scan_pipeline(doc_id, contents, filename, source="local", tenant_id=tenant_id)
     except Exception as ex:
         # Fallback if pipeline fails (e.g. LLM issues) so document is still indexed
         logger.error(f"Scan pipeline failed, fallback indexing document: {ex}")
@@ -2081,8 +2562,8 @@ async def upload_document(
     # 3. Find matching knowledge_document ID for frontend backward compatibility
     with engine.connect() as conn:
         k_doc_row = conn.execute(
-            text("SELECT id FROM knowledge_documents WHERE name = :name"),
-            {"name": filename}
+            text("SELECT id FROM knowledge_documents WHERE name = :name AND tenant_id = :tenant_id"),
+            {"name": filename, "tenant_id": tenant_id}
         ).fetchone()
         k_doc_id = k_doc_row[0] if k_doc_row else doc_id
         
@@ -2090,6 +2571,180 @@ async def upload_document(
         "document_id": f"doc_{k_doc_id}",
         "status": "indexed",
         "pipeline_results": pipeline_res
+    }
+
+@app.post("/gateway/documents/redact")
+async def redact_gateway_document(
+    file: UploadFile = File(...),
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    start_time = time.time()
+    request_id = f"doc-{uuid.uuid4()}"
+    session_id = request_id
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    username = "gateway_document_user"
+    if authorization:
+        token = authorization[7:] if authorization.startswith("Bearer ") else authorization
+        payload = decode_jwt(token)
+        if payload:
+            username = payload.get("sub") or payload.get("email") or username
+
+    filename = file.filename or "uploaded-document"
+    extension = os.path.splitext(filename)[1].lower()
+    image_extensions = {".png", ".jpg", ".jpeg", ".tiff", ".tif"}
+    supported_extensions = {
+        ".pdf", ".docx", ".txt", ".text", ".md", ".markdown", ".csv", ".xlsx", ".xls", *image_extensions
+    }
+
+    def event(agent: str, event_type: str, details: str, sequence: int) -> dict:
+        from verify_audit import log_agent_event
+        log_agent_event(
+            tenant_id=tenant_id,
+            session_id=session_id,
+            agent_name=agent,
+            event_type=event_type,
+            details=details,
+            request_id=request_id,
+            sequence=sequence,
+        )
+        return {
+            "agent": agent,
+            "event": event_type,
+            "details": details,
+            "request_id": request_id,
+            "sequence": sequence,
+        }
+
+    trace = [
+        event("Gateway Agent", "DOCUMENT_RECEIVED", f"Accepted upload '{filename}' for tenant {tenant_id}.", 1)
+    ]
+
+    contents = await file.read()
+    size_bytes = len(contents)
+    max_size_bytes = int(os.getenv("AUTHCLAW_DOCUMENT_REDACTION_MAX_BYTES", str(10 * 1024 * 1024)))
+    if size_bytes > max_size_bytes:
+        trace.append(event("Security Agent", "DOCUMENT_REJECTED_SIZE_LIMIT", f"Upload size {size_bytes} exceeds limit {max_size_bytes}.", 2))
+        raise HTTPException(status_code=413, detail="Document is too large for gateway redaction.")
+
+    if extension not in supported_extensions:
+        trace.append(event("Security Agent", "DOCUMENT_REJECTED_UNSUPPORTED_TYPE", f"Unsupported file extension '{extension or 'none'}'.", 2))
+        raise HTTPException(status_code=415, detail="Unsupported document type for gateway redaction.")
+
+    from document_processing.parsers import extract_document_pages
+    extraction = extract_document_pages(contents, filename)
+    extracted_text = extraction.text
+    if not extracted_text.strip():
+        detail = "No extractable text found in document."
+        if extraction.ocr_status == "unavailable":
+            detail = f"OCR is unavailable for this file: {extraction.ocr_error}"
+        trace.append(event("Security Agent", "DOCUMENT_TEXT_EXTRACTION_EMPTY", detail, 2))
+        raise HTTPException(status_code=422, detail=detail)
+
+    trace.append(event(
+        "Security Agent",
+        "DOCUMENT_TEXT_EXTRACTED",
+        f"Extracted {len(extracted_text)} characters from '{filename}' using {extraction.extraction_method}. OCR status: {extraction.ocr_status}.",
+        2
+    ))
+
+    from document_processing.intelligence import analyze_and_redact_document
+    document_analysis = analyze_and_redact_document(extraction, username=username, tenant_id=tenant_id)
+    redacted_text = document_analysis["redacted_text"]
+    triggered = document_analysis["findings"]
+    redacted_count = len(triggered)
+    finding_actions = {str(item.get("action_taken") or item.get("action") or "").lower() for item in triggered}
+    decision = "BLOCK" if "block" in finding_actions else ("REDACT" if redacted_count else "ALLOW")
+    risk_level = "HIGH" if decision == "BLOCK" else ("MEDIUM" if redacted_count else "LOW")
+    trace.append(event(
+        "Security Agent",
+        "DOCUMENT_REDACTION_APPLIED" if redacted_count else "DOCUMENT_REDACTION_CLEAN",
+        f"Detected {redacted_count} sensitive field(s). Actions: {', '.join(sorted(finding_actions)) or 'allow'}.",
+        3,
+    ))
+    trace.append(event("Policy Agent", "DOCUMENT_POLICY_EVALUATED", f"Decision: {decision}; risk level: {risk_level}.", 4))
+
+    from verify_audit import create_audit_block
+    audit_id = create_audit_block(
+        query=f"Document Redaction: {filename}",
+        response=f"Redacted {redacted_count} sensitive field(s) from uploaded document.",
+        allowed=decision != "BLOCK",
+        risk_level=risk_level,
+        approval_status="N/A",
+        session_id=session_id,
+        username=username,
+        tenant_id=tenant_id,
+        policy_name="gateway_document_redaction",
+        policy_type="document_redaction",
+    )
+    trace.append(event("Audit Agent", "DOCUMENT_REDACTION_AUDITED", f"Committed document redaction audit block #{audit_id}.", 5))
+
+    duration_ms = int((time.time() - start_time) * 1000)
+    from database import engine
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO gateway_requests (
+                    timestamp, risk_level, allowed, status, request_id, tenant_id,
+                    route_id, provider, model, latency, tokens_in, tokens_out,
+                    created_at, decision, duration_ms
+                )
+                VALUES (
+                    NOW(), :risk_level, :allowed, :status, :request_id, :tenant_id,
+                    :route_id, :provider, :model, :latency, :tokens_in, 0,
+                    NOW(), :decision, :duration_ms
+                )
+            """),
+            {
+                "risk_level": risk_level,
+                "allowed": decision != "BLOCK",
+                "status": "blocked" if decision == "BLOCK" else ("redacted" if redacted_count else "allowed"),
+                "request_id": request_id,
+                "tenant_id": str(tenant_id),
+                "route_id": "gateway-document-redaction",
+                "provider": "authclaw",
+                "model": "document-redaction",
+                "latency": duration_ms,
+                "tokens_in": len(extracted_text.split()),
+                "decision": decision,
+                "duration_ms": duration_ms,
+            },
+        )
+        conn.commit()
+    trace.append(event("Registrar Agent", "GATEWAY_DOCUMENT_REQUEST_RECORDED", f"Recorded document request lifecycle metadata in {duration_ms} ms.", 6))
+
+    def serialize_trigger(item):
+        result = {}
+        for key, value in item.items():
+            if hasattr(value, "isoformat"):
+                result[key] = value.isoformat()
+            else:
+                result[key] = value
+        return result
+
+    return {
+        "request_id": request_id,
+        "tenant_id": tenant_id,
+        "filename": filename,
+        "content_type": file.content_type,
+        "size_bytes": size_bytes,
+        "status": "blocked" if decision == "BLOCK" else ("redacted" if redacted_count else "clean"),
+        "decision": decision,
+        "risk_level": risk_level,
+        "duration_ms": duration_ms,
+        "redacted_count": redacted_count,
+        "extraction_method": extraction.extraction_method,
+        "ocr_status": extraction.ocr_status,
+        "ocr_error": extraction.ocr_error,
+        "triggered_policies": [serialize_trigger(item) for item in triggered],
+        "findings": [serialize_trigger(item) for item in triggered],
+        "findings_report": document_analysis["findings_report"],
+        "redacted_pages": document_analysis["redacted_pages"],
+        "redacted_pdf_base64": document_analysis["redacted_pdf_base64"],
+        "extracted_text": extracted_text,
+        "redacted_text": redacted_text,
+        "trace": trace,
     }
 
 class DocumentScanRequest(BaseModel):
@@ -2101,7 +2756,7 @@ def scan_document(
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None)
 ):
-    resolve_tenant(x_api_key, authorization)
+    tenant_id = resolve_tenant(x_api_key, authorization)
     
     doc_id = parse_document_id(req.document_id)
     
@@ -2110,37 +2765,42 @@ def scan_document(
     
     with engine.connect() as conn:
         # Check in knowledge_documents
-        k_doc = conn.execute(text("SELECT name, size_bytes FROM knowledge_documents WHERE id = :id"), {"id": doc_id}).fetchone()
+        k_doc = conn.execute(
+            text("SELECT name, size_bytes FROM knowledge_documents WHERE id = :id AND tenant_id = :tenant_id"),
+            {"id": doc_id, "tenant_id": tenant_id}
+        ).fetchone()
         if not k_doc:
             raise HTTPException(status_code=404, detail="Document not found")
         filename = k_doc[0]
         size_bytes = k_doc[1]
         
-        # Get chunks to reconstruct text
         chunks_res = conn.execute(
-            text("SELECT content FROM knowledge_chunks WHERE document_id = :doc_id ORDER BY id ASC"),
-            {"doc_id": doc_id}
+            text("SELECT content FROM knowledge_chunks WHERE document_id = :doc_id AND tenant_id = :tenant_id ORDER BY id ASC"),
+            {"doc_id": doc_id, "tenant_id": tenant_id}
         ).fetchall()
         text_content = "\n\n".join([r[0] for r in chunks_res])
         
         # Check or insert into documents table
-        doc_row = conn.execute(text("SELECT id FROM documents WHERE filename = :name"), {"name": filename}).fetchone()
+        doc_row = conn.execute(
+            text("SELECT id FROM documents WHERE filename = :name AND tenant_id = :tenant_id"),
+            {"name": filename, "tenant_id": tenant_id}
+        ).fetchone()
         if doc_row:
             d_id = doc_row[0]
         else:
             res = conn.execute(
                 text("""
-                INSERT INTO documents (filename, source, size_bytes, status, risk_score, severity)
-                VALUES (:filename, 'local', :size, 'pending', 0, 'LOW')
+                INSERT INTO documents (tenant_id, filename, source, size_bytes, status, risk_score, severity)
+                VALUES (:tenant_id, :filename, 'local', :size, 'pending', 0, 'LOW')
                 RETURNING id
                 """),
-                {"filename": filename, "size": size_bytes}
+                {"tenant_id": tenant_id, "filename": filename, "size": size_bytes}
             )
             d_id = res.fetchone()[0]
             conn.commit()
             
     from document_processing.orchestrator import run_document_scan_pipeline
-    pipeline_res = run_document_scan_pipeline(d_id, text_content.encode("utf-8"), filename, source="local")
+    pipeline_res = run_document_scan_pipeline(d_id, text_content.encode("utf-8"), filename, source="local", tenant_id=tenant_id)
     return pipeline_res
 
 @app.get("/documents")
@@ -2148,12 +2808,20 @@ def list_all_documents(
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None)
 ):
-    resolve_tenant(x_api_key, authorization)
+    tenant_id = resolve_tenant(x_api_key, authorization)
     
     from database import engine
     from sqlalchemy import text
     with engine.connect() as conn:
-        res = conn.execute(text("SELECT id, filename, source, status, size_bytes, risk_score, severity, created_at, updated_at FROM documents ORDER BY id DESC"))
+        res = conn.execute(
+            text("""
+                SELECT id, filename, source, status, size_bytes, risk_score, severity, created_at, updated_at
+                FROM documents
+                WHERE tenant_id = :tenant_id
+                ORDER BY id DESC
+            """),
+            {"tenant_id": tenant_id}
+        )
         return [dict(r._mapping) for r in res]
 
 @app.get("/documents/{id}")
@@ -2162,7 +2830,7 @@ def get_document_details(
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None)
 ):
-    resolve_tenant(x_api_key, authorization)
+    tenant_id = resolve_tenant(x_api_key, authorization)
         
     doc_id = parse_document_id(id)
     
@@ -2170,12 +2838,21 @@ def get_document_details(
     from sqlalchemy import text
     
     with engine.connect() as conn:
-        row = conn.execute(text("SELECT * FROM documents WHERE id = :id"), {"id": doc_id}).fetchone()
+        row = conn.execute(
+            text("SELECT * FROM documents WHERE id = :id AND tenant_id = :tenant_id"),
+            {"id": doc_id, "tenant_id": tenant_id}
+        ).fetchone()
         if not row:
-            k_doc = conn.execute(text("SELECT name FROM knowledge_documents WHERE id = :id"), {"id": doc_id}).fetchone()
+            k_doc = conn.execute(
+                text("SELECT name FROM knowledge_documents WHERE id = :id AND tenant_id = :tenant_id"),
+                {"id": doc_id, "tenant_id": tenant_id}
+            ).fetchone()
             if k_doc:
                 filename = k_doc[0]
-                row = conn.execute(text("SELECT * FROM documents WHERE filename = :name"), {"name": filename}).fetchone()
+                row = conn.execute(
+                    text("SELECT * FROM documents WHERE filename = :name AND tenant_id = :tenant_id ORDER BY id DESC LIMIT 1"),
+                    {"name": filename, "tenant_id": tenant_id}
+                ).fetchone()
                 
         if not row:
             raise HTTPException(status_code=404, detail="Document not found")
@@ -2188,7 +2865,7 @@ def get_document_findings(
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None)
 ):
-    resolve_tenant(x_api_key, authorization)
+    tenant_id = resolve_tenant(x_api_key, authorization)
         
     doc_id = parse_document_id(id)
     
@@ -2196,12 +2873,7 @@ def get_document_findings(
     from sqlalchemy import text
     
     with engine.connect() as conn:
-        row = conn.execute(text("SELECT id FROM documents WHERE id = :id"), {"id": doc_id}).fetchone()
-        if not row:
-            k_doc = conn.execute(text("SELECT name FROM knowledge_documents WHERE id = :id"), {"id": doc_id}).fetchone()
-            if k_doc:
-                filename = k_doc[0]
-                row = conn.execute(text("SELECT id FROM documents WHERE filename = :name"), {"name": filename}).fetchone()
+        row = resolve_document_record(conn, doc_id, tenant_id)
                 
         if not row:
             raise HTTPException(status_code=404, detail="Document not found")
@@ -2209,8 +2881,12 @@ def get_document_findings(
         real_doc_id = row[0]
         
         findings_res = conn.execute(
-            text("SELECT id, finding_type, matched_pattern, matched_text, risk_level, recommendation, impact, priority, location_evidence FROM document_findings WHERE document_id = :doc_id"),
-            {"doc_id": real_doc_id}
+            text("""
+                SELECT id, finding_type, matched_pattern, matched_text, risk_level, recommendation, impact, priority, location_evidence
+                FROM document_findings
+                WHERE document_id = :doc_id AND tenant_id = :tenant_id
+            """),
+            {"doc_id": real_doc_id, "tenant_id": tenant_id}
         ).fetchall()
         
         return [dict(f._mapping) for f in findings_res]
@@ -2221,7 +2897,7 @@ def get_document_audit_trail(
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None)
 ):
-    resolve_tenant(x_api_key, authorization)
+    tenant_id = resolve_tenant(x_api_key, authorization)
         
     doc_id = parse_document_id(id)
     
@@ -2230,12 +2906,7 @@ def get_document_audit_trail(
     from document_processing.auditor import verify_document_audit_chain
     
     with engine.connect() as conn:
-        row = conn.execute(text("SELECT id FROM documents WHERE id = :id"), {"id": doc_id}).fetchone()
-        if not row:
-            k_doc = conn.execute(text("SELECT name FROM knowledge_documents WHERE id = :id"), {"id": doc_id}).fetchone()
-            if k_doc:
-                filename = k_doc[0]
-                row = conn.execute(text("SELECT id FROM documents WHERE filename = :name"), {"name": filename}).fetchone()
+        row = resolve_document_record(conn, doc_id, tenant_id)
                 
         if not row:
             raise HTTPException(status_code=404, detail="Document not found")
@@ -2243,12 +2914,17 @@ def get_document_audit_trail(
         real_doc_id = row[0]
         
         audit_res = conn.execute(
-            text("SELECT id, timestamp, action, actor, details, integrity_hash, previous_hash FROM document_audits WHERE document_id = :doc_id ORDER BY id ASC"),
-            {"doc_id": real_doc_id}
+            text("""
+                SELECT id, timestamp, action, actor, details, integrity_hash, previous_hash
+                FROM document_audits
+                WHERE document_id = :doc_id AND tenant_id = :tenant_id
+                ORDER BY id ASC
+            """),
+            {"doc_id": real_doc_id, "tenant_id": tenant_id}
         ).fetchall()
         
         audit_list = [dict(a._mapping) for a in audit_res]
-        verification = verify_document_audit_chain(real_doc_id)
+        verification = verify_document_audit_chain(real_doc_id, tenant_id=tenant_id)
         
         return {
             "audit_trail": audit_list,
@@ -2261,23 +2937,23 @@ def compliance_analyze(
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None)
 ):
-    resolve_tenant(x_api_key, authorization)
+    tenant_id = resolve_tenant(x_api_key, authorization)
         
     doc_id = parse_document_id(req.document_id)
     
     from rag.compliance_analyzer import analyze_document_compliance, get_document_text
     try:
         # Get document text and name first
-        _, doc_name = get_document_text(doc_id)
+        _, doc_name = get_document_text(doc_id, tenant_id=tenant_id)
         # Perform analysis
-        analysis = analyze_document_compliance(doc_id)
+        analysis = analyze_document_compliance(doc_id, tenant_id=tenant_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Compliance analysis failed: {str(e)}")
         
     # Generate and store evidence reports
     try:
         from rag.compliance_analyzer import generate_and_vault_reports
-        generate_and_vault_reports(doc_id, doc_name, analysis)
+        generate_and_vault_reports(doc_id, doc_name, analysis, tenant_id=tenant_id)
     except Exception as e:
         logger.error(f"Failed to generate and store evidence reports: {str(e)}")
         
@@ -2288,7 +2964,8 @@ def compliance_analyze(
         response=f"Compliance analysis completed for {doc_name}. Overall Risk: {analysis['overall_risk']}",
         allowed=True,
         risk_level="LOW",
-        approval_status="N/A"
+        approval_status="N/A",
+        tenant_id=tenant_id
     )
     
     # Emit audit event
@@ -2307,7 +2984,7 @@ def document_chat(
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None)
 ):
-    resolve_tenant(x_api_key, authorization)
+    tenant_id = resolve_tenant(x_api_key, authorization)
         
     doc_id = parse_document_id(req.document_id)
     
@@ -2315,13 +2992,13 @@ def document_chat(
     import requests
     from rag.compliance_analyzer import get_document_text
     try:
-        _, doc_name = get_document_text(doc_id)
+        _, doc_name = get_document_text(doc_id, tenant_id=tenant_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Document not found: {str(e)}")
         
     # Retrieve relevant context
     from rag.retriever import retrieve_formatted_context
-    context, citations = retrieve_formatted_context(req.question, top_k=3, document_id=doc_id)
+    context, citations = retrieve_formatted_context(req.question, top_k=3, document_id=doc_id, tenant_id=tenant_id)
     
     # Query Gemini
     api_key = os.getenv("GOOGLE_API_KEY")
@@ -2374,7 +3051,8 @@ Question:
         response=f"Answer: {answer[:100]}...",
         allowed=True,
         risk_level="LOW",
-        approval_status="N/A"
+        approval_status="N/A",
+        tenant_id=tenant_id
     )
     
     # Emit audit event
@@ -2406,20 +3084,25 @@ def delete_document(
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None)
 ):
-    resolve_tenant(x_api_key, authorization)
+    tenant_id = resolve_tenant(x_api_key, authorization)
         
     from database import engine
     from sqlalchemy import text
     from verify_audit import create_audit_block
     
     with engine.connect() as conn:
-        row = conn.execute(text("SELECT name FROM knowledge_documents WHERE id = :id"), {"id": doc_id}).fetchone()
-        name = row[0] if row else f"ID {doc_id}"
+        row = conn.execute(
+            text("SELECT name FROM knowledge_documents WHERE id = :id AND tenant_id = :tenant_id"),
+            {"id": doc_id, "tenant_id": tenant_id}
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Document not found.")
+        name = row[0]
         
         # Deleting from documents table triggers cascade delete of scans and findings
-        conn.execute(text("DELETE FROM documents WHERE filename = :name"), {"name": name})
-        conn.execute(text("DELETE FROM knowledge_documents WHERE id = :id"), {"id": doc_id})
-        conn.execute(text("DELETE FROM knowledge_chunks WHERE document_id = :id"), {"id": doc_id})
+        conn.execute(text("DELETE FROM documents WHERE filename = :name AND tenant_id = :tenant_id"), {"name": name, "tenant_id": tenant_id})
+        conn.execute(text("DELETE FROM knowledge_documents WHERE id = :id AND tenant_id = :tenant_id"), {"id": doc_id, "tenant_id": tenant_id})
+        conn.execute(text("DELETE FROM knowledge_chunks WHERE document_id = :id AND tenant_id = :tenant_id"), {"id": doc_id, "tenant_id": tenant_id})
         conn.commit()
         
     create_audit_block(
@@ -2427,16 +3110,31 @@ def delete_document(
         response=f"Document '{name}' and its vector chunks purged from index.",
         allowed=True,
         risk_level="LOW",
-        approval_status="N/A"
+        approval_status="N/A",
+        tenant_id=tenant_id
     )
     return {"status": "success", "message": "Document deleted."}
 
 @app.get("/rag/chunks/{doc_id}")
-def get_document_chunks(doc_id: int):
+def get_document_chunks(
+    doc_id: int,
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
     from database import engine
     from sqlalchemy import text
+    tenant_id = resolve_tenant(x_api_key, authorization)
     with engine.connect() as conn:
-        res = conn.execute(text("SELECT id, content, embedding_preview FROM knowledge_chunks WHERE document_id = :doc_id ORDER BY id ASC"), {"doc_id": doc_id})
+        doc = conn.execute(
+            text("SELECT id FROM knowledge_documents WHERE id = :doc_id AND tenant_id = :tenant_id"),
+            {"doc_id": doc_id, "tenant_id": tenant_id}
+        ).fetchone()
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found.")
+        res = conn.execute(
+            text("SELECT id, content, embedding_preview FROM knowledge_chunks WHERE document_id = :doc_id AND tenant_id = :tenant_id ORDER BY id ASC"),
+            {"doc_id": doc_id, "tenant_id": tenant_id}
+        )
         return [dict(r._mapping) for r in res]
 
 class SimilaritySearchRequest(BaseModel):
@@ -2449,11 +3147,11 @@ def rag_search_endpoint(
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None)
 ):
-    resolve_tenant(x_api_key, authorization)
+    tenant_id = resolve_tenant(x_api_key, authorization)
 
         
     from rag.retriever import retrieve_context
-    hits = retrieve_context(req.query, top_k=req.top_k)
+    hits = retrieve_context(req.query, top_k=req.top_k, tenant_id=tenant_id)
     return hits
 
 
@@ -2532,28 +3230,46 @@ def create_user_role(role_req: UserRoleRequest, payload: dict = Depends(require_
 
 # 11. EVIDENCE VAULT
 @app.get("/evidence")
-def get_evidence():
+def get_evidence(
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
     from database import engine
     from sqlalchemy import text
+    tenant_id = resolve_tenant(x_api_key, authorization)
     with engine.connect() as conn:
-        res = conn.execute(text("SELECT id, name, category, file_path, collected_at, hash FROM compliance_evidence ORDER BY id DESC"))
+        res = conn.execute(
+            text("""
+                SELECT id, name, category, file_path, collected_at, hash
+                FROM compliance_evidence
+                WHERE tenant_id = :tenant_id
+                ORDER BY id DESC
+            """),
+            {"tenant_id": tenant_id}
+        )
         return [dict(r._mapping) for r in res]
 
 @app.post("/evidence/collect")
-def collect_evidence(req: EvidenceUploadRequest):
+def collect_evidence(
+    req: EvidenceUploadRequest,
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
     from database import engine
     from sqlalchemy import text
     from verify_audit import create_audit_block
     import hashlib
+    tenant_id = resolve_tenant(x_api_key, authorization)
     now_str = datetime.now(timezone.utc).date().isoformat()
     f_hash = f"sha256-{hashlib.sha256(req.name.encode()).hexdigest()[:16]}"
     with engine.connect() as conn:
         conn.execute(
             text("""
-            INSERT INTO compliance_evidence (name, category, file_path, collected_at, hash)
-            VALUES (:name, :category, :file_path, :collected_at, :hash)
+            INSERT INTO compliance_evidence (tenant_id, name, category, file_path, collected_at, hash)
+            VALUES (:tenant_id, :name, :category, :file_path, :collected_at, :hash)
             """),
             {
+                "tenant_id": tenant_id,
                 "name": req.name,
                 "category": req.category,
                 "file_path": req.file_path,
@@ -2567,7 +3283,8 @@ def collect_evidence(req: EvidenceUploadRequest):
         response=f"Evidence vaulted under category: {req.category}.",
         allowed=True,
         risk_level="MEDIUM",
-        approval_status="N/A"
+        approval_status="N/A",
+        tenant_id=tenant_id
     )
     return {"status": "success", "message": f"Compliance evidence '{req.name}' successfully vaulted."}
 
@@ -2577,7 +3294,7 @@ def delete_evidence(
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None)
 ):
-    resolve_tenant(x_api_key, authorization)
+    tenant_id = resolve_tenant(x_api_key, authorization)
         
     import os
     from database import engine
@@ -2585,13 +3302,19 @@ def delete_evidence(
     from verify_audit import create_audit_block
     
     with engine.connect() as conn:
-        row = conn.execute(text("SELECT name, file_path FROM compliance_evidence WHERE id = :id"), {"id": id}).fetchone()
+        row = conn.execute(
+            text("SELECT name, file_path FROM compliance_evidence WHERE id = :id AND tenant_id = :tenant_id"),
+            {"id": id, "tenant_id": tenant_id}
+        ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Evidence not found")
         name = row[0]
         file_path = row[1]
         
-        conn.execute(text("DELETE FROM compliance_evidence WHERE id = :id"), {"id": id})
+        conn.execute(
+            text("DELETE FROM compliance_evidence WHERE id = :id AND tenant_id = :tenant_id"),
+            {"id": id, "tenant_id": tenant_id}
+        )
         conn.commit()
         
         # Physical delete
@@ -2609,7 +3332,8 @@ def delete_evidence(
         response=f"Evidence registry #{id} permanently purged.",
         allowed=True,
         risk_level="MEDIUM",
-        approval_status="N/A"
+        approval_status="N/A",
+        tenant_id=tenant_id
     )
     return {"status": "success", "message": f"Compliance evidence '{name}' permanently deleted."}
 
@@ -2618,9 +3342,9 @@ def export_evidence_csv_endpoint(
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None)
 ):
-    resolve_tenant(x_api_key, authorization)
+    tenant_id = resolve_tenant(x_api_key, authorization)
     from document_processing.exports import generate_evidence_csv
-    csv_data = generate_evidence_csv()
+    csv_data = generate_evidence_csv(tenant_id=tenant_id)
     return Response(content=csv_data, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=evidence_vault.csv"})
 
 @app.get("/evidence/export/pdf")
@@ -2628,9 +3352,9 @@ def export_evidence_pdf_endpoint(
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None)
 ):
-    resolve_tenant(x_api_key, authorization)
+    tenant_id = resolve_tenant(x_api_key, authorization)
     from document_processing.exports import generate_evidence_pdf
-    pdf_data = generate_evidence_pdf()
+    pdf_data = generate_evidence_pdf(tenant_id=tenant_id)
     return Response(content=pdf_data, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=evidence_vault.pdf"})
 
 @app.get("/audit/export/csv")
@@ -2638,9 +3362,9 @@ def export_audit_csv_endpoint(
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None)
 ):
-    resolve_tenant(x_api_key, authorization)
+    tenant_id = resolve_tenant(x_api_key, authorization)
     from document_processing.exports import generate_audit_csv
-    csv_data = generate_audit_csv()
+    csv_data = generate_audit_csv(tenant_id=tenant_id)
     return Response(content=csv_data, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=audit_ledger.csv"})
 
 @app.get("/audit/export/pdf")
@@ -2648,9 +3372,9 @@ def export_audit_pdf_endpoint(
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None)
 ):
-    resolve_tenant(x_api_key, authorization)
+    tenant_id = resolve_tenant(x_api_key, authorization)
     from document_processing.exports import generate_audit_pdf
-    pdf_data = generate_audit_pdf()
+    pdf_data = generate_audit_pdf(tenant_id=tenant_id)
     return Response(content=pdf_data, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=audit_ledger.pdf"})
 
 
@@ -2659,7 +3383,7 @@ def get_compliance_framework_scores(
     x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None)
 ):
-    resolve_tenant(x_api_key, authorization)
+    tenant_id = resolve_tenant(x_api_key, authorization)
     
     from database import engine
     from sqlalchemy import text
@@ -2671,7 +3395,10 @@ def get_compliance_framework_scores(
                 FROM document_findings df
                 JOIN documents d ON df.document_id = d.id
                 WHERE d.status NOT IN ('deleted', 's3_deleted')
-                """)
+                  AND d.tenant_id = :tenant_id
+                  AND df.tenant_id = :tenant_id
+                """),
+                {"tenant_id": tenant_id}
             ).fetchall()
     except Exception as e:
         logger.error(f"Failed to fetch live framework findings: {e}")
@@ -3142,8 +3869,8 @@ def ensure_default_tenant_policies(conn, tenant_id: int) -> None:
     for policy in defaults:
         conn.execute(
             text("""
-                INSERT INTO policies (tenant_id, name, type, rules, enabled, severity_level)
-                VALUES (:tenant_id, :name, :type, :rules, true, 'HIGH')
+                INSERT INTO policies (tenant_id, name, type, rules, enabled, severity_level, version, status, published_at)
+                VALUES (:tenant_id, :name, :type, :rules, true, 'HIGH', 1, 'published', NOW())
             """),
             {
                 "tenant_id": tenant_id,
@@ -3844,6 +4571,12 @@ def auth_verify_domain(req: DomainVerifyRequest):
 def get_authenticated_tenant(authorization: str = Header(None)) -> int:
     return resolve_tenant_from_authorization(authorization)
 
+@app.get("/analytics/governance")
+def get_governance_analytics(tenant_id: int = Depends(get_authenticated_tenant)):
+    from services.observability_service import ObservabilityService
+
+    return ObservabilityService().governance_analytics(tenant_id)
+
 @app.post("/keys/generate")
 def generate_tenant_api_key(req: KeyGenerateRequest, tenant_id: int = Depends(get_authenticated_tenant)):
     from database import engine
@@ -4001,33 +4734,77 @@ def connect_provider_credentials(req: ProviderConnectRequest, tenant_id: int = D
     from database import engine
     from sqlalchemy import text
     from verify_audit import create_audit_block
-    import json
-    
-    # Symmetrically encrypt credential payloads
-    payload_str = json.dumps(req.payload)
-    encrypted_payload = encrypt_secret(payload_str)
-    
+    from services.provider_connection_tester import ProviderConnectionTestError, test_provider_connection
+    from services.secret_manager import SecretManager, SecretManagerError
+
+    provider = req.provider.lower().replace(" ", "_")
+    payload = dict(req.payload or {})
+    live_test = bool(payload.pop("live_test", False))
+
+    try:
+        test_result = test_provider_connection(provider, payload, live=live_test)
+        secret_record = SecretManager().store_provider_payload(tenant_id, provider, payload)
+    except (ProviderConnectionTestError, SecretManagerError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     with engine.connect() as conn:
         conn.execute(
             text("""
-            INSERT INTO tenant_credentials (tenant_id, provider, encrypted_payload)
-            VALUES (:tid, :provider, :payload)
+            INSERT INTO tenant_credentials (
+                tenant_id, provider, encrypted_payload, secret_ref, secret_backend,
+                secret_version, key_fingerprint, key_prefix, health_status,
+                health_checked_at, health_message, rotated_at, revoked_at, updated_at
+            )
+            VALUES (
+                :tid, :provider, :payload, :secret_ref, :secret_backend,
+                :secret_version, :key_fingerprint, :key_prefix, :health_status,
+                NOW(), :health_message, NOW(), NULL, NOW()
+            )
             ON CONFLICT (tenant_id, provider) DO UPDATE
-            SET encrypted_payload = EXCLUDED.encrypted_payload, updated_at = NOW()
+            SET encrypted_payload = EXCLUDED.encrypted_payload,
+                secret_ref = EXCLUDED.secret_ref,
+                secret_backend = EXCLUDED.secret_backend,
+                secret_version = EXCLUDED.secret_version,
+                key_fingerprint = EXCLUDED.key_fingerprint,
+                key_prefix = EXCLUDED.key_prefix,
+                health_status = EXCLUDED.health_status,
+                health_checked_at = NOW(),
+                health_message = EXCLUDED.health_message,
+                rotated_at = NOW(),
+                revoked_at = NULL,
+                updated_at = NOW()
             """),
-            {"tid": tenant_id, "provider": req.provider.lower(), "payload": encrypted_payload}
+            {
+                "tid": tenant_id,
+                "provider": secret_record["provider"],
+                "payload": secret_record["encrypted_payload"],
+                "secret_ref": secret_record["secret_ref"],
+                "secret_backend": secret_record["secret_backend"],
+                "secret_version": secret_record["secret_version"],
+                "key_fingerprint": secret_record["key_fingerprint"],
+                "key_prefix": secret_record["key_prefix"],
+                "health_status": test_result["status"],
+                "health_message": "Live connection verified." if test_result.get("live") else "Credential structure validated.",
+            }
         )
         conn.commit()
     create_audit_block(
-        query=f"Connect Provider Credentials: {req.provider.lower()}",
-        response="Provider credentials encrypted and stored for tenant-owned gateway routing. Raw secret value was not logged.",
+        query=f"Connect Provider Credentials: {secret_record['provider']}",
+        response=f"Provider credential stored via {secret_record['secret_backend']}. Raw secret value was not logged or returned.",
         allowed=True,
         risk_level="LOW",
         approval_status="completed",
         tenant_id=tenant_id,
     )
         
-    return {"status": "success", "message": f"{req.provider} credentials connected successfully."}
+    return {
+        "status": "success",
+        "provider": secret_record["provider"],
+        "storage": secret_record["secret_backend"],
+        "key_prefix": secret_record["key_prefix"],
+        "health_status": test_result["status"],
+        "message": f"{secret_record['provider']} credentials connected successfully. Raw key will not be shown again.",
+    }
 
 @app.get("/providers/list")
 def list_connected_providers(tenant_id: int = Depends(get_authenticated_tenant)):
@@ -4035,7 +4812,15 @@ def list_connected_providers(tenant_id: int = Depends(get_authenticated_tenant))
     from sqlalchemy import text
     with engine.connect() as conn:
         res = conn.execute(
-            text("SELECT provider, updated_at FROM tenant_credentials WHERE tenant_id = :tid"),
+            text(
+                """
+                SELECT provider, updated_at, secret_backend, key_prefix, health_status,
+                       health_checked_at, health_message, rotated_at, revoked_at
+                FROM tenant_credentials
+                WHERE tenant_id = :tid AND revoked_at IS NULL
+                ORDER BY provider
+                """
+            ),
             {"tid": tenant_id}
         ).fetchall()
         
@@ -4044,30 +4829,146 @@ def list_connected_providers(tenant_id: int = Depends(get_authenticated_tenant))
         providers.append({
             "provider": r[0],
             "connected": True,
-            "updated_at": r[1].isoformat() if hasattr(r[1], "isoformat") else str(r[1])
+            "updated_at": r[1].isoformat() if hasattr(r[1], "isoformat") else str(r[1]),
+            "storage": r[2],
+            "key_prefix": r[3],
+            "health_status": r[4] or "unknown",
+            "health_checked_at": r[5].isoformat() if hasattr(r[5], "isoformat") else (str(r[5]) if r[5] else None),
+            "health_message": r[6],
+            "rotated_at": r[7].isoformat() if hasattr(r[7], "isoformat") else (str(r[7]) if r[7] else None),
+            "revoked": bool(r[8]),
         })
     return providers
+
+@app.post("/providers/{provider}/rotate")
+def rotate_provider_credentials(provider: str, req: ProviderConnectRequest, tenant_id: int = Depends(get_authenticated_tenant)):
+    req.provider = provider
+    result = connect_provider_credentials(req, tenant_id)
+    from verify_audit import create_audit_block
+    create_audit_block(
+        query=f"Rotate Provider Credentials: {provider.lower()}",
+        response="Provider credential rotated. New raw secret was stored securely and not returned.",
+        allowed=True,
+        risk_level="LOW",
+        approval_status="completed",
+        tenant_id=tenant_id,
+    )
+    result["message"] = f"{provider.lower()} credentials rotated successfully. Raw key will not be shown again."
+    return result
+
+@app.post("/providers/{provider}/test")
+def test_stored_provider_credentials(provider: str, live: bool = False, tenant_id: int = Depends(get_authenticated_tenant)):
+    from database import engine
+    from sqlalchemy import text
+    from services.provider_connection_tester import ProviderConnectionTestError, test_provider_connection
+    from services.secret_manager import SecretManager
+
+    provider_key = provider.lower().replace(" ", "_")
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT provider, encrypted_payload, secret_ref, secret_backend, secret_version
+                FROM tenant_credentials
+                WHERE tenant_id = :tid AND provider = :provider AND revoked_at IS NULL
+                """
+            ),
+            {"tid": tenant_id, "provider": provider_key},
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Provider credentials not configured.")
+        credential_row = dict(row._mapping)
+        try:
+            payload = SecretManager().resolve_provider_payload(credential_row)
+            result = test_provider_connection(provider_key, payload, live=live)
+            status_value = result["status"]
+            message = "Live provider connection verified." if live else "Credential structure validated."
+        except (ProviderConnectionTestError, Exception) as exc:
+            status_value = "unhealthy"
+            message = str(exc)
+            result = {"provider": provider_key, "status": status_value, "live": live, "error": message}
+
+        conn.execute(
+            text(
+                """
+                UPDATE tenant_credentials
+                SET health_status = :status, health_checked_at = NOW(), health_message = :message, updated_at = NOW()
+                WHERE tenant_id = :tid AND provider = :provider
+                """
+            ),
+            {"status": status_value, "message": message, "tid": tenant_id, "provider": provider_key},
+        )
+        conn.commit()
+
+    return {**result, "message": message}
+
+@app.get("/providers/{provider}/health")
+def provider_secret_health(provider: str, tenant_id: int = Depends(get_authenticated_tenant)):
+    from database import engine
+    from sqlalchemy import text
+    provider_key = provider.lower().replace(" ", "_")
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT provider, secret_backend, key_prefix, health_status, health_checked_at,
+                       health_message, rotated_at, updated_at
+                FROM tenant_credentials
+                WHERE tenant_id = :tid AND provider = :provider AND revoked_at IS NULL
+                """
+            ),
+            {"tid": tenant_id, "provider": provider_key},
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Provider credentials not configured.")
+    return {
+        "provider": row[0],
+        "storage": row[1],
+        "key_prefix": row[2],
+        "health_status": row[3] or "unknown",
+        "health_checked_at": row[4].isoformat() if hasattr(row[4], "isoformat") else (str(row[4]) if row[4] else None),
+        "health_message": row[5],
+        "rotated_at": row[6].isoformat() if hasattr(row[6], "isoformat") else (str(row[6]) if row[6] else None),
+        "updated_at": row[7].isoformat() if hasattr(row[7], "isoformat") else (str(row[7]) if row[7] else None),
+    }
 
 @app.delete("/providers/{provider}")
 def disconnect_provider_credentials(provider: str, tenant_id: int = Depends(get_authenticated_tenant)):
     from database import engine
     from sqlalchemy import text
     from verify_audit import create_audit_block
+    from services.secret_manager import SecretManager
+    provider_key = provider.lower().replace(" ", "_")
     with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT secret_ref, secret_backend FROM tenant_credentials WHERE tenant_id = :tid AND provider = :provider"),
+            {"tid": tenant_id, "provider": provider_key},
+        ).fetchone()
+        if row and row[0] and row[1] == "aws_secrets_manager":
+            try:
+                SecretManager().delete_secret(row[0])
+            except Exception as exc:
+                logger.warning(f"Failed to delete external secret for tenant {tenant_id}: {exc}")
         conn.execute(
-            text("DELETE FROM tenant_credentials WHERE tenant_id = :tid AND provider = :provider"),
-            {"tid": tenant_id, "provider": provider.lower()}
+            text(
+                """
+                UPDATE tenant_credentials
+                SET revoked_at = NOW(), health_status = 'revoked', updated_at = NOW()
+                WHERE tenant_id = :tid AND provider = :provider
+                """
+            ),
+            {"tid": tenant_id, "provider": provider_key}
         )
         conn.commit()
     create_audit_block(
-        query=f"Disconnect Provider Credentials: {provider.lower()}",
-        response="Provider credentials removed for this tenant.",
+        query=f"Disconnect Provider Credentials: {provider_key}",
+        response="Provider credentials revoked for this tenant.",
         allowed=True,
         risk_level="LOW",
         approval_status="completed",
         tenant_id=tenant_id,
     )
-    return {"status": "success", "message": f"{provider} credentials disconnected."}
+    return {"status": "success", "message": f"{provider_key} credentials disconnected."}
 
 
 @app.get("/gateway/requests")
@@ -4135,9 +5036,16 @@ def get_gateway_request(request_id: str, tenant_id: int = Depends(get_authentica
 
 @app.get("/gateway/approvals")
 def list_gateway_approvals(tenant_id: int = Depends(get_authenticated_tenant)):
-    approvals = []
-    for record in get_all_approvals().values():
-        if record.get("tenant_id") == tenant_id:
-            approvals.append(record)
-    return approvals
+    return [
+        approval_response_record(record, tenant_id=tenant_id)
+        for record in get_all_approvals(tenant_id=tenant_id).values()
+    ]
+
+
+@app.get("/gateway/approvals/{approval_id}/history")
+def get_gateway_approval_history(approval_id: str, tenant_id: int = Depends(get_authenticated_tenant)):
+    record = get_approval(approval_id)
+    if record is None or record.get("tenant_id") != tenant_id:
+        raise HTTPException(status_code=404, detail="Approval ID not found")
+    return get_approval_history(approval_id, tenant_id=tenant_id)
 

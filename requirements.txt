@@ -15,3 +15,7 @@ pypdf
 python-docx
 reportlab
 boto3
+presidio-analyzer
+pytesseract
+Pillow
+pdf2image

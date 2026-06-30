@@ -109,65 +109,25 @@ def validate_policy(text: str, tenant_id=None) -> bool:
     Validates if a text is allowed under the current policy (does not contain blocked keywords).
     Maintains backward compatibility.
     """
-    # 1. Baseline yaml blocked keywords (always block)
-    if is_blocked(text):
-        return False
+    from services.policy_engine import ACTION_BLOCK, ACTION_REQUIRE_APPROVAL, PolicyEngine
 
-    # 2. Database policies (block if pii_redaction is false, else proceed to redact)
-    db_policies = get_db_policies(tenant_id)
-    text_lower = text.lower()
-    for p in db_policies:
-        rules = p.get("rules", {})
-        if not rules:
-            continue
-        blocked_keywords = rules.get("blocked_keywords", [])
-        pii_redaction = rules.get("pii_redaction", False)
-
-        for word in blocked_keywords:
-            if word.lower() in text_lower:
-                if not pii_redaction:
-                    return False
-    return True
+    result = PolicyEngine().evaluate(text, tenant_id=tenant_id)
+    return result.action not in {ACTION_BLOCK, ACTION_REQUIRE_APPROVAL}
 
 def check_policy_violations(text: str, tenant_id=None) -> tuple:
     """
     Checks if a given text violates policies, and returns a tuple (allowed, triggered_blocks).
     If allowed is False, triggered_blocks will contain metadata about the blocking policy.
     """
-    triggered_blocks = []
-    text_lower = text.lower()
+    from services.policy_engine import ACTION_BLOCK, ACTION_REQUIRE_APPROVAL, PolicyEngine
 
-    # 1. Baseline yaml blocked keywords (always block)
-    policy = get_policy()
-    for word in policy["blocked_keywords"]:
-        if word in text_lower:
-            triggered_blocks.append({
-                "policy_name": "Baseline Security Policy",
-                "policy_type": "Custom",
-                "matched_pattern": word,
-                "redacted_value": "N/A"
-            })
-            return False, triggered_blocks
-
-    # 2. Database policies (block if pii_redaction is false, else proceed to redact)
-    db_policies = get_db_policies(tenant_id)
-    for p in db_policies:
-        rules = p.get("rules", {})
-        if not rules:
-            continue
-        blocked_keywords = rules.get("blocked_keywords", [])
-        pii_redaction = rules.get("pii_redaction", False)
-
-        for word in blocked_keywords:
-            if word.lower() in text_lower:
-                if not pii_redaction:
-                    triggered_blocks.append({
-                        "policy_name": p["name"],
-                        "policy_type": p["type"],
-                        "matched_pattern": word,
-                        "redacted_value": "N/A"
-                    })
-                    return False, triggered_blocks
+    result = PolicyEngine().evaluate(text, tenant_id=tenant_id)
+    blocking_findings = [
+        finding for finding in result.findings
+        if str(finding.get("action", "")).upper() in {ACTION_BLOCK, ACTION_REQUIRE_APPROVAL}
+    ]
+    if result.action in {ACTION_BLOCK, ACTION_REQUIRE_APPROVAL}:
+        return False, blocking_findings or result.findings
     return True, []
 
 def enforce_policy(text: str) -> tuple:
@@ -176,6 +136,12 @@ def enforce_policy(text: str) -> tuple:
     Returns (is_blocked, reason, category).
     """
     import re
+    from services.policy_engine import ACTION_BLOCK, PolicyEngine
+
+    result = PolicyEngine().evaluate(text)
+    if result.action == ACTION_BLOCK:
+        category = result.triggered_categories[0].lower() if result.triggered_categories else "policy"
+        return True, result.reason, category
 
     # 1. Clean and normalize the text for robust pattern matching
     cleaned = text.lower()

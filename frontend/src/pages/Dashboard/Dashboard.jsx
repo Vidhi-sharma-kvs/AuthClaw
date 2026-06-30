@@ -17,6 +17,7 @@ import {
 import apiClient from '../../services/api';
 import { getAuditSummary } from '../../services/auditService';
 import { getGatewayStats } from '../../services/gatewayService';
+import { getGovernanceAnalytics } from '../../services/metricsService';
 
 const Dashboard = () => {
   const [keysCount, setKeysCount] = useState(0);
@@ -27,6 +28,7 @@ const Dashboard = () => {
   const [policies, setPolicies] = useState([]);
   const [metrics, setMetrics] = useState(null);
   const [gatewayStats, setGatewayStats] = useState(null);
+  const [governanceAnalytics, setGovernanceAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const fetchData = async () => {
@@ -61,11 +63,27 @@ const Dashboard = () => {
       const metricsRes = await apiClient.get('/metrics');
       setMetrics(metricsRes.data);
 
-      const gatewayStatsData = await getGatewayStats();
-      setGatewayStats(gatewayStatsData);
+      const analyticsData = await getGovernanceAnalytics();
+      setGovernanceAnalytics(analyticsData);
+
+      setGatewayStats({
+        totalRequests: analyticsData.gateway.total_requests,
+        approvedRequests: analyticsData.gateway.allowed_requests,
+        blockedRequests: analyticsData.gateway.blocked_requests,
+        pendingApprovals: analyticsData.approvals.pending,
+        providerUsage: Object.fromEntries((analyticsData.providers || []).map((item) => [item.provider, item.requests])),
+        requests: analyticsData.recent_requests,
+        approvals: analyticsData.approvals,
+      });
 
     } catch (error) {
       console.error('Error loading operational dashboard metrics:', error);
+      try {
+        const gatewayStatsData = await getGatewayStats();
+        setGatewayStats(gatewayStatsData);
+      } catch (statsError) {
+        console.error('Error loading gateway fallback metrics:', statsError);
+      }
     } finally {
       setLoading(false);
     }
@@ -76,6 +94,20 @@ const Dashboard = () => {
     const interval = setInterval(fetchData, 15000);
     return () => clearInterval(interval);
   }, []);
+
+  const handleAuditExport = async (format) => {
+    const response = await apiClient.get(`/audit/export/${format}`, {
+      responseType: 'blob'
+    });
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `authclaw-audit-report-${new Date().toISOString().split('T')[0]}.${format}`);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  };
 
   if (loading) {
     return (
@@ -175,6 +207,106 @@ const Dashboard = () => {
               ))
             ) : (
               <p className="text-[11px] text-gray-500">No provider traffic yet</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Operational Governance Analytics */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <div className="glass-card p-5 space-y-3">
+          <div className="flex justify-between items-center text-gray-500">
+            <span className="text-[10px] font-bold uppercase tracking-wider">Redacted Fields</span>
+            <ShieldAlert className="w-4 h-4 text-fuchsia-400" />
+          </div>
+          <p className="text-2xl font-bold text-white">{governanceAnalytics?.redactions?.total_fields || 0}</p>
+          <div className="text-[10px] text-gray-400">
+            Docs: {governanceAnalytics?.redactions?.document_findings || 0} • Gateway events: {governanceAnalytics?.redactions?.agent_redaction_events || 0}
+          </div>
+        </div>
+
+        <div className="glass-card p-5 space-y-3">
+          <div className="flex justify-between items-center text-gray-500">
+            <span className="text-[10px] font-bold uppercase tracking-wider">Approval Queue</span>
+            <Clock className="w-4 h-4 text-amber-400" />
+          </div>
+          <p className="text-2xl font-bold text-white">{governanceAnalytics?.approvals?.pending || 0}</p>
+          <div className="text-[10px] text-gray-400">
+            Approved: {governanceAnalytics?.approvals?.approved || 0} • Rejected: {governanceAnalytics?.approvals?.rejected || 0}
+          </div>
+        </div>
+
+        <div className="glass-card p-5 space-y-3">
+          <div className="flex justify-between items-center text-gray-500">
+            <span className="text-[10px] font-bold uppercase tracking-wider">Audit Integrity</span>
+            <Hash className="w-4 h-4 text-emerald-400" />
+          </div>
+          <p className="text-2xl font-bold text-white">{governanceAnalytics?.audit?.valid ? 'Valid' : 'Failed'}</p>
+          <div className="text-[10px] text-gray-400">
+            {governanceAnalytics?.audit?.records_checked || 0} verified blocks
+          </div>
+        </div>
+
+        <div className="glass-card p-5 space-y-3">
+          <div className="flex justify-between items-center text-gray-500">
+            <span className="text-[10px] font-bold uppercase tracking-wider">Audit Reports</span>
+            <FileText className="w-4 h-4 text-blue-400" />
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleAuditExport('csv')}
+              className="px-3 py-2 rounded-lg bg-slate-900 border border-white/10 text-xs text-gray-200 hover:border-violet-500 transition"
+            >
+              CSV
+            </button>
+            <button
+              onClick={() => handleAuditExport('pdf')}
+              className="px-3 py-2 rounded-lg bg-slate-900 border border-white/10 text-xs text-gray-200 hover:border-violet-500 transition"
+            >
+              PDF
+            </button>
+          </div>
+          <p className="text-[10px] text-gray-500">Tenant-scoped export endpoints</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className="glass-card p-6 space-y-4">
+          <h3 className="text-xs font-bold text-white uppercase tracking-wider border-b border-white/5 pb-2.5 flex items-center gap-2">
+            <Server className="w-4 h-4 text-blue-400" />
+            Provider Usage Analytics
+          </h3>
+          <div className="space-y-3">
+            {governanceAnalytics?.providers?.length ? (
+              governanceAnalytics.providers.map((item) => (
+                <div key={item.provider} className="grid grid-cols-5 gap-3 text-xs bg-slate-900/40 p-3 rounded-lg border border-white/5">
+                  <span className="font-bold text-gray-200 capitalize col-span-2">{item.provider}</span>
+                  <span className="text-gray-400">Req: <b className="text-white">{item.requests}</b></span>
+                  <span className="text-gray-400">Blocked: <b className="text-rose-300">{item.blocked}</b></span>
+                  <span className="text-gray-400">Avg: <b className="text-white">{item.avg_duration_ms}ms</b></span>
+                </div>
+              ))
+            ) : (
+              <p className="text-xs text-gray-500">No provider traffic recorded yet.</p>
+            )}
+          </div>
+        </div>
+
+        <div className="glass-card p-6 space-y-4">
+          <h3 className="text-xs font-bold text-white uppercase tracking-wider border-b border-white/5 pb-2.5 flex items-center gap-2">
+            <ShieldAlert className="w-4 h-4 text-fuchsia-400" />
+            Redaction Analytics
+          </h3>
+          <div className="space-y-3">
+            {governanceAnalytics?.redactions?.by_type && Object.keys(governanceAnalytics.redactions.by_type).length ? (
+              Object.entries(governanceAnalytics.redactions.by_type).map(([type, count]) => (
+                <div key={type} className="flex justify-between items-center text-xs bg-slate-900/40 p-3 rounded-lg border border-white/5">
+                  <span className="font-bold text-gray-200">{type}</span>
+                  <span className="font-mono text-fuchsia-300">{count}</span>
+                </div>
+              ))
+            ) : (
+              <p className="text-xs text-gray-500">No redacted fields recorded yet.</p>
             )}
           </div>
         </div>

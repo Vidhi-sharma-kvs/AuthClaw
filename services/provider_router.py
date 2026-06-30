@@ -4,7 +4,6 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from cryptography.fernet import Fernet
 from database import engine
 from providers import get_provider as get_legacy_provider
 from providers.base import BaseProvider
@@ -32,8 +31,18 @@ class ProviderRouter:
     def select(self) -> ProviderSelection:
         route = self._lookup_route()
         credential = self._lookup_credential(route["provider"] if route else None)
+        if route and not credential:
+            credential = self._lookup_credential()
 
         if route and credential:
+            if self._normalize_provider(route["provider"]) != self._normalize_provider(credential["provider"]):
+                route = {
+                    **route,
+                    "id": None,
+                    "provider": credential["provider"],
+                    "model": credential["payload"].get("model") or self._default_model_for(credential["provider"]),
+                    "endpoint": credential["payload"].get("api_base"),
+                }
             return self._build_selection(route=route, credential=credential, source="tenant_route")
 
         if credential:
@@ -107,9 +116,9 @@ class ProviderRouter:
                 rows = conn.execute(
                     text(
                         """
-                        SELECT provider, encrypted_payload
+                        SELECT provider, encrypted_payload, secret_ref, secret_backend, secret_version
                         FROM tenant_credentials
-                        WHERE tenant_id = :tid AND provider = :provider
+                        WHERE tenant_id = :tid AND provider = :provider AND revoked_at IS NULL
                         ORDER BY updated_at DESC
                         """
                     ),
@@ -119,9 +128,9 @@ class ProviderRouter:
                 rows = conn.execute(
                     text(
                         """
-                        SELECT provider, encrypted_payload
+                        SELECT provider, encrypted_payload, secret_ref, secret_backend, secret_version
                         FROM tenant_credentials
-                        WHERE tenant_id = :tid
+                        WHERE tenant_id = :tid AND revoked_at IS NULL
                         ORDER BY updated_at DESC
                         """
                     ),
@@ -129,7 +138,7 @@ class ProviderRouter:
                 ).fetchall()
 
         for row in rows:
-            payload = self._decrypt_payload(row[1])
+            payload = self._decrypt_payload(dict(row._mapping))
             if payload:
                 return {"provider": row[0], "payload": payload}
         return None
@@ -193,11 +202,9 @@ class ProviderRouter:
             source=source,
         )
 
-    def _decrypt_payload(self, encrypted_payload: str) -> Optional[Dict[str, Any]]:
-        key = os.getenv("AUTHCLAW_ENCRYPTION_KEY", "uK2zL_s-Upxl3k88J9o0nK4qR2_l8U90jK1l4u89mKo=")
+    def _decrypt_payload(self, credential_row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
-            raw = Fernet(key.encode("utf-8")).decrypt(encrypted_payload.encode("utf-8")).decode("utf-8")
-            return json.loads(raw)
+            return SecretManager().resolve_provider_payload(credential_row)
         except Exception as exc:
             logger.warning(f"Failed to decrypt provider credential for tenant {self.tenant_id}: {exc}")
             return None

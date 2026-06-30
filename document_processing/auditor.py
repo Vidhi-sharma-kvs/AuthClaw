@@ -27,11 +27,13 @@ def calculate_audit_hash(record: dict, previous_hash: str) -> str:
         "timestamp": timestamp_str,
         "previous_hash": previous_hash
     }
+    if record.get("tenant_id") is not None:
+        hash_data["tenant_id"] = int(record["tenant_id"])
     
     serialized = json.dumps(hash_data, sort_keys=True)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
-def create_document_audit(document_id: int, action: str, actor: str, details: str) -> str:
+def create_document_audit(document_id: int, action: str, actor: str, details: str, tenant_id: int = None) -> str:
     """
     Inserts a new cryptographically chained audit block for a specific document.
     """
@@ -43,10 +45,11 @@ def create_document_audit(document_id: int, action: str, actor: str, details: st
             text("""
             SELECT integrity_hash 
             FROM document_audits 
-            WHERE document_id = :doc_id 
+            WHERE document_id = :doc_id
+              AND (:tenant_id IS NULL OR tenant_id = :tenant_id)
             ORDER BY id DESC LIMIT 1
             """),
-            {"doc_id": document_id}
+            {"doc_id": document_id, "tenant_id": tenant_id}
         ).fetchone()
         
         previous_hash = prev_row[0] if prev_row and prev_row[0] else GENESIS_HASH
@@ -57,7 +60,8 @@ def create_document_audit(document_id: int, action: str, actor: str, details: st
             "action": action,
             "actor": actor,
             "details": details,
-            "timestamp": now
+            "timestamp": now,
+            "tenant_id": tenant_id,
         }
         
         # 3. Compute integrity hash
@@ -66,10 +70,11 @@ def create_document_audit(document_id: int, action: str, actor: str, details: st
         # 4. Insert into database
         conn.execute(
             text("""
-            INSERT INTO document_audits (document_id, timestamp, action, actor, details, integrity_hash, previous_hash)
-            VALUES (:document_id, :timestamp, :action, :actor, :details, :integrity_hash, :previous_hash)
+            INSERT INTO document_audits (tenant_id, document_id, timestamp, action, actor, details, integrity_hash, previous_hash)
+            VALUES (:tenant_id, :document_id, :timestamp, :action, :actor, :details, :integrity_hash, :previous_hash)
             """),
             {
+                "tenant_id": tenant_id,
                 "document_id": document_id,
                 "timestamp": now,
                 "action": action,
@@ -83,19 +88,20 @@ def create_document_audit(document_id: int, action: str, actor: str, details: st
         
     return integrity_hash
 
-def verify_document_audit_chain(document_id: int) -> dict:
+def verify_document_audit_chain(document_id: int, tenant_id: int = None) -> dict:
     """
     Verifies the integrity of the cryptographic chain for a specific document.
     """
     with engine.connect() as conn:
         rows = conn.execute(
             text("""
-            SELECT id, document_id, timestamp, action, actor, details, integrity_hash, previous_hash
+            SELECT id, document_id, timestamp, action, actor, details, integrity_hash, previous_hash, tenant_id
             FROM document_audits
             WHERE document_id = :doc_id
+              AND (:tenant_id IS NULL OR tenant_id = :tenant_id)
             ORDER BY id ASC
             """),
-            {"doc_id": document_id}
+            {"doc_id": document_id, "tenant_id": tenant_id}
         ).fetchall()
         
     if not rows:
@@ -113,6 +119,7 @@ def verify_document_audit_chain(document_id: int) -> dict:
         details = row[5]
         integrity_hash = row[6]
         previous_hash = row[7]
+        row_tenant_id = row[8]
         
         # Check continuity
         expected_prev = GENESIS_HASH if prev_hash is None else prev_hash
@@ -130,7 +137,8 @@ def verify_document_audit_chain(document_id: int) -> dict:
             "action": action,
             "actor": actor,
             "details": details,
-            "timestamp": timestamp
+            "timestamp": timestamp,
+            "tenant_id": row_tenant_id,
         }
         computed_hash = calculate_audit_hash(record, previous_hash)
         if integrity_hash != computed_hash:

@@ -3,7 +3,7 @@ from sqlalchemy import text
 from database import engine
 from rag.embeddings import generate_embedding
 
-def save_document_chunks(doc_id: int, chunks: list[str]):
+def save_document_chunks(doc_id: int, chunks: list[str], tenant_id: int = None):
     """
     Generates embeddings for all chunks of a document and saves them to knowledge_chunks table.
     """
@@ -19,10 +19,11 @@ def save_document_chunks(doc_id: int, chunks: list[str]):
             # Insert chunk record
             conn.execute(
                 text("""
-                INSERT INTO knowledge_chunks (document_id, content, embedding_preview, embedding_vector)
-                VALUES (:doc_id, :content, :preview, :vector)
+                INSERT INTO knowledge_chunks (tenant_id, document_id, content, embedding_preview, embedding_vector)
+                VALUES (:tenant_id, :doc_id, :content, :preview, :vector)
                 """),
                 {
+                    "tenant_id": tenant_id,
                     "doc_id": doc_id,
                     "content": chunk,
                     "preview": preview,
@@ -44,7 +45,7 @@ def cosine_similarity(v1: list[float], v2: list[float]) -> float:
         return 0.0
     return dot_product / (norm_a * norm_b)
 
-def search_similarity(query_vector: list[float], top_k: int = 5, document_id: int = None) -> list[dict]:
+def search_similarity(query_vector: list[float], top_k: int = 5, document_id: int = None, tenant_id: int = None) -> list[dict]:
     """
     Retrieves matching document chunks based on Python-based cosine similarity calculation.
     If document_id is provided, limits search results to that specific document.
@@ -57,8 +58,9 @@ def search_similarity(query_vector: list[float], top_k: int = 5, document_id: in
                 FROM knowledge_chunks kc
                 JOIN knowledge_documents kd ON kc.document_id = kd.id
                 WHERE kc.document_id = :doc_id
+                  AND (:tenant_id IS NULL OR (kc.tenant_id = :tenant_id AND kd.tenant_id = :tenant_id))
                 """),
-                {"doc_id": document_id}
+                {"doc_id": document_id, "tenant_id": tenant_id}
             )
         else:
             res = conn.execute(
@@ -66,7 +68,10 @@ def search_similarity(query_vector: list[float], top_k: int = 5, document_id: in
                 SELECT kc.id, kc.document_id, kc.content, kc.embedding_vector, kd.name as doc_name
                 FROM knowledge_chunks kc
                 JOIN knowledge_documents kd ON kc.document_id = kd.id
+                WHERE (:tenant_id IS NULL OR (kc.tenant_id = :tenant_id AND kd.tenant_id = :tenant_id))
                 """)
+                ,
+                {"tenant_id": tenant_id}
             )
         rows = res.fetchall()
 

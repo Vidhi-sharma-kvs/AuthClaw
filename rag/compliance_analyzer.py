@@ -8,14 +8,19 @@ from database import engine
 
 logger = logging.getLogger("authclaw.rag.compliance")
 
-def get_document_text(doc_id: int) -> tuple[str, str]:
+def get_document_text(doc_id: int, tenant_id: int = None) -> tuple[str, str]:
     """
     Retrieves all chunks concatenated together and the document name.
     """
     with engine.connect() as conn:
         doc_row = conn.execute(
-            text("SELECT name FROM knowledge_documents WHERE id = :id"),
-            {"id": doc_id}
+            text("""
+                SELECT name
+                FROM knowledge_documents
+                WHERE id = :id
+                  AND (:tenant_id IS NULL OR tenant_id = :tenant_id)
+            """),
+            {"id": doc_id, "tenant_id": tenant_id}
         ).fetchone()
         
         if not doc_row:
@@ -23,10 +28,21 @@ def get_document_text(doc_id: int) -> tuple[str, str]:
             
         doc_name = doc_row[0]
         
-        chunks_res = conn.execute(
-            text("SELECT content FROM knowledge_chunks WHERE document_id = :doc_id ORDER BY id ASC"),
-            {"doc_id": doc_id}
-        )
+        if tenant_id is None:
+            chunks_res = conn.execute(
+                text("SELECT content FROM knowledge_chunks WHERE document_id = :doc_id ORDER BY id ASC"),
+                {"doc_id": doc_id}
+            )
+        else:
+            chunks_res = conn.execute(
+                text("""
+                    SELECT content
+                    FROM knowledge_chunks
+                    WHERE document_id = :doc_id AND tenant_id = :tenant_id
+                    ORDER BY id ASC
+                """),
+                {"doc_id": doc_id, "tenant_id": tenant_id}
+            )
         chunks = [row[0] for row in chunks_res.fetchall()]
         
     return "\n\n".join(chunks), doc_name
@@ -184,14 +200,14 @@ def run_deterministic_rules(text_content: str) -> dict:
         "findings": findings
     }
 
-def analyze_document_compliance(doc_id: int) -> dict:
+def analyze_document_compliance(doc_id: int, tenant_id: int = None) -> dict:
     """
     Performs hybrid compliance analysis:
     1. Executes deterministic pattern-matching engine first.
     2. Calls Gemini LLM to review document contents and refine findings if API key is active.
     3. Merges the results, ensuring 100% reliability.
     """
-    text_content, doc_name = get_document_text(doc_id)
+    text_content, doc_name = get_document_text(doc_id, tenant_id=tenant_id)
     
     # 1. Deterministic Analysis
     det_results = run_deterministic_rules(text_content)
@@ -281,7 +297,7 @@ The JSON must have this exact structure:
     # Fallback to deterministic rules
     return det_results
 
-def generate_and_vault_reports(doc_id: int, doc_name: str, analysis: dict):
+def generate_and_vault_reports(doc_id: int, doc_name: str, analysis: dict, tenant_id: int = None):
     """
     Generates Compliance, Findings, and Risk reports as physical text files
     and stores them as vaulted evidence in the compliance_evidence table.
@@ -392,10 +408,11 @@ def generate_and_vault_reports(doc_id: int, doc_name: str, analysis: dict):
             # Insert into compliance_evidence
             conn.execute(
                 text("""
-                INSERT INTO compliance_evidence (name, category, file_path, collected_at, hash)
-                VALUES (:name, :category, :file_path, :collected_at, :hash)
+                INSERT INTO compliance_evidence (tenant_id, name, category, file_path, collected_at, hash)
+                VALUES (:tenant_id, :name, :category, :file_path, :collected_at, :hash)
                 """),
                 {
+                    "tenant_id": tenant_id,
                     "name": f"{name_prefix} - {doc_name}",
                     "category": category,
                     "file_path": f"/evidence/{filename}",

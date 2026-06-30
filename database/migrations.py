@@ -230,9 +230,30 @@ def run_startup_migrations():
         tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
         provider VARCHAR(50) NOT NULL,
         encrypted_payload TEXT NOT NULL,
+        secret_ref TEXT,
+        secret_backend VARCHAR(50) DEFAULT 'database_fernet',
+        secret_version VARCHAR(255),
+        key_fingerprint VARCHAR(64),
+        key_prefix VARCHAR(32),
+        health_status VARCHAR(50) DEFAULT 'unknown',
+        health_checked_at TIMESTAMP,
+        health_message TEXT,
+        rotated_at TIMESTAMP,
+        revoked_at TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT uniq_tenant_prov UNIQUE(tenant_id, provider)
     );
+
+    ALTER TABLE tenant_credentials ADD COLUMN IF NOT EXISTS secret_ref TEXT;
+    ALTER TABLE tenant_credentials ADD COLUMN IF NOT EXISTS secret_backend VARCHAR(50) DEFAULT 'database_fernet';
+    ALTER TABLE tenant_credentials ADD COLUMN IF NOT EXISTS secret_version VARCHAR(255);
+    ALTER TABLE tenant_credentials ADD COLUMN IF NOT EXISTS key_fingerprint VARCHAR(64);
+    ALTER TABLE tenant_credentials ADD COLUMN IF NOT EXISTS key_prefix VARCHAR(32);
+    ALTER TABLE tenant_credentials ADD COLUMN IF NOT EXISTS health_status VARCHAR(50) DEFAULT 'unknown';
+    ALTER TABLE tenant_credentials ADD COLUMN IF NOT EXISTS health_checked_at TIMESTAMP;
+    ALTER TABLE tenant_credentials ADD COLUMN IF NOT EXISTS health_message TEXT;
+    ALTER TABLE tenant_credentials ADD COLUMN IF NOT EXISTS rotated_at TIMESTAMP;
+    ALTER TABLE tenant_credentials ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP;
 
     -- Agent Trace Events
     CREATE TABLE IF NOT EXISTS agent_events (
@@ -268,6 +289,13 @@ def run_startup_migrations():
         query TEXT,
         risk_level VARCHAR(20),
         audit_id INTEGER REFERENCES audit_logs(id) ON DELETE SET NULL,
+        reason VARCHAR(100),
+        comments TEXT,
+        approved_by VARCHAR(255),
+        rejected_by VARCHAR(255),
+        executed_by VARCHAR(255),
+        mfa_verified BOOLEAN DEFAULT FALSE,
+        last_action_at TIMESTAMP,
         metadata TEXT
     );
 
@@ -285,7 +313,28 @@ def run_startup_migrations():
     ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS query TEXT;
     ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS risk_level VARCHAR(20);
     ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS audit_id INTEGER REFERENCES audit_logs(id) ON DELETE SET NULL;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS reason VARCHAR(100);
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS comments TEXT;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS approved_by VARCHAR(255);
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS rejected_by VARCHAR(255);
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS executed_by VARCHAR(255);
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS mfa_verified BOOLEAN DEFAULT FALSE;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS last_action_at TIMESTAMP;
     ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS metadata TEXT;
+
+    CREATE TABLE IF NOT EXISTS approval_audit_events (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        approval_id VARCHAR(100),
+        request_id VARCHAR(100),
+        action VARCHAR(50) NOT NULL,
+        actor VARCHAR(255),
+        comment TEXT,
+        mfa_verified BOOLEAN DEFAULT FALSE,
+        reason VARCHAR(100),
+        metadata TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
 
     -- Usage Events
     CREATE TABLE IF NOT EXISTS usage_events (
@@ -322,6 +371,26 @@ def run_startup_migrations():
 
     ALTER TABLE policies ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
     ALTER TABLE policies ADD COLUMN IF NOT EXISTS severity_level VARCHAR(20) DEFAULT 'MEDIUM';
+    ALTER TABLE policies ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1;
+    ALTER TABLE policies ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'published';
+    ALTER TABLE policies ADD COLUMN IF NOT EXISTS published_at TIMESTAMP;
+    ALTER TABLE policies ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();
+    ALTER TABLE policies ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
+    ALTER TABLE policies ADD COLUMN IF NOT EXISTS created_by VARCHAR(255);
+    ALTER TABLE policies ADD COLUMN IF NOT EXISTS updated_by VARCHAR(255);
+
+    CREATE TABLE IF NOT EXISTS policy_audit_history (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        policy_id INTEGER REFERENCES policies(id) ON DELETE SET NULL,
+        action VARCHAR(50) NOT NULL,
+        actor VARCHAR(255),
+        before_rules TEXT,
+        after_rules TEXT,
+        version INTEGER DEFAULT 1,
+        status VARCHAR(20) DEFAULT 'published',
+        created_at TIMESTAMP DEFAULT NOW()
+    );
 
     -- RAG Documents
     CREATE TABLE IF NOT EXISTS knowledge_documents (
@@ -344,6 +413,8 @@ def run_startup_migrations():
     );
 
     ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS embedding_vector TEXT;
+    ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+    ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
 
     -- Ephemeral Workers
     CREATE TABLE IF NOT EXISTS ephemeral_workers (
@@ -505,10 +576,166 @@ def run_startup_migrations():
     ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS location_evidence TEXT;
 
     ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+    ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+    ALTER TABLE document_scans ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+    ALTER TABLE document_audits ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+    ALTER TABLE secrets ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+    ALTER TABLE compliance_evidence ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_id ON audit_logs(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_gateway_requests_tenant_id ON gateway_requests(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_gateway_routes_tenant_id ON gateway_routes(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_tenant_api_keys_tenant_id ON tenant_api_keys(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_tenant_credentials_tenant_id ON tenant_credentials(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_tenant_credentials_provider ON tenant_credentials(tenant_id, provider);
+    CREATE INDEX IF NOT EXISTS idx_agent_events_tenant_id ON agent_events(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_gateway_approvals_tenant_id ON gateway_approvals(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_approval_audit_events_tenant_id ON approval_audit_events(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_approval_audit_events_approval_id ON approval_audit_events(approval_id);
+    CREATE INDEX IF NOT EXISTS idx_policies_tenant_id ON policies(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_policies_tenant_status ON policies(tenant_id, status);
+    CREATE INDEX IF NOT EXISTS idx_policy_audit_history_tenant_id ON policy_audit_history(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_policy_audit_history_policy_id ON policy_audit_history(policy_id);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_documents_tenant_id ON knowledge_documents(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_tenant_document ON knowledge_chunks(tenant_id, document_id);
+    CREATE INDEX IF NOT EXISTS idx_documents_tenant_id ON documents(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_document_findings_tenant_document ON document_findings(tenant_id, document_id);
+    CREATE INDEX IF NOT EXISTS idx_document_scans_tenant_document ON document_scans(tenant_id, document_id);
+    CREATE INDEX IF NOT EXISTS idx_document_audits_tenant_document ON document_audits(tenant_id, document_id);
+    CREATE INDEX IF NOT EXISTS idx_compliance_evidence_tenant_id ON compliance_evidence(tenant_id);
+    """
+    rls_sql = """
+    ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_audit_logs ON audit_logs;
+    CREATE POLICY tenant_isolation_audit_logs ON audit_logs
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE gateway_requests ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_gateway_requests ON gateway_requests;
+    CREATE POLICY tenant_isolation_gateway_requests ON gateway_requests
+        USING (tenant_id = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
+
+    ALTER TABLE gateway_routes ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_gateway_routes ON gateway_routes;
+    CREATE POLICY tenant_isolation_gateway_routes ON gateway_routes
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE tenant_users ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_tenant_users ON tenant_users;
+    CREATE POLICY tenant_isolation_tenant_users ON tenant_users
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE tenant_api_keys ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_tenant_api_keys ON tenant_api_keys;
+    CREATE POLICY tenant_isolation_tenant_api_keys ON tenant_api_keys
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE tenant_credentials ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_tenant_credentials ON tenant_credentials;
+    CREATE POLICY tenant_isolation_tenant_credentials ON tenant_credentials
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE agent_events ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_agent_events ON agent_events;
+    CREATE POLICY tenant_isolation_agent_events ON agent_events
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE gateway_approvals ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_gateway_approvals ON gateway_approvals;
+    CREATE POLICY tenant_isolation_gateway_approvals ON gateway_approvals
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE approval_audit_events ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_approval_audit_events ON approval_audit_events;
+    CREATE POLICY tenant_isolation_approval_audit_events ON approval_audit_events
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_usage_events ON usage_events;
+    CREATE POLICY tenant_isolation_usage_events ON usage_events
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE policies ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_policies ON policies;
+    CREATE POLICY tenant_isolation_policies ON policies
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE policy_audit_history ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_policy_audit_history ON policy_audit_history;
+    CREATE POLICY tenant_isolation_policy_audit_history ON policy_audit_history
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE knowledge_documents ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_knowledge_documents ON knowledge_documents;
+    CREATE POLICY tenant_isolation_knowledge_documents ON knowledge_documents
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE knowledge_chunks ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_knowledge_chunks ON knowledge_chunks;
+    CREATE POLICY tenant_isolation_knowledge_chunks ON knowledge_chunks
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_documents ON documents;
+    CREATE POLICY tenant_isolation_documents ON documents
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE document_findings ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_document_findings ON document_findings;
+    CREATE POLICY tenant_isolation_document_findings ON document_findings
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE document_scans ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_document_scans ON document_scans;
+    CREATE POLICY tenant_isolation_document_scans ON document_scans
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE document_audits ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_document_audits ON document_audits;
+    CREATE POLICY tenant_isolation_document_audits ON document_audits
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE chat_sessions ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_chat_sessions ON chat_sessions;
+    CREATE POLICY tenant_isolation_chat_sessions ON chat_sessions
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE secrets ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_secrets ON secrets;
+    CREATE POLICY tenant_isolation_secrets ON secrets
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE compliance_evidence ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_compliance_evidence ON compliance_evidence;
+    CREATE POLICY tenant_isolation_compliance_evidence ON compliance_evidence
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
     """
     try:
         with engine.connect() as conn:
             conn.execute(text(migration_sql))
+            conn.execute(text(rls_sql))
             conn.execute(text("""
                 INSERT INTO tenant_users (
                     tenant_id, first_name, last_name, email, password_hash,

@@ -2,6 +2,8 @@
 
 This directory prepares AuthClaw for AWS deployment. It does not deploy anything by itself.
 
+For a Terraform production deployment, start with [`../terraform/README.md`](../terraform/README.md). It provisions ECS Fargate, RDS PostgreSQL, Secrets Manager, S3 document storage, CloudWatch logs, an ALB, and security groups.
+
 For a low-cost pilot deployment, start with [`100-dollar-deployment.md`](100-dollar-deployment.md). That profile uses one small ECS Fargate task, single-AZ RDS `db.t3.small`, S3/CloudFront frontend hosting, and no NAT Gateway.
 
 For no-DNS direct EC2 testing, use [`../ec2/README.md`](../ec2/README.md) instead. That path exposes `http://<ec2-public-ip>` for the frontend and `http://<ec2-public-ip>:8000` for the backend.
@@ -33,6 +35,7 @@ Store these in Secrets Manager and reference them from the ECS task definition:
 - `authclaw/production/smtp-from`
 - `authclaw/production/smtp-username`
 - `authclaw/production/smtp-password`
+- S3 bucket name for `AUTHCLAW_DOCUMENT_S3_BUCKET`
 
 Optional provider secrets can be stored as JSON:
 
@@ -62,6 +65,7 @@ Production startup fails unless:
 - `SMTP_HOST` and `SMTP_FROM` are configured
 - `AUTHCLAW_RATE_LIMIT_PER_MINUTE` is a positive integer
 - `AWS_REGION` is present when `AWS_SECRETS_MANAGER_ENABLED=true`
+- `AUTHCLAW_DOCUMENT_S3_BUCKET` is present when `AUTHCLAW_DOCUMENT_STORAGE_BACKEND=s3`
 
 ## Health Checks
 
@@ -72,3 +76,13 @@ GET /health/ready
 ```
 
 The endpoint checks database connectivity and production configuration state.
+
+## Containers
+
+- Backend image: root [`Dockerfile`](../../Dockerfile)
+- Frontend image: [`../../frontend/Dockerfile`](../../frontend/Dockerfile)
+- Local production smoke compose: [`../../docker-compose.production.yml`](../../docker-compose.production.yml)
+
+## Operations
+
+See [`backup-and-operations.md`](backup-and-operations.md) for backup, log retention, and incident checks.

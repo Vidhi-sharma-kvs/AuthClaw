@@ -1,4 +1,5 @@
 import hashlib
+import re
 import uuid
 
 from fastapi.testclient import TestClient
@@ -14,7 +15,6 @@ headers = {
     "Content-Type": "application/json",
     "Authorization": f"Bearer {API_KEY}",
 }
-
 
 def _tenant_id_for_test_key():
     key_hash = hashlib.sha256(API_KEY.encode("utf-8")).hexdigest()
@@ -101,3 +101,42 @@ def test_existing_openai_compatible_route_still_works():
     data = response.json()
     assert "choices" in data
     assert data["choices"][0]["message"]["content"]
+
+
+def test_openai_compatible_route_streams_gateway_response():
+    session_id = f"compat-stream-{uuid.uuid4().hex}"
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        headers={**headers, "X-Session-Id": session_id},
+        json={
+            "model": "gpt-4o",
+            "stream": True,
+            "messages": [
+                {"role": "user", "content": "Stream a short AuthClaw governance response."},
+            ],
+        },
+    ) as response:
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        body = "".join(response.iter_text())
+
+    assert "chat.completion.chunk" in body
+    assert "request_id" in body
+    assert "data: [DONE]" in body
+    request_id = re.search(r'"request_id":\s*"(req-[^"]+)"', body).group(1)
+
+    with engine.connect() as conn:
+        tracked = conn.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM gateway_requests
+                WHERE request_id = :request_id
+                  AND tenant_id = :tenant_id
+                """
+            ),
+            {"request_id": request_id, "tenant_id": str(_tenant_id_for_test_key())},
+        ).scalar()
+
+    assert tracked == 1

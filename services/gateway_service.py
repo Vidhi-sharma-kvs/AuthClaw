@@ -282,9 +282,11 @@ class GatewayService:
             }
 
         if result.get("approval_status") == "PENDING_APPROVAL":
+            approval_reason = result.get("approval_reason") or "high_risk"
             approval_data = {
-                "content": "Action blocked: High-risk query detected. This request requires manual approval.",
+                "content": f"Action paused: {approval_reason.replace('_', ' ')} requires human approval.",
                 "approvalId": result.get("approval_id"),
+                "approvalReason": approval_reason,
                 "riskLevel": risk_level,
                 "requestId": execution.request_id,
             }
@@ -294,6 +296,7 @@ class GatewayService:
                 "status": "approval_required",
                 "approval_status": "PENDING_APPROVAL",
                 "approval_id": result.get("approval_id"),
+                "approval_reason": approval_reason,
                 "risk_level": risk_level,
                 "decision": execution.decision,
                 "trace": execution.trace,

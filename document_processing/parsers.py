@@ -1,11 +1,29 @@
 import io
 import csv
+import os
 import zipfile
 import logging
 import xml.etree.ElementTree as ET
-from typing import Dict, List, Any
+from dataclasses import dataclass
+from typing import Dict, List, Any, Optional
 
 logger = logging.getLogger("authclaw.document_processing.parsers")
+
+
+@dataclass
+class ExtractedDocumentPage:
+    page_number: int
+    text: str
+    source: str = "native"
+
+
+@dataclass
+class DocumentExtractionResult:
+    text: str
+    pages: List[ExtractedDocumentPage]
+    extraction_method: str
+    ocr_status: str = "not_required"
+    ocr_error: Optional[str] = None
 
 def parse_txt_or_md(file_bytes: bytes) -> str:
     """Parses TXT or MD files."""
@@ -193,6 +211,113 @@ def parse_pdf(file_bytes: bytes) -> str:
     except Exception as e:
         logger.error(f"PDF parsing failed: {e}")
         return ""
+
+
+def parse_pdf_pages(file_bytes: bytes) -> List[ExtractedDocumentPage]:
+    """Parses PDF text contents page-by-page using pypdf."""
+    try:
+        import pypdf
+        pdf_file = io.BytesIO(file_bytes)
+        reader = pypdf.PdfReader(pdf_file)
+        pages = []
+        for index, page in enumerate(reader.pages, start=1):
+            text = page.extract_text() or ""
+            pages.append(ExtractedDocumentPage(page_number=index, text=text, source="pdf_text"))
+        return pages
+    except Exception as e:
+        logger.error(f"PDF page parsing failed: {e}")
+        return []
+
+
+def ocr_image(file_bytes: bytes) -> str:
+    """OCRs image bytes using Pillow and pytesseract when available."""
+    try:
+        from PIL import Image
+        import pytesseract
+        image = Image.open(io.BytesIO(file_bytes))
+        return pytesseract.image_to_string(image) or ""
+    except ImportError as e:
+        raise RuntimeError("OCR dependencies are not installed. Install Pillow and pytesseract.") from e
+    except Exception as e:
+        raise RuntimeError(f"OCR image extraction failed: {e}") from e
+
+
+def ocr_pdf_pages(file_bytes: bytes) -> List[ExtractedDocumentPage]:
+    """OCRs scanned PDF pages when pdf2image, Pillow, pytesseract, and Poppler are available."""
+    try:
+        from pdf2image import convert_from_bytes
+        import pytesseract
+        images = convert_from_bytes(file_bytes)
+        pages = []
+        for index, image in enumerate(images, start=1):
+            text = pytesseract.image_to_string(image) or ""
+            pages.append(ExtractedDocumentPage(page_number=index, text=text, source="ocr_pdf"))
+        return pages
+    except ImportError as e:
+        raise RuntimeError("OCR PDF dependencies are not installed. Install pdf2image, Pillow, and pytesseract.") from e
+    except Exception as e:
+        raise RuntimeError(f"OCR PDF extraction failed: {e}") from e
+
+
+def extract_document_pages(file_bytes: bytes, filename: str) -> DocumentExtractionResult:
+    """
+    Extracts document text with page metadata. Uses OCR for images and scanned PDFs
+    when OCR dependencies and system binaries are available.
+    """
+    ext = os.path.splitext(filename)[1].lower()
+    image_extensions = {".png", ".jpg", ".jpeg", ".tiff", ".tif"}
+
+    if ext == ".pdf":
+        pages = parse_pdf_pages(file_bytes)
+        native_text = "\n\n".join(page.text for page in pages if page.text)
+        if native_text.strip():
+            return DocumentExtractionResult(
+                text=native_text,
+                pages=pages,
+                extraction_method="pdf_text",
+            )
+        try:
+            ocr_pages = ocr_pdf_pages(file_bytes)
+            ocr_text = "\n\n".join(page.text for page in ocr_pages if page.text)
+            return DocumentExtractionResult(
+                text=ocr_text,
+                pages=ocr_pages,
+                extraction_method="ocr_pdf",
+                ocr_status="completed" if ocr_text.strip() else "empty",
+            )
+        except RuntimeError as e:
+            return DocumentExtractionResult(
+                text="",
+                pages=pages,
+                extraction_method="pdf_text",
+                ocr_status="unavailable",
+                ocr_error=str(e),
+            )
+
+    if ext in image_extensions:
+        try:
+            text = ocr_image(file_bytes)
+            return DocumentExtractionResult(
+                text=text,
+                pages=[ExtractedDocumentPage(page_number=1, text=text, source="ocr_image")],
+                extraction_method="ocr_image",
+                ocr_status="completed" if text.strip() else "empty",
+            )
+        except RuntimeError as e:
+            return DocumentExtractionResult(
+                text="",
+                pages=[],
+                extraction_method="ocr_image",
+                ocr_status="unavailable",
+                ocr_error=str(e),
+            )
+
+    text = extract_document_text(file_bytes, filename)
+    return DocumentExtractionResult(
+        text=text,
+        pages=[ExtractedDocumentPage(page_number=1, text=text, source=ext.lstrip(".") or "text")],
+        extraction_method=ext.lstrip(".") or "text",
+    )
 
 def extract_document_text(file_bytes: bytes, filename: str) -> str:
     """

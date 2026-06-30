@@ -1,0 +1,10 @@
+/opt/authclaw/logs/*.log {
+    daily
+    rotate 14
+    compress
+    missingok
+    notifempty
+    copytruncate
+    create 0640 ubuntu ubuntu
+}
+
