@@ -144,6 +144,113 @@ def test_login_persists_mfa_session_in_database():
     assert row[1] == "otp"
 
 
+def test_verified_user_can_reset_password_and_login(monkeypatch):
+    tenant_name = f"reset-tenant-{uuid.uuid4().hex}"
+    tenant_email = f"admin@{tenant_name}.com"
+    old_password = "OldPassword123!"
+    new_password = "NewPassword123!"
+    reset_token = f"reset-{uuid.uuid4().hex}"
+
+    tenant_id, user_id = _create_tenant_user(
+        tenant_name,
+        tenant_email,
+        password=old_password,
+        mfa_enabled=False,
+    )
+    refresh_token = create_refresh_token_for_user(user_id, tenant_id, tenant_email)
+
+    monkeypatch.setattr("main.generate_reset_token", lambda: reset_token)
+    monkeypatch.setattr("main.send_password_reset_email", lambda recipient, token, org: None)
+
+    request = client.post("/auth/password/reset-request", json={"username": tenant_email})
+
+    assert request.status_code == 200
+    assert request.json()["email_delivery"] == "sent"
+
+    confirm = client.post(
+        "/auth/password/reset-confirm",
+        json={"token": reset_token, "password": new_password},
+    )
+
+    assert confirm.status_code == 200
+    assert confirm.json()["email"] == tenant_email
+
+    old_login = client.post("/auth/login", json={"username": tenant_email, "password": old_password})
+    assert old_login.status_code == 401
+
+    new_login = client.post("/auth/login", json={"username": tenant_email, "password": new_password})
+    assert new_login.status_code == 200
+    assert new_login.json()["access_token"]
+
+    reused = client.post(
+        "/auth/password/reset-confirm",
+        json={"token": reset_token, "password": "AnotherPassword123!"},
+    )
+    assert reused.status_code == 400
+
+    refresh = client.post("/auth/refresh", json={"refresh_token": refresh_token})
+    assert refresh.status_code == 401
+
+
+def test_password_reset_local_debug_for_unknown_account(monkeypatch):
+    monkeypatch.setenv("AUTHCLAW_ENV", "development")
+    email = f"missing-{uuid.uuid4().hex}@authclaw.local"
+
+    response = client.post("/auth/password/reset-request", json={"username": email})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "success"
+    assert payload["email_delivery"] == "not_attempted"
+    assert "No active tenant user exists" in payload["local_debug"]
+    assert "reset_token" not in payload
+
+
+def test_login_reports_pending_registration_verification_state():
+    email = f"pending-{uuid.uuid4().hex}@authclaw.local"
+    email_token = f"email-{uuid.uuid4().hex}"
+    domain_token = f"authclaw-domain-verification={uuid.uuid4().hex}"
+
+    with engine.connect() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO onboarding_registrations (
+                    organization_name, full_name, work_email, domain, password_hash,
+                    email_verification_token, domain_verification_token, totp_secret
+                )
+                VALUES (
+                    :organization_name, :full_name, :work_email, :domain, :password_hash,
+                    :email_token, :domain_token, :totp_secret
+                )
+                """
+            ),
+            {
+                "organization_name": "Pending AuthClaw Tenant",
+                "full_name": "Pending Admin",
+                "work_email": email,
+                "domain": "authclaw.local",
+                "password_hash": hash_password("PendingPassword123!"),
+                "email_token": email_token,
+                "domain_token": domain_token,
+                "totp_secret": "JBSWY3DPEHPK3PXP",
+            },
+        )
+        conn.commit()
+
+    response = client.post(
+        "/auth/login",
+        json={"username": email, "password": "PendingPassword123!"},
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["detail"] == "Email not verified"
+    assert payload["email_verified"] is False
+    assert payload["email_token"] == email_token
+    assert payload["domain_token"] == domain_token
+
+
 def test_generated_api_key_can_be_soft_revoked():
     tenant_name = f"api-key-tenant-{uuid.uuid4().hex}"
     tenant_email = f"admin@{tenant_name}.com"

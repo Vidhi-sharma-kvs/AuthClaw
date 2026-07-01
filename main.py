@@ -5,12 +5,13 @@ import uuid
 import logging
 import json
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException, Response, status, Request, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 
 from graph import graph
 from approval_store import (
@@ -33,6 +34,7 @@ from services.gateway_service import (
     GatewayProviderUnavailableError,
     GatewayService,
 )
+from services.tenant_context import auth_lookup_context, tenant_context
 
 # Set up basic logging
 logging.basicConfig(level=logging.INFO)
@@ -96,9 +98,9 @@ import base64
 import hmac
 import struct
 import time
-from cryptography.fernet import Fernet
+from services.secret_manager import SecretManager, SENSITIVE_ENV_NAMES, bootstrap_local_process_secrets
 
-ENCRYPTION_KEY = os.getenv("AUTHCLAW_ENCRYPTION_KEY", "uK2zL_s-Upxl3k88J9o0nK4qR2_l8U90jK1l4u89mKo=")
+bootstrap_local_process_secrets()
 
 DEFAULT_ITERATIONS = int(os.getenv("AUTHCLAW_PASSWORD_ITERATIONS", "600000"))
 
@@ -180,12 +182,10 @@ def build_otpauth_uri(email: str, secret: str) -> str:
     return f"otpauth://totp/AuthClaw:{account}?secret={secret}&issuer={issuer}"
 
 def encrypt_secret(raw_value: str) -> str:
-    cipher = Fernet(ENCRYPTION_KEY.encode('utf-8'))
-    return cipher.encrypt(raw_value.encode('utf-8')).decode('utf-8')
+    return SecretManager().encrypt_for_database(raw_value)
 
 def decrypt_secret(encrypted_value: str) -> str:
-    cipher = Fernet(ENCRYPTION_KEY.encode('utf-8'))
-    return cipher.decrypt(encrypted_value.encode('utf-8')).decode('utf-8')
+    return SecretManager().decrypt_from_database(encrypted_value)
 
 def resolve_tenant(x_api_key: str, authorization: str = None) -> int:
     key_to_check = x_api_key
@@ -209,7 +209,7 @@ def resolve_tenant(x_api_key: str, authorization: str = None) -> int:
     # 3. Check in database
     from database import engine
     from sqlalchemy import text
-    with engine.connect() as conn:
+    with auth_lookup_context(), engine.connect() as conn:
         row = conn.execute(
             text("""
                 SELECT tenant_id
@@ -261,6 +261,54 @@ def optional_user_from_request(request: Request) -> dict:
     token = auth_header[7:] if auth_header.startswith("Bearer ") else auth_header
     payload = decode_jwt(token)
     return payload or {}
+
+
+def _is_public_or_auth_path(path: str) -> bool:
+    public_exact = {
+        "/",
+        "/openapi.json",
+        "/docs",
+        "/redoc",
+        "/health",
+        "/health/ready",
+        "/favicon.ico",
+    }
+    return path in public_exact or path.startswith(("/auth/", "/static/", "/assets/"))
+
+
+def _tenant_id_from_request_headers(request: Request) -> Optional[int]:
+    authorization = request.headers.get("Authorization")
+    x_api_key = request.headers.get("X-API-Key")
+
+    if authorization:
+        token = authorization[7:] if authorization.startswith("Bearer ") else authorization
+        payload = decode_jwt(token)
+        if payload and payload.get("tenant_id"):
+            return payload["tenant_id"]
+
+    if x_api_key:
+        return resolve_tenant(x_api_key=x_api_key, authorization=None)
+
+    return None
+
+
+@app.middleware("http")
+async def tenant_database_context_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    tenant_id = None
+
+    if not _is_public_or_auth_path(request.url.path):
+        try:
+            tenant_id = _tenant_id_from_request_headers(request)
+        except HTTPException:
+            tenant_id = None
+
+    with tenant_context(tenant_id, request_id=request_id, required=tenant_id is not None):
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        if tenant_id is not None:
+            response.headers["X-Tenant-ID"] = str(tenant_id)
+        return response
 
 def approval_actor_from_payload(payload: dict) -> str:
     return payload.get("email") or payload.get("sub") or "System Admin"
@@ -1767,6 +1815,133 @@ class PolicySimulationRequest(BaseModel):
     severity_level: Optional[str] = "MEDIUM"
     sample_text: str
 
+class GatewayPolicyEvaluationRequest(BaseModel):
+    method: str
+    path: str
+    request_id: Optional[str] = None
+    body: Optional[Any] = None
+    body_raw: Optional[str] = None
+
+def policy_rules_checksum(rules: Dict[str, Any]) -> str:
+    canonical = json.dumps(rules or {}, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+def policy_actor_from_authorization(authorization: Optional[str]) -> str:
+    try:
+        payload = get_current_user_from_authorization(authorization)
+        return payload.get("email") or payload.get("sub") or "system"
+    except Exception:
+        return "system"
+
+def persist_policy_version(
+    conn,
+    tenant_id: int,
+    policy_id: int,
+    version: int,
+    status_value: str,
+    rules: Dict[str, Any],
+    actor: str,
+    approver: Optional[str] = None,
+    changelog: Optional[str] = None,
+) -> Optional[int]:
+    checksum = policy_rules_checksum(rules)
+    row = conn.execute(
+        text("""
+            INSERT INTO policy_versions (
+                tenant_id, policy_id, version, status, rules, checksum,
+                author, approver, changelog, created_at, approved_at, published_at
+            )
+            VALUES (
+                :tenant_id, :policy_id, :version, :status, :rules, :checksum,
+                :author, :approver, :changelog, NOW(),
+                CASE WHEN :status IN ('approved', 'published') THEN NOW() ELSE NULL END,
+                CASE WHEN :status = 'published' THEN NOW() ELSE NULL END
+            )
+            ON CONFLICT (policy_id, version) DO UPDATE
+            SET status = EXCLUDED.status,
+                rules = EXCLUDED.rules,
+                checksum = EXCLUDED.checksum,
+                approver = COALESCE(EXCLUDED.approver, policy_versions.approver),
+                changelog = COALESCE(EXCLUDED.changelog, policy_versions.changelog),
+                approved_at = CASE
+                    WHEN EXCLUDED.status IN ('approved', 'published') THEN COALESCE(policy_versions.approved_at, NOW())
+                    ELSE policy_versions.approved_at
+                END,
+                published_at = CASE
+                    WHEN EXCLUDED.status = 'published' THEN COALESCE(policy_versions.published_at, NOW())
+                    ELSE policy_versions.published_at
+                END
+            RETURNING id
+        """),
+        {
+            "tenant_id": tenant_id,
+            "policy_id": policy_id,
+            "version": version,
+            "status": status_value,
+            "rules": json.dumps(rules),
+            "checksum": checksum,
+            "author": actor,
+            "approver": approver,
+            "changelog": changelog,
+        },
+    ).fetchone()
+    return int(row[0]) if row else None
+
+def persist_policy_change_approval(
+    conn,
+    tenant_id: int,
+    policy_id: int,
+    version_id: Optional[int],
+    status_value: str,
+    requested_by: str,
+    reviewed_by: Optional[str] = None,
+    comments: Optional[str] = None,
+) -> None:
+    conn.execute(
+        text("""
+            INSERT INTO policy_change_approvals (
+                tenant_id, policy_id, version_id, status, requested_by,
+                reviewed_by, comments, created_at, decided_at
+            )
+            VALUES (
+                :tenant_id, :policy_id, :version_id, :status, :requested_by,
+                :reviewed_by, :comments, NOW(),
+                CASE WHEN :status IN ('approved', 'rejected') THEN NOW() ELSE NULL END
+            )
+        """),
+        {
+            "tenant_id": tenant_id,
+            "policy_id": policy_id,
+            "version_id": version_id,
+            "status": status_value,
+            "requested_by": requested_by,
+            "reviewed_by": reviewed_by,
+            "comments": comments,
+        },
+    )
+
+def extract_policy_text_from_gateway_payload(payload: GatewayPolicyEvaluationRequest) -> str:
+    body = payload.body
+    if isinstance(body, dict):
+        if isinstance(body.get("message"), str):
+            return body["message"]
+        messages = body.get("messages")
+        if isinstance(messages, list):
+            for item in reversed(messages):
+                if isinstance(item, dict) and item.get("role") == "user":
+                    content = item.get("content")
+                    if isinstance(content, str):
+                        return content
+        prompt = body.get("prompt")
+        if isinstance(prompt, str):
+            return prompt
+        return json.dumps(body, sort_keys=True)
+    if isinstance(payload.body_raw, str) and payload.body_raw.strip():
+        return payload.body_raw
+    if isinstance(body, str):
+        return body
+    return ""
+
 class DocumentUploadRequest(BaseModel):
     name: str
     type: str
@@ -1904,7 +2079,7 @@ def create_route(route: RouteRequest, authorization: Optional[str] = Header(None
     from sqlalchemy import text
     from verify_audit import create_audit_block
     tenant_id = resolve_tenant_from_authorization(authorization)
-    with engine.connect() as conn:
+    with tenant_context(session["tenant_id"], session_id, required=True), engine.connect() as conn:
         conn.execute(
             text("""
             INSERT INTO gateway_routes (tenant_id, name, provider, endpoint, model, rate_limit, redaction_enabled, enabled, tenant_assignment)
@@ -2038,7 +2213,7 @@ def update_tenant(tenant_id: int, tenant: TenantRequest, authorization: Optional
     authenticated_tenant_id = resolve_tenant_from_authorization(authorization)
     if tenant_id != authenticated_tenant_id:
         raise HTTPException(status_code=403, detail="Cannot modify another tenant.")
-    with engine.connect() as conn:
+    with auth_lookup_context(), engine.connect() as conn:
         conn.execute(
             text("UPDATE tenants SET name = :name, status = :status WHERE id = :id"),
             {"name": tenant.name, "status": tenant.status, "id": tenant_id}
@@ -2090,29 +2265,29 @@ def list_policies(authorization: Optional[str] = Header(None)):
 @app.post("/policies")
 def create_policy(policy: PolicyRequest, authorization: Optional[str] = Header(None)):
     from database import engine
-    from sqlalchemy import text
     from verify_audit import create_audit_block
     from services.policy_engine import PolicyEngine, record_policy_history
     tenant_id = resolve_tenant_from_authorization(authorization)
-    actor = "system"
-    try:
-        actor = get_current_user_from_authorization(authorization).get("sub") or actor
-    except Exception:
-        pass
+    actor = policy_actor_from_authorization(authorization)
     rules = PolicyEngine().parse_rules(policy.rules)
     status = policy.status or "published"
     severity_level = policy.severity_level or "MEDIUM"
+    checksum = policy_rules_checksum(rules)
     with engine.connect() as conn:
         row = conn.execute(
             text("""
                 INSERT INTO policies (
                     name, type, rules, enabled, tenant_id, severity_level,
-                    version, status, published_at, created_by, updated_by, created_at, updated_at
+                    version, status, published_at, created_by, updated_by, checksum, changelog,
+                    approved_by, approved_at, created_at, updated_at
                 )
                 VALUES (
                     :name, :type, :rules, :enabled, :tenant_id, :severity_level,
                     1, :status, CASE WHEN :status = 'published' THEN NOW() ELSE NULL END,
-                    :actor, :actor, NOW(), NOW()
+                    :actor, :actor, :checksum, :changelog,
+                    CASE WHEN :status = 'published' THEN :actor ELSE NULL END,
+                    CASE WHEN :status = 'published' THEN NOW() ELSE NULL END,
+                    NOW(), NOW()
                 )
                 RETURNING id
             """),
@@ -2125,10 +2300,44 @@ def create_policy(policy: PolicyRequest, authorization: Optional[str] = Header(N
                 "severity_level": severity_level,
                 "status": status,
                 "actor": actor,
+                "checksum": checksum,
+                "changelog": f"Created policy '{policy.name}'.",
             }
         ).fetchone()
+        policy_id = row[0]
+        version_id = persist_policy_version(
+            conn,
+            tenant_id=tenant_id,
+            policy_id=policy_id,
+            version=1,
+            status_value=status,
+            rules=rules,
+            actor=actor,
+            approver=actor if status == "published" else None,
+            changelog=f"Created policy '{policy.name}'.",
+        )
+        if status == "published":
+            persist_policy_change_approval(
+                conn,
+                tenant_id=tenant_id,
+                policy_id=policy_id,
+                version_id=version_id,
+                status_value="approved",
+                requested_by=actor,
+                reviewed_by=actor,
+                comments="Initial policy approved for publication.",
+            )
+        elif status in {"draft", "pending_approval"}:
+            persist_policy_change_approval(
+                conn,
+                tenant_id=tenant_id,
+                policy_id=policy_id,
+                version_id=version_id,
+                status_value="pending",
+                requested_by=actor,
+                comments="Policy change pending approval.",
+            )
         conn.commit()
-    policy_id = row[0]
     record_policy_history(
         tenant_id=tenant_id,
         policy_id=policy_id,
@@ -2151,17 +2360,13 @@ def create_policy(policy: PolicyRequest, authorization: Optional[str] = Header(N
 @app.put("/policies/{policy_id}")
 def update_policy(policy_id: int, policy: PolicyRequest, authorization: Optional[str] = Header(None)):
     from database import engine
-    from sqlalchemy import text
     from verify_audit import create_audit_block
     from services.policy_engine import PolicyEngine, record_policy_history
     tenant_id = resolve_tenant_from_authorization(authorization)
-    actor = "system"
-    try:
-        actor = get_current_user_from_authorization(authorization).get("sub") or actor
-    except Exception:
-        pass
+    actor = policy_actor_from_authorization(authorization)
     rules = PolicyEngine().parse_rules(policy.rules)
     severity_level = policy.severity_level or "MEDIUM"
+    checksum = policy_rules_checksum(rules)
     with engine.connect() as conn:
         before = conn.execute(
             text("""
@@ -2187,6 +2392,10 @@ def update_policy(policy_id: int, policy: PolicyRequest, authorization: Optional
                     version = :version,
                     status = :status,
                     published_at = CASE WHEN :status = 'published' THEN COALESCE(published_at, NOW()) ELSE published_at END,
+                    checksum = :checksum,
+                    changelog = :changelog,
+                    approved_by = CASE WHEN :status = 'published' THEN :actor ELSE approved_by END,
+                    approved_at = CASE WHEN :status = 'published' THEN COALESCE(approved_at, NOW()) ELSE approved_at END,
                     updated_by = :actor,
                     updated_at = NOW()
                 WHERE id = :id AND tenant_id = :tenant_id
@@ -2200,12 +2409,35 @@ def update_policy(policy_id: int, policy: PolicyRequest, authorization: Optional
                 "version": next_version,
                 "status": status,
                 "actor": actor,
+                "checksum": checksum,
+                "changelog": f"Updated policy '{policy.name}' to version {next_version}.",
                 "id": policy_id,
                 "tenant_id": tenant_id,
             }
         )
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="Policy not found.")
+        version_id = persist_policy_version(
+            conn,
+            tenant_id=tenant_id,
+            policy_id=policy_id,
+            version=next_version,
+            status_value=status,
+            rules=rules,
+            actor=actor,
+            approver=actor if status == "published" else None,
+            changelog=f"Updated policy '{policy.name}' to version {next_version}.",
+        )
+        persist_policy_change_approval(
+            conn,
+            tenant_id=tenant_id,
+            policy_id=policy_id,
+            version_id=version_id,
+            status_value="approved" if status == "published" else "pending",
+            requested_by=actor,
+            reviewed_by=actor if status == "published" else None,
+            comments="Policy version change recorded.",
+        )
         conn.commit()
     record_policy_history(
         tenant_id=tenant_id,
@@ -2278,26 +2510,36 @@ def delete_policy(policy_id: int, authorization: Optional[str] = Header(None)):
 @app.post("/policies/simulate")
 def simulate_policy(policy: PolicySimulationRequest, authorization: Optional[str] = Header(None)):
     from services.policy_engine import PolicyEngine
+    from database import engine
     tenant_id = resolve_tenant_from_authorization(authorization)
-    actor = "system"
-    try:
-        actor = get_current_user_from_authorization(authorization).get("sub") or actor
-    except Exception:
-        pass
+    actor = policy_actor_from_authorization(authorization)
     policy_payload = policy.model_dump() if hasattr(policy, "model_dump") else policy.dict()
-    return PolicyEngine().simulate(policy_payload, policy.sample_text, tenant_id, actor)
+    result = PolicyEngine().simulate(policy_payload, policy.sample_text, tenant_id, actor)
+    sample_hash = hashlib.sha256((policy.sample_text or "").encode("utf-8")).hexdigest()
+    with auth_lookup_context(), engine.connect() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO policy_simulation_results (
+                    tenant_id, policy_id, actor, sample_hash, result, created_at
+                )
+                VALUES (:tenant_id, NULL, :actor, :sample_hash, :result, NOW())
+            """),
+            {
+                "tenant_id": tenant_id,
+                "actor": actor,
+                "sample_hash": sample_hash,
+                "result": json.dumps(result, default=str),
+            },
+        )
+        conn.commit()
+    return result
 
 @app.post("/policies/{policy_id}/simulate")
 def simulate_existing_policy(policy_id: int, payload: Dict[str, str], authorization: Optional[str] = Header(None)):
     from database import engine
-    from sqlalchemy import text
     from services.policy_engine import PolicyEngine
     tenant_id = resolve_tenant_from_authorization(authorization)
-    actor = "system"
-    try:
-        actor = get_current_user_from_authorization(authorization).get("sub") or actor
-    except Exception:
-        pass
+    actor = policy_actor_from_authorization(authorization)
     sample_text = payload.get("sample_text", "")
     with engine.connect() as conn:
         row = conn.execute(
@@ -2312,20 +2554,34 @@ def simulate_existing_policy(policy_id: int, payload: Dict[str, str], authorizat
         raise HTTPException(status_code=404, detail="Policy not found.")
     policy_payload = dict(row._mapping)
     policy_payload["sample_text"] = sample_text
-    return PolicyEngine().simulate(policy_payload, sample_text, tenant_id, actor)
+    result = PolicyEngine().simulate(policy_payload, sample_text, tenant_id, actor)
+    sample_hash = hashlib.sha256((sample_text or "").encode("utf-8")).hexdigest()
+    with engine.connect() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO policy_simulation_results (
+                    tenant_id, policy_id, actor, sample_hash, result, created_at
+                )
+                VALUES (:tenant_id, :policy_id, :actor, :sample_hash, :result, NOW())
+            """),
+            {
+                "tenant_id": tenant_id,
+                "policy_id": policy_id,
+                "actor": actor,
+                "sample_hash": sample_hash,
+                "result": json.dumps(result, default=str),
+            },
+        )
+        conn.commit()
+    return result
 
 @app.post("/policies/{policy_id}/publish")
 def publish_policy(policy_id: int, authorization: Optional[str] = Header(None)):
     from database import engine
-    from sqlalchemy import text
     from verify_audit import create_audit_block
     from services.policy_engine import PolicyEngine, record_policy_history
     tenant_id = resolve_tenant_from_authorization(authorization)
-    actor = "system"
-    try:
-        actor = get_current_user_from_authorization(authorization).get("sub") or actor
-    except Exception:
-        pass
+    actor = policy_actor_from_authorization(authorization)
     with engine.connect() as conn:
         row = conn.execute(
             text("""
@@ -2339,13 +2595,41 @@ def publish_policy(policy_id: int, authorization: Optional[str] = Header(None)):
             raise HTTPException(status_code=404, detail="Policy not found.")
         rules = PolicyEngine().parse_rules(row[1])
         version = int(row[2] or 1)
+        checksum = policy_rules_checksum(rules)
         conn.execute(
             text("""
                 UPDATE policies
-                SET status = 'published', published_at = NOW(), updated_by = :actor, updated_at = NOW()
+                SET status = 'published',
+                    published_at = NOW(),
+                    checksum = :checksum,
+                    approved_by = :actor,
+                    approved_at = COALESCE(approved_at, NOW()),
+                    updated_by = :actor,
+                    updated_at = NOW()
                 WHERE id = :id AND tenant_id = :tenant_id
             """),
-            {"id": policy_id, "tenant_id": tenant_id, "actor": actor},
+            {"id": policy_id, "tenant_id": tenant_id, "actor": actor, "checksum": checksum},
+        )
+        version_id = persist_policy_version(
+            conn,
+            tenant_id=tenant_id,
+            policy_id=policy_id,
+            version=version,
+            status_value="published",
+            rules=rules,
+            actor=actor,
+            approver=actor,
+            changelog=f"Published policy '{row[0]}' at version {version}.",
+        )
+        persist_policy_change_approval(
+            conn,
+            tenant_id=tenant_id,
+            policy_id=policy_id,
+            version_id=version_id,
+            status_value="approved",
+            requested_by=actor,
+            reviewed_by=actor,
+            comments="Policy version approved and published.",
         )
         conn.commit()
     record_policy_history(
@@ -2370,7 +2654,6 @@ def publish_policy(policy_id: int, authorization: Optional[str] = Header(None)):
 @app.get("/policies/{policy_id}/history")
 def policy_history(policy_id: int, authorization: Optional[str] = Header(None)):
     from database import engine
-    from sqlalchemy import text
     tenant_id = resolve_tenant_from_authorization(authorization)
     with engine.connect() as conn:
         exists = conn.execute(
@@ -2395,6 +2678,263 @@ def policy_history(policy_id: int, authorization: Optional[str] = Header(None)):
             {"id": policy_id, "tenant_id": tenant_id},
         ).fetchall()
     return [dict(row._mapping) for row in rows]
+
+@app.get("/policies/{policy_id}/versions")
+def policy_versions(policy_id: int, authorization: Optional[str] = Header(None)):
+    from database import engine
+    tenant_id = resolve_tenant_from_authorization(authorization)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("""
+                SELECT id, tenant_id, policy_id, version, status, checksum,
+                       author, approver, changelog, created_at, approved_at,
+                       published_at, archived_at
+                FROM policy_versions
+                WHERE policy_id = :policy_id AND tenant_id = :tenant_id
+                ORDER BY version DESC
+            """),
+            {"policy_id": policy_id, "tenant_id": tenant_id},
+        ).fetchall()
+    return [dict(row._mapping) for row in rows]
+
+@app.get("/policies/{policy_id}/approvals")
+def policy_change_approvals(policy_id: int, authorization: Optional[str] = Header(None)):
+    from database import engine
+    tenant_id = resolve_tenant_from_authorization(authorization)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("""
+                SELECT id, tenant_id, policy_id, version_id, status, requested_by,
+                       reviewed_by, comments, created_at, decided_at
+                FROM policy_change_approvals
+                WHERE policy_id = :policy_id AND tenant_id = :tenant_id
+                ORDER BY id DESC
+            """),
+            {"policy_id": policy_id, "tenant_id": tenant_id},
+        ).fetchall()
+    return [dict(row._mapping) for row in rows]
+
+@app.post("/policies/{policy_id}/approve")
+def approve_policy_change(policy_id: int, authorization: Optional[str] = Header(None)):
+    from database import engine
+    from services.policy_engine import PolicyEngine, record_policy_history
+    tenant_id = resolve_tenant_from_authorization(authorization)
+    actor = policy_actor_from_authorization(authorization)
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("""
+                SELECT id, rules, COALESCE(version, 1) AS version
+                FROM policies
+                WHERE id = :id AND tenant_id = :tenant_id
+            """),
+            {"id": policy_id, "tenant_id": tenant_id},
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Policy not found.")
+        rules = PolicyEngine().parse_rules(row[1])
+        version_id = persist_policy_version(
+            conn,
+            tenant_id=tenant_id,
+            policy_id=policy_id,
+            version=int(row[2] or 1),
+            status_value="approved",
+            rules=rules,
+            actor=actor,
+            approver=actor,
+            changelog="Policy version approved.",
+        )
+        persist_policy_change_approval(
+            conn,
+            tenant_id=tenant_id,
+            policy_id=policy_id,
+            version_id=version_id,
+            status_value="approved",
+            requested_by=actor,
+            reviewed_by=actor,
+            comments="Policy version approved.",
+        )
+        conn.commit()
+    record_policy_history(tenant_id, policy_id, "approved", actor, after_rules=rules, version=int(row[2] or 1), status="approved")
+    return {"status": "success", "message": "Policy change approved.", "version": int(row[2] or 1)}
+
+@app.post("/policies/{policy_id}/reject")
+def reject_policy_change(policy_id: int, payload: Dict[str, str] = None, authorization: Optional[str] = Header(None)):
+    from database import engine
+    tenant_id = resolve_tenant_from_authorization(authorization)
+    actor = policy_actor_from_authorization(authorization)
+    comments = (payload or {}).get("comments") or "Policy change rejected."
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT id, COALESCE(version, 1) AS version FROM policies WHERE id = :id AND tenant_id = :tenant_id"),
+            {"id": policy_id, "tenant_id": tenant_id},
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Policy not found.")
+        persist_policy_change_approval(conn, tenant_id, policy_id, None, "rejected", actor, actor, comments)
+        conn.commit()
+    return {"status": "success", "message": "Policy change rejected.", "version": int(row[1] or 1)}
+
+@app.post("/policies/{policy_id}/archive")
+def archive_policy(policy_id: int, authorization: Optional[str] = Header(None)):
+    from database import engine
+    from services.policy_engine import record_policy_history
+    tenant_id = resolve_tenant_from_authorization(authorization)
+    actor = policy_actor_from_authorization(authorization)
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT rules, COALESCE(version, 1) AS version FROM policies WHERE id = :id AND tenant_id = :tenant_id"),
+            {"id": policy_id, "tenant_id": tenant_id},
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Policy not found.")
+        conn.execute(
+            text("""
+                UPDATE policies
+                SET status = 'archived', archived_at = NOW(), updated_by = :actor, updated_at = NOW()
+                WHERE id = :id AND tenant_id = :tenant_id
+            """),
+            {"id": policy_id, "tenant_id": tenant_id, "actor": actor},
+        )
+        conn.execute(
+            text("""
+                UPDATE policy_versions
+                SET status = 'archived', archived_at = NOW()
+                WHERE policy_id = :id AND tenant_id = :tenant_id AND version = :version
+            """),
+            {"id": policy_id, "tenant_id": tenant_id, "version": int(row[1] or 1)},
+        )
+        conn.commit()
+    record_policy_history(tenant_id, policy_id, "archived", actor, before_rules=json.loads(row[0]) if row[0] else {}, version=int(row[1] or 1), status="archived")
+    return {"status": "success", "message": "Policy archived.", "version": int(row[1] or 1)}
+
+@app.post("/policies/{policy_id}/rollback")
+def rollback_policy(policy_id: int, payload: Dict[str, int], authorization: Optional[str] = Header(None)):
+    from database import engine
+    from services.policy_engine import PolicyEngine, record_policy_history
+    tenant_id = resolve_tenant_from_authorization(authorization)
+    actor = policy_actor_from_authorization(authorization)
+    target_version = int(payload.get("version", 0) or 0)
+    if target_version <= 0:
+        raise HTTPException(status_code=400, detail="Rollback version is required.")
+    with engine.connect() as conn:
+        version_row = conn.execute(
+            text("""
+                SELECT rules, checksum
+                FROM policy_versions
+                WHERE policy_id = :policy_id AND tenant_id = :tenant_id AND version = :version
+            """),
+            {"policy_id": policy_id, "tenant_id": tenant_id, "version": target_version},
+        ).fetchone()
+        if not version_row:
+            raise HTTPException(status_code=404, detail="Policy version not found.")
+        rules = PolicyEngine().parse_rules(version_row[0])
+        current = conn.execute(
+            text("SELECT COALESCE(version, 1) AS version FROM policies WHERE id = :id AND tenant_id = :tenant_id"),
+            {"id": policy_id, "tenant_id": tenant_id},
+        ).fetchone()
+        if not current:
+            raise HTTPException(status_code=404, detail="Policy not found.")
+        next_version = int(current[0] or 1) + 1
+        checksum = policy_rules_checksum(rules)
+        conn.execute(
+            text("""
+                UPDATE policies
+                SET rules = :rules, version = :version, status = 'published',
+                    checksum = :checksum, changelog = :changelog,
+                    approved_by = :actor, approved_at = NOW(),
+                    published_at = NOW(), updated_by = :actor, updated_at = NOW()
+                WHERE id = :id AND tenant_id = :tenant_id
+            """),
+            {
+                "rules": json.dumps(rules),
+                "version": next_version,
+                "checksum": checksum,
+                "changelog": f"Rolled back from version {int(current[0] or 1)} to {target_version}.",
+                "actor": actor,
+                "id": policy_id,
+                "tenant_id": tenant_id,
+            },
+        )
+        version_id = persist_policy_version(
+            conn, tenant_id, policy_id, next_version, "published", rules, actor, actor,
+            f"Rollback to version {target_version}."
+        )
+        persist_policy_change_approval(
+            conn, tenant_id, policy_id, version_id, "approved", actor, actor,
+            f"Rollback to version {target_version} approved."
+        )
+        conn.commit()
+    record_policy_history(tenant_id, policy_id, "rollback", actor, after_rules=rules, version=next_version, status="published")
+    return {"status": "success", "message": "Policy rolled back.", "version": next_version, "rolled_back_to": target_version}
+
+@app.post("/internal/policy/evaluate")
+def evaluate_gateway_policy(
+    payload: GatewayPolicyEvaluationRequest,
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+    x_authclaw_gateway_request_id: Optional[str] = Header(None),
+):
+    from database import engine
+    from services.policy_engine import ACTION_BLOCK, PolicyEngine
+    started_at = time.time()
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    actor = "api-client"
+    if authorization:
+        actor = policy_actor_from_authorization(authorization)
+    request_id = payload.request_id or x_authclaw_gateway_request_id or f"policy-{uuid.uuid4()}"
+    text_value = extract_policy_text_from_gateway_payload(payload)
+    result = PolicyEngine().evaluate(text_value, tenant_id=tenant_id, username=actor)
+    duration_ms = int((time.time() - started_at) * 1000)
+    matched_policies = [
+        {
+            "policy_id": finding.get("policy_id"),
+            "policy_name": finding.get("policy_name"),
+            "category": finding.get("category"),
+            "action": finding.get("action"),
+            "confidence": finding.get("confidence"),
+        }
+        for finding in result.findings
+    ]
+    decision = "BLOCK" if result.action == ACTION_BLOCK else result.action
+    response_payload = {
+        "status": "evaluated",
+        "decision": decision,
+        "allowed": result.action != ACTION_BLOCK,
+        "enforcement": "fail_closed",
+        "matched_policies": matched_policies,
+        "policy_versions": result.policy_versions,
+        "evaluation_time_ms": duration_ms,
+        "explanation": result.reason,
+        "reason": result.reason,
+        "risk_level": result.risk_level,
+        "request_id": request_id,
+        "tenant_id": tenant_id,
+    }
+    with engine.connect() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO policy_evaluation_audit (
+                    tenant_id, request_id, route_path, decision, reason,
+                    evaluation_time_ms, matched_policies, policy_versions, created_at
+                )
+                VALUES (
+                    :tenant_id, :request_id, :route_path, :decision, :reason,
+                    :evaluation_time_ms, :matched_policies, :policy_versions, NOW()
+                )
+            """),
+            {
+                "tenant_id": tenant_id,
+                "request_id": request_id,
+                "route_path": payload.path,
+                "decision": decision,
+                "reason": result.reason,
+                "evaluation_time_ms": duration_ms,
+                "matched_policies": json.dumps(matched_policies, default=str),
+                "policy_versions": json.dumps(result.policy_versions, default=str),
+            },
+        )
+        conn.commit()
+    return response_payload
 
 
 # 6. RAG DOCUMENTS
@@ -2680,6 +3220,28 @@ async def redact_gateway_document(
     trace.append(event("Audit Agent", "DOCUMENT_REDACTION_AUDITED", f"Committed document redaction audit block #{audit_id}.", 5))
 
     duration_ms = int((time.time() - start_time) * 1000)
+    from document_processing.storage import persist_document_intelligence_result
+    document_record = persist_document_intelligence_result(
+        tenant_id=tenant_id,
+        request_id=request_id,
+        filename=filename,
+        content_type=file.content_type,
+        size_bytes=size_bytes,
+        content_bytes=contents,
+        extraction=extraction,
+        analysis=document_analysis,
+        decision=decision,
+        risk_level=risk_level,
+        username=username,
+        duration_ms=duration_ms,
+    )
+    trace.append(event(
+        "Registrar Agent",
+        "DOCUMENT_INTELLIGENCE_PERSISTED",
+        f"Persisted document #{document_record['document_id']} and scan {document_record['scan_id']}.",
+        6,
+    ))
+
     from database import engine
     from sqlalchemy import text
     with engine.connect() as conn:
@@ -2712,7 +3274,7 @@ async def redact_gateway_document(
             },
         )
         conn.commit()
-    trace.append(event("Registrar Agent", "GATEWAY_DOCUMENT_REQUEST_RECORDED", f"Recorded document request lifecycle metadata in {duration_ms} ms.", 6))
+    trace.append(event("Registrar Agent", "GATEWAY_DOCUMENT_REQUEST_RECORDED", f"Recorded document request lifecycle metadata in {duration_ms} ms.", 7))
 
     def serialize_trigger(item):
         result = {}
@@ -2729,6 +3291,11 @@ async def redact_gateway_document(
         "filename": filename,
         "content_type": file.content_type,
         "size_bytes": size_bytes,
+        "document_id": document_record["document_id"],
+        "document_uid": document_record["document_uid"],
+        "scan_id": document_record["scan_id"],
+        "processing_progress": document_record["progress"],
+        "content_sha256": document_record["content_sha256"],
         "status": "blocked" if decision == "BLOCK" else ("redacted" if redacted_count else "clean"),
         "decision": decision,
         "risk_level": risk_level,
@@ -2736,7 +3303,10 @@ async def redact_gateway_document(
         "redacted_count": redacted_count,
         "extraction_method": extraction.extraction_method,
         "ocr_status": extraction.ocr_status,
+        "ocr_required": extraction.ocr_required,
         "ocr_error": extraction.ocr_error,
+        "document_metadata": document_analysis["metadata"],
+        "compliance_summary": document_analysis["compliance_summary"],
         "triggered_policies": [serialize_trigger(item) for item in triggered],
         "findings": [serialize_trigger(item) for item in triggered],
         "findings_report": document_analysis["findings_report"],
@@ -2745,6 +3315,51 @@ async def redact_gateway_document(
         "extracted_text": extracted_text,
         "redacted_text": redacted_text,
         "trace": trace,
+    }
+
+@app.get("/documents/scans/{scan_id}")
+def get_document_scan_status(
+    scan_id: str,
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    from database import engine
+    from sqlalchemy import text
+    with tenant_context(tenant_id, required=True), engine.connect() as conn:
+        row = conn.execute(
+            text("""
+                SELECT s.scan_id, s.status, s.progress, s.scan_duration_ms,
+                       s.extraction_method, s.ocr_status, s.ocr_required,
+                       s.compliance_summary, d.id, d.filename, d.document_uid,
+                       d.status AS document_status
+                FROM document_scans s
+                JOIN documents d ON d.id = s.document_id AND d.tenant_id = s.tenant_id
+                WHERE s.scan_id = :scan_id AND s.tenant_id = :tenant_id
+                LIMIT 1
+            """),
+            {"scan_id": scan_id, "tenant_id": tenant_id},
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Document scan not found.")
+    compliance_summary = {}
+    try:
+        compliance_summary = json.loads(row[7] or "{}")
+    except Exception:
+        compliance_summary = {}
+    return {
+        "scan_id": row[0],
+        "status": row[1],
+        "progress": row[2],
+        "duration_ms": row[3],
+        "extraction_method": row[4],
+        "ocr_status": row[5],
+        "ocr_required": row[6],
+        "compliance_summary": compliance_summary,
+        "document_id": row[8],
+        "filename": row[9],
+        "document_uid": row[10],
+        "document_status": row[11],
     }
 
 class DocumentScanRequest(BaseModel):
@@ -3454,14 +4069,19 @@ class MFAResetRequest(BaseModel):
 class MFAResetConfirmRequest(BaseModel):
     token: str
 
+class PasswordResetRequest(BaseModel):
+    username: str
+
+class PasswordResetConfirmRequest(BaseModel):
+    token: str
+    password: str
+
 class RefreshRequest(BaseModel):
     refresh_token: str
 
-JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("AUTHCLAW_JWT_SECRET")
+JWT_SECRET = SecretManager().get_secret("JWT_SECRET") or SecretManager().get_secret("AUTHCLAW_JWT_SECRET")
 if not JWT_SECRET:
-    if os.getenv("AUTHCLAW_ENV", "development").lower() in {"production", "prod"}:
-        raise RuntimeError("JWT_SECRET or AUTHCLAW_JWT_SECRET must be configured in production.")
-    JWT_SECRET = base64.urlsafe_b64encode(os.urandom(32)).decode("utf-8")
+    raise RuntimeError("JWT secret is not available through the AuthClaw SecretManager.")
 
 AUTH_SESSION_TTL_SECONDS = int(os.getenv("AUTHCLAW_MFA_SESSION_TTL_SECONDS", "600"))
 
@@ -3612,7 +4232,7 @@ def create_refresh_token_for_user(user_id: int, tenant_id: int, subject: str) ->
         "exp": now_ts + 86400
     }
     token = create_jwt(payload)
-    with engine.connect() as conn:
+    with tenant_context(tenant_id, required=True), engine.connect() as conn:
         conn.execute(
             text("""
                 INSERT INTO auth_refresh_tokens (
@@ -3631,6 +4251,12 @@ def create_refresh_token_for_user(user_id: int, tenant_id: int, subject: str) ->
         conn.commit()
     return token
 
+def generate_reset_token() -> str:
+    return base64.urlsafe_b64encode(os.urandom(32)).decode("utf-8").rstrip("=")
+
+def hash_reset_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
 
 def validate_refresh_token_record(payload: dict):
     from database import engine
@@ -3642,7 +4268,7 @@ def validate_refresh_token_record(payload: dict):
     if not jti or not user_id or not tenant_id:
         return None
 
-    with engine.connect() as conn:
+    with tenant_context(tenant_id, required=True), engine.connect() as conn:
         row = conn.execute(
             text("""
                 SELECT u.id, u.tenant_id, u.email, u.role, u.permissions,
@@ -3672,6 +4298,8 @@ def deliver_auth_email(recipient: str, subject: str, body: str, purpose: str) ->
     smtp_password = env_value("SMTP_PASSWORD")
     smtp_from = env_value("SMTP_FROM") or smtp_user
     smtp_tls = env_bool("SMTP_USE_TLS", True)
+    if smtp_host and "gmail" in smtp_host.lower() and smtp_password:
+        smtp_password = smtp_password.replace(" ", "")
 
     if skip_email_delivery_for_testing():
         return
@@ -3707,9 +4335,15 @@ def deliver_auth_email(recipient: str, subject: str, body: str, purpose: str) ->
                 timeout=15,
             )
             if response.status_code not in {200, 202}:
+                hint = "sendgrid_error"
+                if response.status_code in {401, 403}:
+                    hint = "sendgrid_authentication_failure"
+                elif response.status_code == 400 and "from" in response.text.lower():
+                    hint = "sendgrid_invalid_or_unverified_sender"
                 logger.error(
-                    "%s SendGrid API delivery failed: status=%s body=%s",
+                    "%s SendGrid API delivery failed: category=%s status=%s body=%s",
                     purpose,
+                    hint,
                     response.status_code,
                     response.text[:500],
                 )
@@ -3723,6 +4357,12 @@ def deliver_auth_email(recipient: str, subject: str, body: str, purpose: str) ->
             return
         except HTTPException:
             raise
+        except requests.exceptions.Timeout as exc:
+            logger.error("%s SendGrid API delivery timed out.", purpose)
+            raise HTTPException(
+                status_code=503,
+                detail=f"{purpose} email could not be delivered by SendGrid API because the connection timed out.",
+            ) from exc
         except Exception as exc:
             logger.error("%s SendGrid API delivery failed: %s", purpose, exc)
             raise HTTPException(
@@ -3746,7 +4386,25 @@ def deliver_auth_email(recipient: str, subject: str, body: str, purpose: str) ->
             if smtp_user and smtp_password:
                 smtp.login(smtp_user, smtp_password)
             smtp.send_message(message)
-    except (smtplib.SMTPException, OSError, TimeoutError) as exc:
+    except smtplib.SMTPAuthenticationError as exc:
+        logger.error("%s SMTP authentication failed. Check SMTP_USERNAME and SMTP_PASSWORD.", purpose)
+        raise HTTPException(
+            status_code=503,
+            detail=f"{purpose} email could not be delivered because SMTP authentication failed."
+        ) from exc
+    except (smtplib.SMTPSenderRefused, smtplib.SMTPRecipientsRefused) as exc:
+        logger.error("%s SMTP sender or recipient was refused. Check SMTP_FROM and verified sender identity: %s", purpose, exc)
+        raise HTTPException(
+            status_code=503,
+            detail=f"{purpose} email could not be delivered because the sender or recipient was refused."
+        ) from exc
+    except (TimeoutError, OSError) as exc:
+        logger.error("%s SMTP connection failed or timed out. host=%s port=%s tls=%s error=%s", purpose, smtp_host, smtp_port, smtp_tls, exc)
+        raise HTTPException(
+            status_code=503,
+            detail=f"{purpose} email could not be delivered because SMTP connection failed or timed out."
+        ) from exc
+    except smtplib.SMTPException as exc:
         logger.error("%s SMTP delivery failed: %s", purpose, exc)
         raise HTTPException(
             status_code=503,
@@ -3790,8 +4448,28 @@ def send_mfa_reset_email(recipient: str, token: str, organization_name: str) -> 
         "MFA reset",
     )
 
+def send_password_reset_email(recipient: str, token: str, organization_name: str) -> None:
+    deliver_auth_email(
+        recipient,
+        "Reset your AuthClaw password",
+        "\n".join(
+            [
+                f"AuthClaw received a password reset request for {organization_name}.",
+                "",
+                "Use this one-time reset token to create a new password:",
+                token,
+                "",
+                "This token expires soon and can only be used once.",
+                "If you did not request this reset, contact your AuthClaw administrator.",
+            ]
+        ),
+        "Password reset",
+    )
+
 
 def env_value(name: str, default: str = "") -> str:
+    if name in SENSITIVE_ENV_NAMES:
+        return SecretManager().get_secret(name) or default
     value = os.getenv(name)
     if value is not None:
         return value
@@ -3819,11 +4497,26 @@ def skip_email_delivery_for_testing() -> bool:
     return env_bool("SKIP_EMAIL_DELIVERY_FOR_TESTING")
 
 
+def soft_fail_email_delivery_for_local() -> bool:
+    production = env_value("AUTHCLAW_ENV", "development").lower() in {"production", "prod"}
+    return (not production) and env_bool("AUTHCLAW_SOFT_FAIL_EMAIL_DELIVERY", True)
+
+
 def skip_domain_verification_for_testing() -> bool:
     return env_bool("SKIP_DOMAIN_VERIFICATION")
 
 
 def disable_mfa_for_testing() -> bool:
+    # Local manual runs can bypass MFA for usability, but automated tests must
+    # keep the production MFA contract unless a test explicitly opts out. This
+    # bypass is never honored in production.
+    production = env_value("AUTHCLAW_ENV", "development").lower() in {"production", "prod"}
+    if production:
+        return False
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return os.getenv("DISABLE_MFA_FOR_TESTING", "").lower() in {"1", "true", "yes", "on"} or os.getenv(
+            "AUTHCLAW_ALLOW_TEST_MFA_BYPASS", ""
+        ).lower() in {"1", "true", "yes", "on"}
     return env_bool("DISABLE_MFA_FOR_TESTING")
 
 
@@ -3917,34 +4610,35 @@ def activate_verified_registration(conn, registration) -> int:
     name_parts = (full_name or "").strip().split(" ", 1)
     first_name = name_parts[0] if name_parts else None
     last_name = name_parts[1] if len(name_parts) > 1 else None
-    conn.execute(
-        text("""
-            INSERT INTO tenant_users (
-                tenant_id, first_name, last_name, email, password_hash,
-                role, permissions, email_verified, mfa_enabled,
-                totp_secret, status
-            )
-            VALUES (
-                :tenant_id, :first_name, :last_name, :email, :password_hash,
-                'Super Admin', 'all_access', true, :mfa_enabled,
-                :totp_secret, 'active'
-            )
-        """),
-        {
-            "tenant_id": tenant_id,
-            "first_name": first_name,
-            "last_name": last_name,
-            "email": work_email,
-            "password_hash": password_hash,
-            "mfa_enabled": mfa_enabled,
-            "totp_secret": totp_secret,
-        },
-    )
-    conn.execute(
-        text("UPDATE onboarding_registrations SET tenant_id = :tenant_id, activated_at = NOW() WHERE id = :id"),
-        {"tenant_id": tenant_id, "id": registration._mapping["id"]},
-    )
-    ensure_default_tenant_policies(conn, tenant_id)
+    with tenant_context(tenant_id, required=True):
+        conn.execute(
+            text("""
+                INSERT INTO tenant_users (
+                    tenant_id, first_name, last_name, email, password_hash,
+                    role, permissions, email_verified, mfa_enabled,
+                    totp_secret, status
+                )
+                VALUES (
+                    :tenant_id, :first_name, :last_name, :email, :password_hash,
+                    'Super Admin', 'all_access', true, :mfa_enabled,
+                    :totp_secret, 'active'
+                )
+            """),
+            {
+                "tenant_id": tenant_id,
+                "first_name": first_name,
+                "last_name": last_name,
+                "email": work_email,
+                "password_hash": password_hash,
+                "mfa_enabled": mfa_enabled,
+                "totp_secret": totp_secret,
+            },
+        )
+        conn.execute(
+            text("UPDATE onboarding_registrations SET tenant_id = :tenant_id, activated_at = NOW() WHERE id = :id"),
+            {"tenant_id": tenant_id, "id": registration._mapping["id"]},
+        )
+        ensure_default_tenant_policies(conn, tenant_id)
     return tenant_id
 
 @app.post("/auth/login")
@@ -3952,7 +4646,7 @@ def auth_login(req: LoginRequest):
     from database import engine
     from sqlalchemy import text
 
-    with engine.connect() as conn:
+    with auth_lookup_context(), engine.connect() as conn:
         user = conn.execute(
             text("""
                 SELECT u.id, u.tenant_id, u.email, u.password_hash, u.role,
@@ -3967,8 +4661,46 @@ def auth_login(req: LoginRequest):
             """),
             {"email": req.username},
         ).fetchone()
+        pending_registration = None
+        if not user:
+            pending_registration = conn.execute(
+                text("""
+                    SELECT work_email, domain, email_verified, domain_verified,
+                           email_verification_token, domain_verification_token
+                    FROM onboarding_registrations
+                    WHERE lower(work_email) = lower(:email)
+                      AND activated_at IS NULL
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """),
+                {"email": req.username},
+            ).fetchone()
 
     if not user or not verify_password(req.password, user[3]):
+        if not user and pending_registration:
+            if not bool(pending_registration[2]):
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "detail": "Email not verified",
+                        "email_verified": False,
+                        "email": pending_registration[0],
+                        "domain": pending_registration[1],
+                        "email_token": pending_registration[4],
+                        "domain_token": pending_registration[5],
+                    },
+                )
+            if not bool(pending_registration[3]):
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "detail": "Domain not verified",
+                        "domain_verified": False,
+                        "email": pending_registration[0],
+                        "domain": pending_registration[1],
+                        "domain_token": pending_registration[5],
+                    },
+                )
         raise HTTPException(status_code=401, detail="Invalid email or password.")
 
     if user[9] != "active":
@@ -3981,6 +4713,7 @@ def auth_login(req: LoginRequest):
     permissions = user[5]
     email_verified = bool(user[6])
     mfa_enabled = bool(user[7])
+    effective_mfa_enabled = mfa_enabled and not disable_mfa_for_testing()
     totp_secret = user[8]
     tenant_name = user[10]
     domain_name = user[11] or ""
@@ -4010,7 +4743,7 @@ def auth_login(req: LoginRequest):
             }
         )
 
-    if mfa_enabled and not totp_secret:
+    if effective_mfa_enabled and not totp_secret:
         return JSONResponse(
             status_code=400,
             content={
@@ -4019,8 +4752,8 @@ def auth_login(req: LoginRequest):
             }
         )
 
-    if not mfa_enabled:
-        with engine.connect() as conn:
+    if not effective_mfa_enabled:
+        with tenant_context(tenant_id, required=True), engine.connect() as conn:
             conn.execute(
                 text("UPDATE tenant_users SET last_login_at = NOW() WHERE id = :id"),
                 {"id": user_id},
@@ -4070,6 +4803,153 @@ def auth_login(req: LoginRequest):
         "message": "MFA required. Enter the 6-digit OTP code."
     }
 
+@app.post("/auth/password/reset-request")
+def auth_password_reset_request(req: PasswordResetRequest):
+    from database import engine
+    from sqlalchemy import text
+
+    normalized_email = req.username.strip().lower()
+    if not normalized_email:
+        raise HTTPException(status_code=400, detail="Email is required.")
+
+    generic_response = {
+        "status": "success",
+        "message": "If the account exists, a password reset token has been sent to the verified email address."
+    }
+
+    with auth_lookup_context(), engine.connect() as conn:
+        user = conn.execute(
+            text("""
+                SELECT u.id, u.tenant_id, u.email, u.status, u.email_verified,
+                       t.name, t.domain_verified
+                FROM tenant_users u
+                JOIN tenants t ON t.id = u.tenant_id
+                WHERE lower(u.email) = lower(:email)
+                LIMIT 1
+            """),
+            {"email": normalized_email},
+        ).fetchone()
+
+        if not user:
+            logger.info(
+                "Password reset requested for non-existent account hash=%s",
+                hashlib.sha256(normalized_email.encode("utf-8")).hexdigest()[:12],
+            )
+            if env_value("AUTHCLAW_ENV", "development").lower() not in {"production", "prod"}:
+                response = dict(generic_response)
+                response["email_delivery"] = "not_attempted"
+                response["local_debug"] = (
+                    "No active tenant user exists for this email. Register and verify the tenant first, "
+                    "or use the exact email used during tenant activation."
+                )
+                return response
+            return generic_response
+        if user[3] != "active":
+            raise HTTPException(status_code=403, detail="User account is not active.")
+        if not bool(user[4]):
+            raise HTTPException(status_code=400, detail="Email must be verified before password reset.")
+        if not bool(user[6]):
+            raise HTTPException(status_code=400, detail="Domain must be verified before password reset.")
+
+        token = generate_reset_token()
+        token_hash = hash_reset_token(token)
+        conn.execute(
+            text("""
+                DELETE FROM auth_password_reset_tokens
+                WHERE user_id = :user_id AND used_at IS NULL
+            """),
+            {"user_id": user[0]},
+        )
+        conn.execute(
+            text("""
+                INSERT INTO auth_password_reset_tokens (
+                    token_hash, tenant_id, user_id, email, expires_at
+                )
+                VALUES (:token_hash, :tenant_id, :user_id, :email, NOW() + INTERVAL '30 minutes')
+            """),
+            {
+                "token_hash": token_hash,
+                "tenant_id": user[1],
+                "user_id": user[0],
+                "email": user[2],
+            },
+        )
+        conn.commit()
+
+    email_delivery_status = "sent"
+    email_delivery_error = None
+    try:
+        send_password_reset_email(user[2], token, user[5] or "your organization")
+    except HTTPException as exc:
+        if not soft_fail_email_delivery_for_local():
+            raise
+        email_delivery_status = "failed_local_soft_bypass"
+        email_delivery_error = exc.detail
+        logger.warning("Password reset email delivery failed in local development: %s", exc.detail)
+
+    response = dict(generic_response)
+    response["email_delivery"] = email_delivery_status
+    if skip_email_delivery_for_testing() or email_delivery_status == "failed_local_soft_bypass":
+        response["reset_token"] = token
+        if email_delivery_error:
+            response["email_error"] = email_delivery_error
+    return response
+
+@app.post("/auth/password/reset-confirm")
+def auth_password_reset_confirm(req: PasswordResetConfirmRequest):
+    from database import engine
+    from sqlalchemy import text
+
+    new_password = req.password or ""
+    if len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+
+    token_hash = hash_reset_token(req.token.strip())
+    with auth_lookup_context(), engine.connect() as conn:
+        row = conn.execute(
+            text("""
+                SELECT prt.token_hash, prt.tenant_id, prt.user_id, u.email
+                FROM auth_password_reset_tokens prt
+                JOIN tenant_users u ON u.id = prt.user_id AND u.tenant_id = prt.tenant_id
+                WHERE prt.token_hash = :token_hash
+                  AND prt.used_at IS NULL
+                  AND prt.expires_at > NOW()
+                  AND u.status = 'active'
+                LIMIT 1
+            """),
+            {"token_hash": token_hash},
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=400, detail="Invalid or expired password reset token.")
+
+        conn.execute(
+            text("""
+                UPDATE tenant_users
+                SET password_hash = :password_hash, updated_at = NOW()
+                WHERE id = :user_id AND tenant_id = :tenant_id
+            """),
+            {
+                "password_hash": hash_password(new_password),
+                "user_id": row[2],
+                "tenant_id": row[1],
+            },
+        )
+        conn.execute(
+            text("UPDATE auth_password_reset_tokens SET used_at = NOW() WHERE token_hash = :token_hash"),
+            {"token_hash": token_hash},
+        )
+        conn.execute(
+            text("UPDATE auth_refresh_tokens SET revoked_at = NOW() WHERE user_id = :user_id AND tenant_id = :tenant_id AND revoked_at IS NULL"),
+            {"user_id": row[2], "tenant_id": row[1]},
+        )
+        conn.commit()
+
+    return {
+        "status": "success",
+        "message": "Password reset complete. Sign in with your new password.",
+        "email": row[3],
+    }
+
 @app.post("/auth/verify-otp")
 def auth_verify_otp(req: VerifyOTPRequest):
     session = load_auth_session(req.session_id)
@@ -4080,7 +4960,7 @@ def auth_verify_otp(req: VerifyOTPRequest):
     from database import engine
     from sqlalchemy import text
     user_id = session["user_id"]
-    with engine.connect() as conn:
+    with tenant_context(tenant_id, req.session_id, required=True), engine.connect() as conn:
         tenant = conn.execute(
             text("SELECT totp_secret FROM tenant_users WHERE id = :id AND tenant_id = :tenant_id"),
             {"id": user_id, "tenant_id": tenant_id}
@@ -4133,7 +5013,7 @@ def auth_verify_otp(req: VerifyOTPRequest):
     access_token = create_jwt(access_token_payload)
     refresh_token = create_refresh_token_for_user(user_id, tenant_id, username)
 
-    with engine.connect() as conn:
+    with tenant_context(tenant_id, req.session_id, required=True), engine.connect() as conn:
         conn.execute(
             text("UPDATE tenant_users SET last_login_at = NOW() WHERE id = :id"),
             {"id": user_id},
@@ -4161,7 +5041,7 @@ def auth_mfa_reset_request(req: MFAResetRequest):
     from database import engine
     from sqlalchemy import text
 
-    with engine.connect() as conn:
+    with auth_lookup_context(), engine.connect() as conn:
         user = conn.execute(
             text("""
                 SELECT u.id, u.tenant_id, u.email, u.password_hash, u.role,
@@ -4218,7 +5098,7 @@ def auth_mfa_reset_confirm(req: MFAResetConfirmRequest):
 
     from database import engine
     from sqlalchemy import text
-    with engine.connect() as conn:
+    with tenant_context(tenant_id, req.token, required=True), engine.connect() as conn:
         updated = conn.execute(
             text("""
                 UPDATE tenant_users
@@ -4408,7 +5288,19 @@ def auth_register(req: RegisterRequest):
                 raise HTTPException(status_code=400, detail="Organization with this email is already registered or pending verification.")
             raise HTTPException(status_code=400, detail="Organization with this email or domain is already registered or pending verification.")
 
-        send_verification_email(req.email, email_token, organization_name)
+        email_delivery_status = "sent"
+        email_delivery_error = None
+        try:
+            send_verification_email(req.email, email_token, organization_name)
+        except HTTPException as exc:
+            if not soft_fail_email_delivery_for_local():
+                raise
+            email_delivery_status = "failed_local_soft_bypass"
+            email_delivery_error = exc.detail
+            logger.warning(
+                "Verification email delivery failed during local development; continuing registration with returned token: %s",
+                exc.detail,
+            )
         
         conn.execute(
             text("""
@@ -4437,7 +5329,7 @@ def auth_register(req: RegisterRequest):
     response = {
         "status": "success",
         "message": "Registration received. Verify your email, then publish the DNS TXT record to activate the tenant.",
-        "email_delivery": "sent",
+        "email_delivery": email_delivery_status,
         "domain_token": domain_token,
         "totp_secret": totp_secret,
         "otpauth_uri": otpauth_uri
@@ -4446,6 +5338,10 @@ def auth_register(req: RegisterRequest):
         response["message"] = "Registration received. Email delivery skipped for local testing; use the returned email token."
         response["email_delivery"] = "skipped_for_testing"
         response["email_token"] = email_token
+    elif email_delivery_status == "failed_local_soft_bypass":
+        response["message"] = "Registration received. Email delivery failed in local development; use the returned email token."
+        response["email_token"] = email_token
+        response["email_error"] = email_delivery_error
     return response
 
 @app.post("/auth/verify-email")

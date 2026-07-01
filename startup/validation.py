@@ -3,10 +3,9 @@ import json
 import logging
 import yaml
 from database import DATABASE_URL
+from services.secret_manager import SecretManager, SecretValidationError, bootstrap_local_process_secrets
 
 logger = logging.getLogger("authclaw.startup.validation")
-
-DEFAULT_FERNET_KEY = "uK2zL_s-Upxl3k88J9o0nK4qR2_l8U90jK1l4u89mKo="
 
 def load_and_validate_policy(filepath: str) -> dict:
     """
@@ -131,11 +130,16 @@ def validate_environment():
     errors = []
     
     production = os.getenv("AUTHCLAW_ENV", "development").lower() in {"production", "prod"}
+    bootstrap_local_process_secrets()
 
     # 1. Validate GOOGLE_API_KEY for legacy/local provider fallback.
+    # Development can run in degraded/offline-provider mode so the UI, auth,
+    # policies, API keys, and audit flows remain testable without Gemini quota.
     google_api_key = os.getenv("GOOGLE_API_KEY")
-    if not google_api_key and not production:
+    if not google_api_key and production:
         errors.append("GOOGLE_API_KEY is not set or empty.")
+    elif not google_api_key:
+        logger.warning("GOOGLE_API_KEY is not configured. Local runtime will use provider fallback behavior.")
         
     # 2. Validate MODEL_PROVIDER
     model_provider = os.getenv("MODEL_PROVIDER", "gemini")
@@ -163,6 +167,11 @@ def validate_environment():
 
     if production:
         errors.extend(validate_production_environment())
+
+    try:
+        SecretManager().validate_startup(production=production)
+    except SecretValidationError as exc:
+        errors.append(f"Secret manager validation failed: {exc}")
 
     if errors:
         failure_log = {
@@ -196,13 +205,9 @@ def validate_environment():
 def validate_production_environment() -> list:
     errors = []
 
-    jwt_secret = os.getenv("JWT_SECRET") or os.getenv("AUTHCLAW_JWT_SECRET")
-    if not jwt_secret or len(jwt_secret) < 32:
-        errors.append("Production requires JWT_SECRET or AUTHCLAW_JWT_SECRET with at least 32 characters.")
-
-    encryption_key = os.getenv("AUTHCLAW_ENCRYPTION_KEY")
-    if not encryption_key or encryption_key == DEFAULT_FERNET_KEY:
-        errors.append("Production requires a unique AUTHCLAW_ENCRYPTION_KEY; the development default is not allowed.")
+    manager = SecretManager()
+    if manager.backend in {"local_env", "local"}:
+        errors.append("Production requires a managed secret backend, not local_env.")
 
     allowed_origins = [origin.strip() for origin in os.getenv("AUTHCLAW_ALLOWED_ORIGINS", "").split(",") if origin.strip()]
     if not allowed_origins:

@@ -16,7 +16,13 @@ class GeminiProvider(BaseProvider):
     def __init__(self, api_key: str = None, model_name: str = None, api_url: str = None, timeout: float = 30.0):
         logger.info("Provider Startup")
         self.api_key = api_key or GOOGLE_API_KEY
-        self.model_name = model_name or MODEL_NAME
+        self.model_name = model_name or os.getenv("MODEL_NAME") or MODEL_NAME
+        if self.model_name == "gemini-3.1-flash-lite":
+            logger.warning(
+                "Configured Gemini model %s is not available for the local runtime; using gemini-2.5-flash-lite.",
+                self.model_name,
+            )
+            self.model_name = "gemini-2.5-flash-lite"
         self.api_url = api_url or GOOGLE_API_URL
         self.timeout = timeout
 
@@ -33,7 +39,7 @@ class GeminiProvider(BaseProvider):
         print("=" * 60, flush=True)
         print("=== GEMINI PROVIDER DIAGNOSTICS ===", flush=True)
         print(f"API KEY PRESENT : {bool(self.api_key)}", flush=True)
-        print(f"API KEY (repr)  : {repr(self.api_key[:8] + '...' if self.api_key and len(self.api_key) > 8 else repr(self.api_key))}", flush=True)
+        print("API KEY (repr)  : <redacted>", flush=True)
         print(f"MODEL           : {self.model_name}", flush=True)
         print(f"API URL         : {self.api_url}", flush=True)
 
@@ -41,7 +47,7 @@ class GeminiProvider(BaseProvider):
         env_key = os.getenv("GOOGLE_API_KEY", "<NOT SET>")
         env_model = os.getenv("MODEL_NAME", "<NOT SET>")
         env_provider = os.getenv("MODEL_PROVIDER", "<NOT SET>")
-        print(f"ENV GOOGLE_API_KEY  : {'<present, len=' + str(len(env_key)) + '>' if env_key != '<NOT SET>' else '<NOT SET>'}", flush=True)
+        print(f"ENV GOOGLE_API_KEY  : {'<present>' if env_key != '<NOT SET>' else '<NOT SET>'}", flush=True)
         print(f"ENV MODEL_NAME      : {env_model}", flush=True)
         print(f"ENV MODEL_PROVIDER  : {env_provider}", flush=True)
         print("=" * 60, flush=True)

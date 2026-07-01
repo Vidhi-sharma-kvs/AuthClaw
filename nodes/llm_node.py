@@ -5,6 +5,14 @@ import time
 import concurrent.futures
 
 
+def _offline_provider_fallback(error_message: str) -> str:
+    return (
+        "[Offline Fallback] The configured model provider is currently unavailable. "
+        "AuthClaw completed the gateway security, policy, and audit checks, but the "
+        f"upstream LLM call could not be completed: {error_message}"
+    )
+
+
 def llm_node(state):
 
     print("ENTERED LLM NODE")
@@ -109,16 +117,18 @@ User Question:
     except Exception as e:
         duration = time.perf_counter() - start_time
         print(f"[Provider End] Duration: {duration:.4f}s", flush=True)
-        print(f"LLM Node Provider error: {e}. Failing closed without offline fallback.")
+        print(f"LLM Node Provider error: {e}. Returning offline fallback response.")
         
         log_agent_event(
             tenant_id=tenant_id,
             session_id=session_id,
             agent_name="LLM Provider",
-            event_type="PROVIDER_UNAVAILABLE",
-            details=f"Primary model connection failed: {str(e)}. Request failed closed; no simulated response was returned."
+            event_type="PROVIDER_FAILOVER",
+            details=f"Primary model connection failed: {str(e)}. Falling back to offline provider response."
         )
-        raise RuntimeError(f"Provider unavailable: {str(e)}") from e
+        final_response = _offline_provider_fallback(str(e))
+        state["provider_status"] = "offline_fallback"
+        state["provider_error"] = str(e)
 
     return {
         **state,

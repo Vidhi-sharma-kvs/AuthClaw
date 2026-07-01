@@ -161,14 +161,9 @@ class SensitiveDataDetector:
         }
 
     def fingerprint(self, value: str) -> str:
-        salt = (
-            os.getenv("AUTHCLAW_REDACTION_SALT")
-            or os.getenv("JWT_SECRET")
-            or os.getenv("AUTHCLAW_JWT_SECRET")
-            or os.getenv("AUTHCLAW_ENCRYPTION_KEY")
-            or "authclaw-local-redaction-salt"
-        )
-        return hmac.new(salt.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).hexdigest()[:20]
+        from services.secret_manager import SecretManager
+
+        return SecretManager().fingerprint(value, purpose="redaction")
 
     def mask(self, entity_type: str, value: str) -> str:
         if entity_type == "email" and "@" in value:

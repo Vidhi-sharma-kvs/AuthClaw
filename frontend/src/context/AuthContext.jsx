@@ -147,14 +147,14 @@ export const AuthProvider = ({ children }) => {
         handleAuthSuccess(response.data);
         return { mfaRequired: false };
       }
-      return { mfaRequired: false };
+      throw new Error(response.data?.detail || response.data?.message || 'Authentication response was incomplete.');
     } catch (e) {
       if (e.response?.data && (e.response.data.email_verified === false || e.response.data.domain_verified === false)) {
         const err = new Error(e.response.data.detail || 'Verification required.');
         err.data = e.response.data;
         throw err;
       }
-      throw new Error(e.response?.data?.detail || 'Authentication failed.');
+      throw new Error(e.response?.data?.detail || e.response?.data?.message || e.message || 'Authentication failed.');
     }
   };
 

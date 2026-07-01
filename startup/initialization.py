@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from providers import get_provider
 
 logger = logging.getLogger("authclaw.startup.initialization")
@@ -27,6 +28,7 @@ def initialize_provider():
         return provider
 
     except Exception as e:
+        production = os.getenv("AUTHCLAW_ENV", "development").lower() in {"production", "prod"}
         # Structured JSON logging for failure
         failure_log = {
             "event": "provider_initialization",
@@ -39,4 +41,13 @@ def initialize_provider():
         }
         logger.error(json.dumps(failure_log))
         print(json.dumps(failure_log), flush=True)
+        if not production:
+            degraded_log = {
+                "event": "provider_initialization",
+                "status": "degraded",
+                "message": "Continuing local startup with provider fallback behavior.",
+            }
+            logger.warning(json.dumps(degraded_log))
+            print(json.dumps(degraded_log), flush=True)
+            return None
         raise RuntimeError("LLM provider initialization failed. Aborting startup.") from e

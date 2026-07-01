@@ -21,17 +21,39 @@ services:
       retries: 3
       start_period: 30s
 
+  authclaw-gateway:
+    build:
+      context: ./gateway-go
+      dockerfile: Dockerfile
+    image: authclaw-gateway:production
+    environment:
+      AUTHCLAW_GATEWAY_ADDR: 0.0.0.0:9000
+      AUTHCLAW_BACKEND_URL: http://authclaw-api:8000
+      AUTHCLAW_ALLOWED_ORIGINS: ${AUTHCLAW_ALLOWED_ORIGINS}
+    ports:
+      - "9000:9000"
+    depends_on:
+      authclaw-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9000/health/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   authclaw-frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+        VITE_GATEWAY_PUBLIC_URL: ${VITE_GATEWAY_PUBLIC_URL:-/api}
     image: authclaw-frontend:production
     ports:
       - "8080:80"
     depends_on:
-      authclaw-api:
+      authclaw-gateway:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]

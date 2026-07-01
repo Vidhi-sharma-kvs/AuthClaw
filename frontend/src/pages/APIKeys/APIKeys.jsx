@@ -10,7 +10,11 @@ const APIKeys = () => {
   const [createdKey, setCreatedKey] = useState(null);
   const [loading, setLoading] = useState(false);
   const [copiedEndpoint, setCopiedEndpoint] = useState(false);
-  const gatewayEndpoint = `${window.location.origin}/api/gateway/chat`;
+  const configuredGatewayBase = import.meta.env.VITE_GATEWAY_PUBLIC_URL || import.meta.env.VITE_API_BASE_URL || '';
+  const gatewayBaseUrl = configuredGatewayBase.startsWith('/')
+    ? `${window.location.origin}${configuredGatewayBase}`
+    : (configuredGatewayBase || window.location.origin);
+  const gatewayEndpoint = `${gatewayBaseUrl.replace(/\/$/, '')}/gateway/chat`;
 
   const loadKeys = async () => {
     setLoading(true);

@@ -63,6 +63,10 @@ const Login = () => {
   const [mfaResetEmail, setMfaResetEmail] = useState('');
   const [mfaResetPassword, setMfaResetPassword] = useState('');
   const [mfaResetToken, setMfaResetToken] = useState('');
+  const [passwordResetEmail, setPasswordResetEmail] = useState('');
+  const [passwordResetToken, setPasswordResetToken] = useState('');
+  const [passwordResetNew, setPasswordResetNew] = useState('');
+  const [passwordResetConfirm, setPasswordResetConfirm] = useState('');
   
   // UI states
   const [loading, setLoading] = useState(false);
@@ -349,7 +353,87 @@ const Login = () => {
 
   const handleForgotPassword = (e) => {
     e.preventDefault();
-    addToast('Forgot password functionality is managed by your Enterprise IDP/SSO portal.', 'info');
+    setPasswordResetEmail(username.trim());
+    setPasswordResetToken('');
+    setPasswordResetNew('');
+    setPasswordResetConfirm('');
+    setError(null);
+    setStep('password_reset_request');
+  };
+
+  const handlePasswordResetRequest = async (e) => {
+    e.preventDefault();
+    if (!passwordResetEmail.trim()) {
+      setError('Enter your account email to request a password reset.');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await apiClient.post('/auth/password/reset-request', {
+        username: passwordResetEmail.trim()
+      });
+      const resetToken = response.data.reset_token || '';
+      setPasswordResetToken(resetToken);
+      addToast(response.data.message || 'Password reset token sent if the account exists.', 'success');
+      if (response.data.email_error) {
+        addToast(response.data.email_error, 'info');
+      }
+      if (response.data.local_debug) {
+        setError(response.data.local_debug);
+        addToast(response.data.local_debug, 'info');
+      }
+      if (resetToken) {
+        setStep('password_reset_confirm');
+      } else if (!response.data.local_debug) {
+        setStep('login');
+      }
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Password reset request failed.');
+      addToast(err.response?.data?.detail || 'Password reset request failed.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePasswordResetConfirm = async (e) => {
+    e.preventDefault();
+    if (!passwordResetToken.trim()) {
+      setError('Enter the password reset token from your email.');
+      return;
+    }
+    if (!passwordResetNew || passwordResetNew.length < 8) {
+      setError('New password must be at least 8 characters.');
+      return;
+    }
+    if (passwordResetNew !== passwordResetConfirm) {
+      setError('New password and confirmation do not match.');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await apiClient.post('/auth/password/reset-confirm', {
+        token: passwordResetToken.trim(),
+        password: passwordResetNew
+      });
+      setUsername(response.data.email || passwordResetEmail);
+      setPassword('');
+      setPasswordResetToken('');
+      setPasswordResetNew('');
+      setPasswordResetConfirm('');
+      setStep('login');
+      addToast(response.data.message || 'Password reset complete. Sign in with the new password.', 'success');
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Password reset confirmation failed.');
+      addToast(err.response?.data?.detail || 'Password reset confirmation failed.', 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const goBackToLogin = () => {
@@ -871,6 +955,146 @@ const Login = () => {
                   Lost authenticator?
                 </button>
               </div>
+            </div>
+          </form>
+        )}
+
+        {/* Step: Password reset request */}
+        {step === 'password_reset_request' && (
+          <form onSubmit={handlePasswordResetRequest} className="space-y-5 animate-scaleUp">
+            <div className="space-y-2 text-center">
+              <div className="flex justify-center text-violet-400 mb-1">
+                <KeyRound className="w-8 h-8" />
+              </div>
+              <h3 className="text-sm font-bold text-white">Reset Password</h3>
+              <p className="text-[11px] text-gray-400 leading-relaxed px-2">
+                Enter your verified account email. AuthClaw will send a one-time password reset token.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-400 mb-1">Account Email</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                  <Mail className="w-4 h-4" />
+                </div>
+                <input
+                  type="email"
+                  required
+                  value={passwordResetEmail}
+                  onChange={(e) => setPasswordResetEmail(e.target.value)}
+                  className="w-full bg-slate-900 border border-white/10 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:border-violet-500 transition-colors placeholder-gray-600"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50"
+            >
+              {loading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" /> Sending Reset Token...
+                </>
+              ) : (
+                'Send Password Reset Token'
+              )}
+            </button>
+
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={goBackToLogin}
+                className="text-xs text-gray-500 hover:text-white transition-colors"
+              >
+                Back to sign in
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* Step: Password reset confirmation */}
+        {step === 'password_reset_confirm' && (
+          <form onSubmit={handlePasswordResetConfirm} className="space-y-5 animate-scaleUp">
+            <div className="space-y-2 text-center">
+              <div className="flex justify-center text-violet-400 mb-1">
+                <Mail className="w-8 h-8 animate-pulse" />
+              </div>
+              <h3 className="text-sm font-bold text-white">Create New Password</h3>
+              <p className="text-[11px] text-gray-400 leading-relaxed px-2">
+                Enter the reset token sent to <strong className="text-violet-400">{passwordResetEmail}</strong>, then create a new password.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 mb-1">Reset Token</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Paste reset token here..."
+                  value={passwordResetToken}
+                  onChange={(e) => setPasswordResetToken(e.target.value)}
+                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-violet-500 transition-colors text-center font-mono placeholder-gray-600"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 mb-1">New Password</label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                    <Lock className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="password"
+                    required
+                    value={passwordResetNew}
+                    onChange={(e) => setPasswordResetNew(e.target.value)}
+                    className="w-full bg-slate-900 border border-white/10 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:border-violet-500 transition-colors placeholder-gray-600"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-400 mb-1">Confirm New Password</label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                    <Lock className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="password"
+                    required
+                    value={passwordResetConfirm}
+                    onChange={(e) => setPasswordResetConfirm(e.target.value)}
+                    className="w-full bg-slate-900 border border-white/10 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:border-violet-500 transition-colors placeholder-gray-600"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50"
+            >
+              {loading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" /> Updating Password...
+                </>
+              ) : (
+                'Reset Password'
+              )}
+            </button>
+
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={goBackToLogin}
+                className="text-xs text-gray-500 hover:text-white transition-colors"
+              >
+                Back to sign in
+              </button>
             </div>
           </form>
         )}

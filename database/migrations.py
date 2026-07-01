@@ -224,6 +224,17 @@ def run_startup_migrations():
 
     ALTER TABLE auth_mfa_sessions ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES tenant_users(id) ON DELETE CASCADE;
 
+    -- Password Reset Tokens (hashed, single-use)
+    CREATE TABLE IF NOT EXISTS auth_password_reset_tokens (
+        token_hash VARCHAR(64) PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES tenant_users(id) ON DELETE CASCADE,
+        email VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL,
+        used_at TIMESTAMP
+    );
+
     -- Provider Credentials (Encrypted)
     CREATE TABLE IF NOT EXISTS tenant_credentials (
         id SERIAL PRIMARY KEY,
@@ -378,6 +389,12 @@ def run_startup_migrations():
     ALTER TABLE policies ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
     ALTER TABLE policies ADD COLUMN IF NOT EXISTS created_by VARCHAR(255);
     ALTER TABLE policies ADD COLUMN IF NOT EXISTS updated_by VARCHAR(255);
+    ALTER TABLE policies ADD COLUMN IF NOT EXISTS checksum VARCHAR(128);
+    ALTER TABLE policies ADD COLUMN IF NOT EXISTS changelog TEXT;
+    ALTER TABLE policies ADD COLUMN IF NOT EXISTS approved_by VARCHAR(255);
+    ALTER TABLE policies ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP;
+    ALTER TABLE policies ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP;
+    ALTER TABLE policies ADD COLUMN IF NOT EXISTS deprecated_at TIMESTAMP;
 
     CREATE TABLE IF NOT EXISTS policy_audit_history (
         id SERIAL PRIMARY KEY,
@@ -389,6 +406,60 @@ def run_startup_migrations():
         after_rules TEXT,
         version INTEGER DEFAULT 1,
         status VARCHAR(20) DEFAULT 'published',
+        created_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS policy_versions (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        policy_id INTEGER REFERENCES policies(id) ON DELETE CASCADE,
+        version INTEGER NOT NULL,
+        status VARCHAR(30) DEFAULT 'draft',
+        rules TEXT NOT NULL,
+        checksum VARCHAR(128) NOT NULL,
+        author VARCHAR(255),
+        approver VARCHAR(255),
+        changelog TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        approved_at TIMESTAMP,
+        published_at TIMESTAMP,
+        archived_at TIMESTAMP,
+        UNIQUE(policy_id, version)
+    );
+
+    CREATE TABLE IF NOT EXISTS policy_change_approvals (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        policy_id INTEGER REFERENCES policies(id) ON DELETE CASCADE,
+        version_id INTEGER REFERENCES policy_versions(id) ON DELETE SET NULL,
+        status VARCHAR(30) DEFAULT 'pending',
+        requested_by VARCHAR(255),
+        reviewed_by VARCHAR(255),
+        comments TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        decided_at TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS policy_simulation_results (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        policy_id INTEGER REFERENCES policies(id) ON DELETE SET NULL,
+        actor VARCHAR(255),
+        sample_hash VARCHAR(128),
+        result TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS policy_evaluation_audit (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        request_id VARCHAR(100),
+        route_path VARCHAR(255),
+        decision VARCHAR(40) NOT NULL,
+        reason TEXT,
+        evaluation_time_ms INTEGER DEFAULT 0,
+        matched_policies TEXT,
+        policy_versions TEXT,
         created_at TIMESTAMP DEFAULT NOW()
     );
 
@@ -574,6 +645,45 @@ def run_startup_migrations():
     ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS impact VARCHAR(255);
     ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS priority VARCHAR(10);
     ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS location_evidence TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS document_uid VARCHAR(100);
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS parent_document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_sha256 VARCHAR(64);
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS mime_type VARCHAR(255);
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS page_count INTEGER DEFAULT 0;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction_method VARCHAR(50);
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS ocr_status VARCHAR(50);
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS ocr_required BOOLEAN DEFAULT FALSE;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS metadata_json TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS original_extracted_text TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS redacted_text TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS redacted_pdf_base64 TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS findings_report TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS compliance_summary TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS processing_history TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS progress INTEGER DEFAULT 0;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS latest_scan_id INTEGER;
+
+    ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS field_type VARCHAR(100);
+    ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS page_number INTEGER;
+    ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS line_number INTEGER;
+    ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS paragraph_number INTEGER;
+    ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS char_start INTEGER;
+    ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS char_end INTEGER;
+    ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS bbox TEXT;
+    ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS confidence NUMERIC;
+    ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS policy_violated VARCHAR(255);
+    ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS explanation TEXT;
+    ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS action_taken VARCHAR(50);
+    ALTER TABLE document_findings ADD COLUMN IF NOT EXISTS fingerprint VARCHAR(128);
+
+    ALTER TABLE document_scans ADD COLUMN IF NOT EXISTS scan_id VARCHAR(100);
+    ALTER TABLE document_scans ADD COLUMN IF NOT EXISTS progress INTEGER DEFAULT 0;
+    ALTER TABLE document_scans ADD COLUMN IF NOT EXISTS extraction_method VARCHAR(50);
+    ALTER TABLE document_scans ADD COLUMN IF NOT EXISTS ocr_status VARCHAR(50);
+    ALTER TABLE document_scans ADD COLUMN IF NOT EXISTS ocr_required BOOLEAN DEFAULT FALSE;
+    ALTER TABLE document_scans ADD COLUMN IF NOT EXISTS compliance_summary TEXT;
+    ALTER TABLE document_scans ADD COLUMN IF NOT EXISTS outputs_json TEXT;
 
     ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
@@ -587,6 +697,9 @@ def run_startup_migrations():
     CREATE INDEX IF NOT EXISTS idx_gateway_requests_tenant_id ON gateway_requests(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_gateway_routes_tenant_id ON gateway_routes(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_tenant_api_keys_tenant_id ON tenant_api_keys(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_tenant_id ON auth_refresh_tokens(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_auth_mfa_sessions_tenant_id ON auth_mfa_sessions(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_auth_password_reset_tokens_user ON auth_password_reset_tokens(tenant_id, user_id, expires_at);
     CREATE INDEX IF NOT EXISTS idx_tenant_credentials_tenant_id ON tenant_credentials(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_tenant_credentials_provider ON tenant_credentials(tenant_id, provider);
     CREATE INDEX IF NOT EXISTS idx_agent_events_tenant_id ON agent_events(tenant_id);
@@ -597,12 +710,18 @@ def run_startup_migrations():
     CREATE INDEX IF NOT EXISTS idx_policies_tenant_status ON policies(tenant_id, status);
     CREATE INDEX IF NOT EXISTS idx_policy_audit_history_tenant_id ON policy_audit_history(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_policy_audit_history_policy_id ON policy_audit_history(policy_id);
+    CREATE INDEX IF NOT EXISTS idx_policy_versions_tenant_policy ON policy_versions(tenant_id, policy_id, version);
+    CREATE INDEX IF NOT EXISTS idx_policy_change_approvals_tenant_policy ON policy_change_approvals(tenant_id, policy_id, status);
+    CREATE INDEX IF NOT EXISTS idx_policy_simulation_results_tenant_policy ON policy_simulation_results(tenant_id, policy_id);
+    CREATE INDEX IF NOT EXISTS idx_policy_evaluation_audit_tenant_request ON policy_evaluation_audit(tenant_id, request_id);
     CREATE INDEX IF NOT EXISTS idx_knowledge_documents_tenant_id ON knowledge_documents(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_tenant_document ON knowledge_chunks(tenant_id, document_id);
     CREATE INDEX IF NOT EXISTS idx_documents_tenant_id ON documents(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_document_findings_tenant_document ON document_findings(tenant_id, document_id);
     CREATE INDEX IF NOT EXISTS idx_document_scans_tenant_document ON document_scans(tenant_id, document_id);
     CREATE INDEX IF NOT EXISTS idx_document_audits_tenant_document ON document_audits(tenant_id, document_id);
+    CREATE INDEX IF NOT EXISTS idx_documents_tenant_uid ON documents(tenant_id, document_uid);
+    CREATE INDEX IF NOT EXISTS idx_document_scans_scan_id ON document_scans(scan_id);
     CREATE INDEX IF NOT EXISTS idx_compliance_evidence_tenant_id ON compliance_evidence(tenant_id);
     """
     rls_sql = """
@@ -627,14 +746,50 @@ def run_startup_migrations():
     ALTER TABLE tenant_users ENABLE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation_tenant_users ON tenant_users;
     CREATE POLICY tenant_isolation_tenant_users ON tenant_users
-        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        USING (
+            tenant_id::text = current_setting('app.tenant_id', true)
+            OR current_setting('app.auth_lookup', true) = 'on'
+        )
         WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
 
     ALTER TABLE tenant_api_keys ENABLE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation_tenant_api_keys ON tenant_api_keys;
     CREATE POLICY tenant_isolation_tenant_api_keys ON tenant_api_keys
+        USING (
+            tenant_id::text = current_setting('app.tenant_id', true)
+            OR current_setting('app.auth_lookup', true) = 'on'
+        )
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE auth_refresh_tokens ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_auth_refresh_tokens ON auth_refresh_tokens;
+    CREATE POLICY tenant_isolation_auth_refresh_tokens ON auth_refresh_tokens
         USING (tenant_id::text = current_setting('app.tenant_id', true))
         WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE auth_mfa_sessions ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_auth_mfa_sessions ON auth_mfa_sessions;
+    CREATE POLICY tenant_isolation_auth_mfa_sessions ON auth_mfa_sessions
+        USING (
+            tenant_id::text = current_setting('app.tenant_id', true)
+            OR current_setting('app.auth_lookup', true) = 'on'
+        )
+        WITH CHECK (
+            tenant_id::text = current_setting('app.tenant_id', true)
+            OR current_setting('app.auth_lookup', true) = 'on'
+        );
+
+    ALTER TABLE auth_password_reset_tokens ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_auth_password_reset_tokens ON auth_password_reset_tokens;
+    CREATE POLICY tenant_isolation_auth_password_reset_tokens ON auth_password_reset_tokens
+        USING (
+            tenant_id::text = current_setting('app.tenant_id', true)
+            OR current_setting('app.auth_lookup', true) = 'on'
+        )
+        WITH CHECK (
+            tenant_id::text = current_setting('app.tenant_id', true)
+            OR current_setting('app.auth_lookup', true) = 'on'
+        );
 
     ALTER TABLE tenant_credentials ENABLE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation_tenant_credentials ON tenant_credentials;
@@ -675,6 +830,30 @@ def run_startup_migrations():
     ALTER TABLE policy_audit_history ENABLE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation_policy_audit_history ON policy_audit_history;
     CREATE POLICY tenant_isolation_policy_audit_history ON policy_audit_history
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE policy_versions ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_policy_versions ON policy_versions;
+    CREATE POLICY tenant_isolation_policy_versions ON policy_versions
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE policy_change_approvals ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_policy_change_approvals ON policy_change_approvals;
+    CREATE POLICY tenant_isolation_policy_change_approvals ON policy_change_approvals
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE policy_simulation_results ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_policy_simulation_results ON policy_simulation_results;
+    CREATE POLICY tenant_isolation_policy_simulation_results ON policy_simulation_results
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE policy_evaluation_audit ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_policy_evaluation_audit ON policy_evaluation_audit;
+    CREATE POLICY tenant_isolation_policy_evaluation_audit ON policy_evaluation_audit
         USING (tenant_id::text = current_setting('app.tenant_id', true))
         WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
 
@@ -732,10 +911,41 @@ def run_startup_migrations():
         USING (tenant_id::text = current_setting('app.tenant_id', true))
         WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
     """
+    force_rls_sql = """
+    ALTER TABLE audit_logs FORCE ROW LEVEL SECURITY;
+    ALTER TABLE gateway_requests FORCE ROW LEVEL SECURITY;
+    ALTER TABLE gateway_routes FORCE ROW LEVEL SECURITY;
+    ALTER TABLE tenant_users FORCE ROW LEVEL SECURITY;
+    ALTER TABLE tenant_api_keys FORCE ROW LEVEL SECURITY;
+    ALTER TABLE auth_refresh_tokens FORCE ROW LEVEL SECURITY;
+    ALTER TABLE auth_mfa_sessions FORCE ROW LEVEL SECURITY;
+    ALTER TABLE auth_password_reset_tokens FORCE ROW LEVEL SECURITY;
+    ALTER TABLE tenant_credentials FORCE ROW LEVEL SECURITY;
+    ALTER TABLE agent_events FORCE ROW LEVEL SECURITY;
+    ALTER TABLE gateway_approvals FORCE ROW LEVEL SECURITY;
+    ALTER TABLE approval_audit_events FORCE ROW LEVEL SECURITY;
+    ALTER TABLE usage_events FORCE ROW LEVEL SECURITY;
+    ALTER TABLE policies FORCE ROW LEVEL SECURITY;
+    ALTER TABLE policy_audit_history FORCE ROW LEVEL SECURITY;
+    ALTER TABLE policy_versions FORCE ROW LEVEL SECURITY;
+    ALTER TABLE policy_change_approvals FORCE ROW LEVEL SECURITY;
+    ALTER TABLE policy_simulation_results FORCE ROW LEVEL SECURITY;
+    ALTER TABLE policy_evaluation_audit FORCE ROW LEVEL SECURITY;
+    ALTER TABLE knowledge_documents FORCE ROW LEVEL SECURITY;
+    ALTER TABLE knowledge_chunks FORCE ROW LEVEL SECURITY;
+    ALTER TABLE documents FORCE ROW LEVEL SECURITY;
+    ALTER TABLE document_findings FORCE ROW LEVEL SECURITY;
+    ALTER TABLE document_scans FORCE ROW LEVEL SECURITY;
+    ALTER TABLE document_audits FORCE ROW LEVEL SECURITY;
+    ALTER TABLE chat_sessions FORCE ROW LEVEL SECURITY;
+    ALTER TABLE secrets FORCE ROW LEVEL SECURITY;
+    ALTER TABLE compliance_evidence FORCE ROW LEVEL SECURITY;
+    """
     try:
         with engine.connect() as conn:
             conn.execute(text(migration_sql))
             conn.execute(text(rls_sql))
+            conn.execute(text(force_rls_sql))
             conn.execute(text("""
                 INSERT INTO tenant_users (
                     tenant_id, first_name, last_name, email, password_hash,
