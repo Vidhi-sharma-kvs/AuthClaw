@@ -3303,7 +3303,7 @@ async def redact_gateway_document(
         "redacted_count": redacted_count,
         "extraction_method": extraction.extraction_method,
         "ocr_status": extraction.ocr_status,
-        "ocr_required": extraction.ocr_required,
+        "ocr_required": bool(getattr(extraction, "ocr_required", False)),
         "ocr_error": extraction.ocr_error,
         "document_metadata": document_analysis["metadata"],
         "compliance_summary": document_analysis["compliance_summary"],

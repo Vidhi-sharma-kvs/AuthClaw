@@ -3,7 +3,7 @@ import csv
 import os
 import zipfile
 import logging
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 from dataclasses import dataclass
 from typing import Dict, List, Any, Optional
 

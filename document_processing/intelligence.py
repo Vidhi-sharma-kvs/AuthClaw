@@ -36,6 +36,13 @@ def analyze_and_redact_document(
         "extraction_method": extraction.extraction_method,
         "ocr_status": extraction.ocr_status,
     }
+    blocked = sum(1 for finding in findings if finding.get("action_taken") == "block")
+    summary = {
+        "total_findings": len(findings),
+        "blocked_findings": blocked,
+        "redacted_findings": len(findings) - blocked,
+        "status": "blocked" if blocked else ("redacted" if findings else "clean"),
+    }
 
     return {
         "extracted_text": extracted_text,
@@ -43,6 +50,13 @@ def analyze_and_redact_document(
         "redacted_pages": redacted_pages,
         "findings": findings,
         "findings_report": report,
+        "metadata": {
+            "page_count": len(extraction.pages),
+            "extraction_method": extraction.extraction_method,
+            "ocr_status": extraction.ocr_status,
+            "ocr_error": extraction.ocr_error,
+        },
+        "compliance_summary": summary,
         "redacted_pdf_base64": base64.b64encode(
             generate_redacted_pdf(redacted_pages, findings, extraction.extraction_method)
         ).decode("ascii"),

@@ -24,6 +24,11 @@ logs/
 watched_documents/
 scratch/
 
+.terraform/
+*.tfstate
+*.tfstate.*
+.gocache/
+
 authclaw-key.pem
 authclaw.pem
 *.pem

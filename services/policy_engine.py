@@ -296,25 +296,33 @@ class PolicyEngine:
 
     def load_policies(self, tenant_id: Optional[int]) -> List[TenantPolicy]:
         params = {}
-        tenant_clause = "tenant_id IS NULL"
         if tenant_id is not None:
-            tenant_clause = "(tenant_id = :tenant_id OR tenant_id IS NULL)"
             params["tenant_id"] = tenant_id
+            sql = """
+                SELECT id, name, type, rules, enabled, tenant_id,
+                       COALESCE(version, 1) AS version,
+                       COALESCE(status, 'published') AS status,
+                       COALESCE(severity_level, 'MEDIUM') AS severity_level
+                FROM policies
+                WHERE enabled = TRUE
+                  AND (tenant_id = :tenant_id OR tenant_id IS NULL)
+                  AND COALESCE(status, 'published') IN ('published', 'active')
+                ORDER BY id ASC
+            """
+        else:
+            sql = """
+                SELECT id, name, type, rules, enabled, tenant_id,
+                       COALESCE(version, 1) AS version,
+                       COALESCE(status, 'published') AS status,
+                       COALESCE(severity_level, 'MEDIUM') AS severity_level
+                FROM policies
+                WHERE enabled = TRUE
+                  AND tenant_id IS NULL
+                  AND COALESCE(status, 'published') IN ('published', 'active')
+                ORDER BY id ASC
+            """
         with engine.connect() as conn:
-            rows = conn.execute(
-                text(f"""
-                    SELECT id, name, type, rules, enabled, tenant_id,
-                           COALESCE(version, 1) AS version,
-                           COALESCE(status, 'published') AS status,
-                           COALESCE(severity_level, 'MEDIUM') AS severity_level
-                    FROM policies
-                    WHERE enabled = TRUE
-                      AND {tenant_clause}
-                      AND COALESCE(status, 'published') IN ('published', 'active')
-                    ORDER BY id ASC
-                """),
-                params,
-            ).fetchall()
+            rows = conn.execute(text(sql), params).fetchall()
         return [self._policy_from_row(row) for row in rows]
 
     def parse_rules(self, rules: Any) -> Dict[str, Any]:

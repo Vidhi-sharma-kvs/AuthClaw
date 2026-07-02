@@ -14,6 +14,7 @@ google-genai
 pypdf
 python-docx
 reportlab
+defusedxml
 boto3
 presidio-analyzer
 pytesseract
