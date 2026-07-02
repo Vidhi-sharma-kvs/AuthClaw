@@ -1,6 +1,0 @@
-./config.go
-./redacting_body.go
-./redactor.go
-./server.go
-./redactor_test.go
-./server_test.go

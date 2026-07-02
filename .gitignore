@@ -23,6 +23,7 @@ frontend/dist/
 logs/
 watched_documents/
 scratch/
+.codex/visual-audit/
 
 .terraform/
 *.tfstate
