@@ -5,10 +5,8 @@ services:
       dockerfile: Dockerfile
     image: authclaw-api:production
     env_file:
-      - deployment/aws/env.production.template
-    environment:
-      AUTHCLAW_ENV: production
-      DATABASE_URL: postgresql://authclaw:${POSTGRES_PASSWORD:-CHANGE_ME}@postgres:5432/authclaw
+      - path: .env.production.local
+        required: false
     ports:
       - "8000:8000"
     depends_on:
@@ -26,10 +24,12 @@ services:
       context: ./gateway-go
       dockerfile: Dockerfile
     image: authclaw-gateway:production
+    env_file:
+      - path: .env.production.local
+        required: false
     environment:
       AUTHCLAW_GATEWAY_ADDR: 0.0.0.0:9000
       AUTHCLAW_BACKEND_URL: http://authclaw-api:8000
-      AUTHCLAW_ALLOWED_ORIGINS: ${AUTHCLAW_ALLOWED_ORIGINS:-https://app.authclaw.example.com}
     ports:
       - "9000:9000"
     depends_on:
@@ -47,9 +47,12 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
-        VITE_GATEWAY_PUBLIC_URL: ${VITE_GATEWAY_PUBLIC_URL:-/api}
+        VITE_API_BASE_URL: /api
+        VITE_GATEWAY_PUBLIC_URL: /api
     image: authclaw-frontend:production
+    env_file:
+      - path: .env.production.local
+        required: false
     ports:
       - "8080:80"
     depends_on:
@@ -64,10 +67,12 @@ services:
 
   postgres:
     image: postgres:16
+    env_file:
+      - path: .env.production.local
+        required: false
     environment:
       POSTGRES_DB: authclaw
       POSTGRES_USER: authclaw
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME}
     volumes:
       - authclaw-postgres:/var/lib/postgresql/data
     healthcheck:

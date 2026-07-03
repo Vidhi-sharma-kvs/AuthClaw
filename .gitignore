@@ -1,6 +1,7 @@
 .env
 *.env
 .env.txt
+.env.production.local
 frontend/.env
 frontend/.env.local
 frontend/.env.production
