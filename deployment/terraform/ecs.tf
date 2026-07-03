@@ -67,6 +67,38 @@ resource "aws_ecs_task_definition" "app" {
       }
     },
     {
+      name      = "authclaw-gateway"
+      image     = var.gateway_image
+      essential = true
+      portMappings = [{
+        containerPort = 9000
+        protocol      = "tcp"
+      }]
+      environment = [
+        { name = "AUTHCLAW_ENV", value = "production" },
+        { name = "AUTHCLAW_GATEWAY_ADDR", value = "0.0.0.0:9000" },
+        { name = "AUTHCLAW_BACKEND_URL", value = "http://127.0.0.1:8000" },
+        { name = "AUTHCLAW_ALLOWED_ORIGINS", value = var.allowed_origins },
+        { name = "AUTHCLAW_SECRET_BACKEND", value = "aws_secrets_manager" },
+        { name = "AWS_REGION", value = var.aws_region }
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.gateway.name
+          awslogs-region        = var.aws_region
+          awslogs-stream-prefix = "gateway"
+        }
+      }
+      healthCheck = {
+        command     = ["CMD-SHELL", "wget -qO- http://127.0.0.1:9000/health/ready || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 20
+      }
+    },
+    {
       name      = "authclaw-frontend"
       image     = var.frontend_image
       essential = true
@@ -112,6 +144,12 @@ resource "aws_ecs_service" "app" {
     target_group_arn = aws_lb_target_group.api.arn
     container_name   = "authclaw-api"
     container_port   = 8000
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.gateway.arn
+    container_name   = "authclaw-gateway"
+    container_port   = 9000
   }
 
   load_balancer {

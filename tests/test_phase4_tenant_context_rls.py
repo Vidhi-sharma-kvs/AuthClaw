@@ -12,6 +12,7 @@ def test_database_session_receives_tenant_and_request_context():
                 """
                 SELECT
                     current_setting('app.tenant_id', true),
+                    current_setting('app.current_tenant_id', true),
                     current_setting('app.request_id', true),
                     current_setting('app.auth_lookup', true)
                 """
@@ -19,8 +20,9 @@ def test_database_session_receives_tenant_and_request_context():
         ).fetchone()
 
     assert row[0] == "42"
-    assert row[1] == "req-phase4"
-    assert row[2] in ("", None)
+    assert row[1] == "42"
+    assert row[2] == "req-phase4"
+    assert row[3] in ("", None)
 
 
 def test_required_tenant_context_fails_closed_without_tenant():
@@ -36,13 +38,15 @@ def test_auth_lookup_context_is_explicit_and_does_not_set_tenant():
                 """
                 SELECT
                     current_setting('app.tenant_id', true),
+                    current_setting('app.current_tenant_id', true),
                     current_setting('app.auth_lookup', true)
                 """
             )
         ).fetchone()
 
     assert row[0] in ("", None)
-    assert row[1] == "on"
+    assert row[1] in ("", None)
+    assert row[2] == "on"
 
 
 def test_forced_rls_is_enabled_for_tenant_owned_tables():
@@ -58,6 +62,7 @@ def test_forced_rls_is_enabled_for_tenant_owned_tables():
         "auth_password_reset_tokens",
         "documents",
         "document_findings",
+        "chat_messages",
         "knowledge_documents",
         "knowledge_chunks",
         "policies",

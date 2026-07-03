@@ -84,3 +84,97 @@ def test_redaction_fingerprint_requires_secret_salt(monkeypatch):
 def test_stored_secret_repr_does_not_expose_value():
     stored = StoredSecret(name="authclaw/test", backend="local_env", version_id="v1", value="raw-secret")
     assert "raw-secret" not in repr(stored)
+
+
+def test_aws_secrets_manager_backend_get_put_delete_and_health(monkeypatch):
+    clear_secret_env(monkeypatch)
+    monkeypatch.setenv("AUTHCLAW_SECRET_BACKEND", "aws_secrets_manager")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+
+    class FakeAwsSecretsClient:
+        class exceptions:
+            class ResourceNotFoundException(Exception):
+                pass
+
+        def __init__(self):
+            self.secrets = {}
+
+        def get_secret_value(self, SecretId):
+            if SecretId not in self.secrets:
+                raise self.exceptions.ResourceNotFoundException()
+            return {"SecretString": self.secrets[SecretId]}
+
+        def put_secret_value(self, SecretId, SecretString):
+            if SecretId not in self.secrets:
+                raise self.exceptions.ResourceNotFoundException()
+            self.secrets[SecretId] = SecretString
+            return {"VersionId": "aws-v2"}
+
+        def create_secret(self, Name, SecretString):
+            self.secrets[Name] = SecretString
+            return {"VersionId": "aws-v1"}
+
+        def delete_secret(self, SecretId, ForceDeleteWithoutRecovery):
+            self.secrets.pop(SecretId, None)
+
+    fake_client = FakeAwsSecretsClient()
+
+    import boto3
+
+    monkeypatch.setattr(boto3, "client", lambda service_name, region_name: fake_client)
+
+    manager = SecretManager()
+    stored = manager.put_secret("authclaw/test/aws", "managed-secret-value")
+
+    assert stored.backend == "aws_secrets_manager"
+    assert manager.health_check().healthy is True
+    assert manager.get_secret("authclaw/test/aws") == "managed-secret-value"
+
+    manager.delete_secret("authclaw/test/aws")
+
+    with pytest.raises(Exception):
+        manager.get_secret("authclaw/test/aws")
+
+
+def test_hashicorp_vault_backend_get_put_and_health(monkeypatch):
+    clear_secret_env(monkeypatch)
+    monkeypatch.setenv("AUTHCLAW_SECRET_BACKEND", "hashicorp_vault")
+    monkeypatch.setenv("VAULT_ADDR", "http://vault.example.test:8200/v1")
+    monkeypatch.setenv("VAULT_TOKEN", "vault-token")
+    monkeypatch.setenv("VAULT_KV_MOUNT", "secret")
+
+    calls = []
+    vault_values = {}
+
+    class FakeResponse:
+        def __init__(self, status_code=200, payload=None, text="{}"):
+            self.status_code = status_code
+            self._payload = payload or {}
+            self.text = text
+
+        def json(self):
+            return self._payload
+
+    def fake_request(method, url, headers=None, json=None, timeout=None):
+        calls.append((method, url, headers, json, timeout))
+        if url.endswith("/v1/sys/health"):
+            return FakeResponse(text="")
+        if method == "POST":
+            vault_values[url] = json["data"]["value"]
+            return FakeResponse()
+        if method == "GET":
+            return FakeResponse(payload={"data": {"data": {"value": vault_values[url]}}})
+        raise AssertionError(f"unexpected method {method}")
+
+    import requests
+
+    monkeypatch.setattr(requests, "request", fake_request)
+
+    manager = SecretManager()
+    stored = manager.put_secret("authclaw/test/vault", "vault-secret-value")
+
+    assert stored.backend == "hashicorp_vault"
+    assert manager.health_check().healthy is True
+    assert manager.get_secret("authclaw/test/vault") == "vault-secret-value"
+    assert all(call[2]["X-Vault-Token"] == "vault-token" for call in calls)
+    assert any(call[1] == "http://vault.example.test:8200/v1/secret/data/authclaw/test/vault" for call in calls)

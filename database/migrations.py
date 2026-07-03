@@ -580,6 +580,13 @@ def run_startup_migrations():
     );
 
     ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS trace TEXT;
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+    UPDATE chat_messages AS m
+    SET tenant_id = s.tenant_id
+    FROM chat_sessions AS s
+    WHERE m.session_id = s.session_id
+      AND m.tenant_id IS NULL
+      AND s.tenant_id IS NOT NULL;
 
     -- New Document Security & Compliance Engine Tables
     CREATE TABLE IF NOT EXISTS documents (
@@ -723,6 +730,7 @@ def run_startup_migrations():
     CREATE INDEX IF NOT EXISTS idx_documents_tenant_uid ON documents(tenant_id, document_uid);
     CREATE INDEX IF NOT EXISTS idx_document_scans_scan_id ON document_scans(scan_id);
     CREATE INDEX IF NOT EXISTS idx_compliance_evidence_tenant_id ON compliance_evidence(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_tenant_session ON chat_messages(tenant_id, session_id);
     """
     rls_sql = """
     ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
@@ -747,10 +755,10 @@ def run_startup_migrations():
     DROP POLICY IF EXISTS tenant_isolation_tenant_users ON tenant_users;
     CREATE POLICY tenant_isolation_tenant_users ON tenant_users
         USING (
-            tenant_id::text = current_setting('app.tenant_id', true)
+            tenant_id::text = COALESCE(NULLIF(current_setting('app.current_tenant_id', true), ''), NULLIF(current_setting('app.tenant_id', true), ''))
             OR current_setting('app.auth_lookup', true) = 'on'
         )
-        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+        WITH CHECK (tenant_id::text = COALESCE(NULLIF(current_setting('app.current_tenant_id', true), ''), NULLIF(current_setting('app.tenant_id', true), '')));
 
     ALTER TABLE tenant_api_keys ENABLE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation_tenant_api_keys ON tenant_api_keys;
@@ -824,8 +832,8 @@ def run_startup_migrations():
     ALTER TABLE policies ENABLE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation_policies ON policies;
     CREATE POLICY tenant_isolation_policies ON policies
-        USING (tenant_id::text = current_setting('app.tenant_id', true))
-        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+        USING (tenant_id::text = COALESCE(NULLIF(current_setting('app.current_tenant_id', true), ''), NULLIF(current_setting('app.tenant_id', true), '')))
+        WITH CHECK (tenant_id::text = COALESCE(NULLIF(current_setting('app.current_tenant_id', true), ''), NULLIF(current_setting('app.tenant_id', true), '')));
 
     ALTER TABLE policy_audit_history ENABLE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation_policy_audit_history ON policy_audit_history;
@@ -896,8 +904,14 @@ def run_startup_migrations():
     ALTER TABLE chat_sessions ENABLE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation_chat_sessions ON chat_sessions;
     CREATE POLICY tenant_isolation_chat_sessions ON chat_sessions
-        USING (tenant_id::text = current_setting('app.tenant_id', true))
-        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+        USING (tenant_id::text = COALESCE(NULLIF(current_setting('app.current_tenant_id', true), ''), NULLIF(current_setting('app.tenant_id', true), '')))
+        WITH CHECK (tenant_id::text = COALESCE(NULLIF(current_setting('app.current_tenant_id', true), ''), NULLIF(current_setting('app.tenant_id', true), '')));
+
+    ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_chat_messages ON chat_messages;
+    CREATE POLICY tenant_isolation_chat_messages ON chat_messages
+        USING (tenant_id::text = COALESCE(NULLIF(current_setting('app.current_tenant_id', true), ''), NULLIF(current_setting('app.tenant_id', true), '')))
+        WITH CHECK (tenant_id::text = COALESCE(NULLIF(current_setting('app.current_tenant_id', true), ''), NULLIF(current_setting('app.tenant_id', true), '')));
 
     ALTER TABLE secrets ENABLE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation_secrets ON secrets;
@@ -938,6 +952,7 @@ def run_startup_migrations():
     ALTER TABLE document_scans FORCE ROW LEVEL SECURITY;
     ALTER TABLE document_audits FORCE ROW LEVEL SECURITY;
     ALTER TABLE chat_sessions FORCE ROW LEVEL SECURITY;
+    ALTER TABLE chat_messages FORCE ROW LEVEL SECURITY;
     ALTER TABLE secrets FORCE ROW LEVEL SECURITY;
     ALTER TABLE compliance_evidence FORCE ROW LEVEL SECURITY;
     """

@@ -34,7 +34,7 @@ from services.gateway_service import (
     GatewayProviderUnavailableError,
     GatewayService,
 )
-from services.tenant_context import auth_lookup_context, tenant_context
+from services.tenant_context import auth_lookup_context, get_current_tenant_id, tenant_context
 
 # Set up basic logging
 logging.basicConfig(level=logging.INFO)
@@ -618,15 +618,26 @@ def create_chat_session(
 
     try:
         from database import engine, text
+        tenant_id = get_current_tenant_id()
         with engine.connect() as conn:
-            conn.execute(
-                text("""
-                INSERT INTO chat_sessions (session_id, title, user_id, created_at, updated_at)
-                VALUES (:session_id, :title, :user_id, NOW(), NOW())
-                ON CONFLICT (session_id) DO UPDATE SET title = EXCLUDED.title, updated_at = NOW()
-                """),
-                {"session_id": req.session_id, "title": req.title, "user_id": username}
-            )
+            if tenant_id is not None:
+                conn.execute(
+                    text("""
+                    INSERT INTO chat_sessions (session_id, title, user_id, tenant_id, created_at, updated_at)
+                    VALUES (:session_id, :title, :user_id, :tenant_id, NOW(), NOW())
+                    ON CONFLICT (session_id) DO UPDATE SET title = EXCLUDED.title, updated_at = NOW()
+                    """),
+                    {"session_id": req.session_id, "title": req.title, "user_id": username, "tenant_id": int(tenant_id)}
+                )
+            else:
+                conn.execute(
+                    text("""
+                    INSERT INTO chat_sessions (session_id, title, user_id, created_at, updated_at)
+                    VALUES (:session_id, :title, :user_id, NOW(), NOW())
+                    ON CONFLICT (session_id) DO UPDATE SET title = EXCLUDED.title, updated_at = NOW()
+                    """),
+                    {"session_id": req.session_id, "title": req.title, "user_id": username}
+                )
             conn.commit()
     except Exception as e:
         logger.error(f"Database error in create_chat_session: {e}", exc_info=True)
@@ -686,19 +697,30 @@ def delete_chat_session(session_id: str):
 def purge_all_sessions():
     try:
         from database import engine, text
+        tenant_id = get_current_tenant_id()
         with engine.connect() as conn:
             conn.execute(text("DELETE FROM chat_messages"))
             conn.execute(text("DELETE FROM chat_sessions"))
             
             # Re-seed default session
-            conn.execute(
-                text("""
-                INSERT INTO chat_sessions (session_id, title, user_id, created_at, updated_at)
-                VALUES (:session_id, :title, :user_id, NOW(), NOW())
-                ON CONFLICT (session_id) DO NOTHING
-                """),
-                {"session_id": "default", "title": "Default Session", "user_id": "admin_user"}
-            )
+            if tenant_id is not None:
+                conn.execute(
+                    text("""
+                    INSERT INTO chat_sessions (session_id, title, user_id, tenant_id, created_at, updated_at)
+                    VALUES (:session_id, :title, :user_id, :tenant_id, NOW(), NOW())
+                    ON CONFLICT (session_id) DO NOTHING
+                    """),
+                    {"session_id": "default", "title": "Default Session", "user_id": "admin_user", "tenant_id": int(tenant_id)}
+                )
+            else:
+                conn.execute(
+                    text("""
+                    INSERT INTO chat_sessions (session_id, title, user_id, created_at, updated_at)
+                    VALUES (:session_id, :title, :user_id, NOW(), NOW())
+                    ON CONFLICT (session_id) DO NOTHING
+                    """),
+                    {"session_id": "default", "title": "Default Session", "user_id": "admin_user"}
+                )
             conn.commit()
         return {"status": "success", "message": "All sessions purged and default session re-seeded."}
     except Exception as e:
@@ -729,16 +751,27 @@ def delete_all_sessions():
     try:
         from database import engine
         from sqlalchemy import text
+        tenant_id = get_current_tenant_id()
         with engine.connect() as conn:
             conn.execute(text("DELETE FROM chat_messages"))
             conn.execute(text("DELETE FROM chat_sessions"))
-            conn.execute(
-                text("""
-                INSERT INTO chat_sessions (session_id, title, user_id, created_at, updated_at)
-                VALUES ('default', 'Default Session', 'admin_user', NOW(), NOW())
-                ON CONFLICT (session_id) DO NOTHING
-                """)
-            )
+            if tenant_id is not None:
+                conn.execute(
+                    text("""
+                    INSERT INTO chat_sessions (session_id, title, user_id, tenant_id, created_at, updated_at)
+                    VALUES ('default', 'Default Session', 'admin_user', :tenant_id, NOW(), NOW())
+                    ON CONFLICT (session_id) DO NOTHING
+                    """),
+                    {"tenant_id": int(tenant_id)}
+                )
+            else:
+                conn.execute(
+                    text("""
+                    INSERT INTO chat_sessions (session_id, title, user_id, created_at, updated_at)
+                    VALUES ('default', 'Default Session', 'admin_user', NOW(), NOW())
+                    ON CONFLICT (session_id) DO NOTHING
+                    """)
+                )
             conn.commit()
         return {"status": "success", "message": "All sessions deleted and default session seeded"}
     except Exception as e:

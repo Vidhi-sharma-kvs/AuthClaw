@@ -48,6 +48,8 @@ SENSITIVE_ENV_NAMES = {
     "AZURE_OPENAI_API_KEY",
 }
 
+_LOCAL_SECRET_CACHE: Dict[str, str] = {}
+
 
 def normalize_provider(provider: str) -> str:
     normalized = (provider or "").lower().replace(" ", "_")
@@ -106,7 +108,7 @@ class SecretManager:
 
     def get_secret(self, name: str) -> Optional[str]:
         if self.backend in {"local_env", "local"}:
-            return os.getenv(name)
+            return os.getenv(name) or _LOCAL_SECRET_CACHE.get(name)
         if self.backend == "aws_secrets_manager":
             return self._get_aws_secret(name)
         if self.backend in {"hashicorp_vault", "vault"}:
@@ -127,6 +129,7 @@ class SecretManager:
         if not value:
             raise _safe_error(name, "cannot be stored with an empty value")
         if self.backend in {"local_env", "local"}:
+            _LOCAL_SECRET_CACHE[name] = value
             os.environ[name] = value
             return StoredSecret(name=name, backend=self.backend, version_id=self._version(value), value=value)
         if self.backend == "aws_secrets_manager":
@@ -150,6 +153,7 @@ class SecretManager:
 
     def delete_secret(self, name: str) -> None:
         if self.backend in {"local_env", "local"}:
+            _LOCAL_SECRET_CACHE.pop(name, None)
             os.environ.pop(name, None)
             return
         if self.backend == "aws_secrets_manager":
@@ -190,13 +194,15 @@ class SecretManager:
         normalized_provider = normalize_provider(provider)
         secret_name = secret_name_for_provider(tenant_id, normalized_provider)
         secret_value = json.dumps(payload)
-        local_database_storage = self.backend in {"local_env", "local", "database_fernet"}
-        if local_database_storage:
-            stored = StoredSecret(name=secret_name, backend="database_fernet", version_id=self._version(secret_value))
-            database_payload = secret_value
-        else:
-            stored = self.put_secret(secret_name, secret_value)
-            database_payload = json.dumps({"provider": normalized_provider, "secret_ref": stored.name})
+        stored = self.put_secret(secret_name, secret_value)
+        database_payload = json.dumps(
+            {
+                "provider": normalized_provider,
+                "secret_ref": stored.name,
+                "secret_backend": stored.backend,
+                "secret_version": stored.version_id,
+            }
+        )
         encrypted_payload = self.encrypt_for_database(database_payload)
         now = datetime.now(timezone.utc).isoformat()
         self.audit_secret_event("provider_secret_stored", secret_name, actor="tenant_admin", version_id=stored.version_id)
@@ -212,9 +218,8 @@ class SecretManager:
         }
 
     def resolve_provider_payload(self, credential_row: Dict[str, Any]) -> Dict[str, Any]:
-        backend = credential_row.get("secret_backend") or "local_env"
         secret_ref = credential_row.get("secret_ref")
-        if backend not in {"local_env", "local", "database_fernet"} and secret_ref:
+        if secret_ref:
             secret_value = self.get_secret(secret_ref)
             if secret_value:
                 return json.loads(secret_value)
@@ -222,7 +227,13 @@ class SecretManager:
         encrypted_payload = credential_row.get("encrypted_payload")
         if not encrypted_payload:
             raise SecretManagerError("Provider credential payload is missing.")
-        return json.loads(self.decrypt_from_database(encrypted_payload))
+        payload = json.loads(self.decrypt_from_database(encrypted_payload))
+        if isinstance(payload, dict) and payload.get("secret_ref") and not payload.get("api_key"):
+            secret_value = self.get_secret(payload["secret_ref"])
+            if secret_value:
+                return json.loads(secret_value)
+            raise SecretManagerError("Provider credential secret reference is unavailable.")
+        return payload
 
     def get_json_secret(self, name: str) -> Optional[dict]:
         value = self.get_secret(name)
@@ -332,9 +343,12 @@ class SecretManager:
         token = os.getenv("VAULT_TOKEN")
         if not address or not token:
             raise SecretManagerError("VAULT_ADDR and VAULT_TOKEN are required for HashiCorp Vault.")
+        base_url = address.rstrip("/")
+        if base_url.endswith("/v1"):
+            base_url = base_url[:-3].rstrip("/")
         response = requests.request(
             method,
-            f"{address.rstrip('/v1').rstrip('/')}/v1/{path.lstrip('/')}",
+            f"{base_url}/v1/{path.lstrip('/')}",
             headers={"X-Vault-Token": token},
             json=payload,
             timeout=10,

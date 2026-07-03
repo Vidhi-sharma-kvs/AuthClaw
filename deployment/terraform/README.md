@@ -8,6 +8,7 @@ This stack prepares a production-shaped AuthClaw deployment on AWS without embed
 - ALB with health checks for frontend and API
 - ECS Fargate service running:
   - `authclaw-api`
+  - `authclaw-gateway`
   - `authclaw-frontend`
 - RDS PostgreSQL `db.t3.small` by default
 - AWS Secrets Manager for database URL, JWT, encryption key, and SMTP credentials
@@ -20,10 +21,11 @@ This stack prepares a production-shaped AuthClaw deployment on AWS without embed
 
 ```bash
 docker build -t authclaw-api:latest -f Dockerfile .
+docker build -t authclaw-gateway:latest -f gateway-go/Dockerfile gateway-go
 docker build -t authclaw-frontend:latest -f frontend/Dockerfile frontend
 ```
 
-Push both images to ECR and set `api_image` and `frontend_image` in `terraform.tfvars`.
+Push all images to ECR and set `api_image`, `gateway_image`, and `frontend_image` in `terraform.tfvars`.
 
 ## Deploy
 
@@ -45,8 +47,10 @@ terraform apply
 ## Health Checks
 
 - ALB API target group: `/health/ready`
+- ALB gateway target group: `/health/ready`
 - ALB frontend target group: `/health`
 - ECS API container checks `/health/ready`
+- ECS gateway container checks `/health/ready`
 - ECS frontend container checks `/health`
 
 ## Notes

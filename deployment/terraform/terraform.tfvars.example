@@ -11,6 +11,7 @@ enable_nat_gateway       = true
 certificate_arn = ""
 
 api_image      = "123456789012.dkr.ecr.us-east-1.amazonaws.com/authclaw-api:latest"
+gateway_image  = "123456789012.dkr.ecr.us-east-1.amazonaws.com/authclaw-gateway:latest"
 frontend_image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/authclaw-frontend:latest"
 
 allowed_origins = "http://authclaw-production-alb.example.com"

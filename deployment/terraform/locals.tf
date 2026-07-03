@@ -7,12 +7,16 @@ locals {
     ManagedBy   = "terraform"
   }
 
-  api_path_patterns = [
-    "/api/*",
-    "/auth/*",
+  gateway_runtime_path_patterns = [
+    "/api/gateway/*",
     "/gateway/*",
     "/v1/*",
     "/chat",
+  ]
+
+  api_path_patterns = [
+    "/api/*",
+    "/auth/*",
     "/metrics",
     "/analytics/*",
     "/audit/*",

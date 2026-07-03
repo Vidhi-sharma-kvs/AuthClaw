@@ -17,8 +17,8 @@ def _is_postgres() -> bool:
     return engine.dialect.name == "postgresql"
 
 
-def _set_config(cursor, key: str, value: str) -> None:
-    cursor.execute("SELECT set_config(%s, %s, false)", (key, value))
+def _set_config(cursor, key: str, value: str, *, local: bool = False) -> None:
+    cursor.execute("SELECT set_config(%s, %s, %s)", (key, value, local))
 
 
 @event.listens_for(engine, "checkout")
@@ -28,6 +28,7 @@ def _clear_tenant_context_on_checkout(dbapi_connection, connection_record, conne
     cursor = dbapi_connection.cursor()
     try:
         _set_config(cursor, "app.tenant_id", "")
+        _set_config(cursor, "app.current_tenant_id", "")
         _set_config(cursor, "app.request_id", "")
         _set_config(cursor, "app.auth_lookup", "")
     finally:
@@ -47,6 +48,10 @@ def _apply_tenant_context(conn, cursor, statement, parameters, context, executem
     if is_tenant_context_required() and not tenant_id:
         raise RuntimeError("Tenant context is required before executing tenant-scoped database statements.")
 
-    _set_config(cursor, "app.tenant_id", str(tenant_id) if tenant_id is not None else "")
-    _set_config(cursor, "app.request_id", get_current_request_id() or "")
-    _set_config(cursor, "app.auth_lookup", "on" if is_auth_lookup_context() else "")
+    tenant_value = str(tenant_id) if tenant_id is not None else ""
+    # local=True is the parameterized equivalent of SET LOCAL and scopes the
+    # tenant boundary to the active transaction.
+    _set_config(cursor, "app.current_tenant_id", tenant_value, local=True)
+    _set_config(cursor, "app.tenant_id", tenant_value, local=True)
+    _set_config(cursor, "app.request_id", get_current_request_id() or "", local=True)
+    _set_config(cursor, "app.auth_lookup", "on" if is_auth_lookup_context() else "", local=True)

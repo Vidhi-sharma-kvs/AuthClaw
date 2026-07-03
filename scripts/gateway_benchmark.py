@@ -152,9 +152,35 @@ def run_benchmark(
     }
 
 
+def latency_summary(report: Dict[str, object], endpoint: str) -> Dict[str, float]:
+    endpoint_report = report["endpoints"].get(endpoint, {})
+    return endpoint_report.get("latency_ms", {})
+
+
+def compare_overhead(gateway_report: Dict[str, object], baseline_report: Dict[str, object]) -> Dict[str, object]:
+    endpoints = sorted(set(gateway_report["endpoints"]) & set(baseline_report["endpoints"]))
+    by_endpoint = {}
+    p95_values = []
+    for endpoint in endpoints:
+        gateway_latency = latency_summary(gateway_report, endpoint)
+        baseline_latency = latency_summary(baseline_report, endpoint)
+        endpoint_overhead = {
+            "p50": round(gateway_latency.get("p50", 0.0) - baseline_latency.get("p50", 0.0), 2),
+            "p95": round(gateway_latency.get("p95", 0.0) - baseline_latency.get("p95", 0.0), 2),
+            "avg": round(gateway_latency.get("avg", 0.0) - baseline_latency.get("avg", 0.0), 2),
+        }
+        by_endpoint[endpoint] = endpoint_overhead
+        p95_values.append(endpoint_overhead["p95"])
+    return {
+        "max_p95_overhead_ms": round(max(p95_values), 2) if p95_values else 0.0,
+        "endpoints": by_endpoint,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark AuthClaw gateway latency and route compatibility.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
+    parser.add_argument("--baseline-base-url", default=None, help="Optional direct backend URL for gateway overhead comparison.")
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--bearer", default=None)
     parser.add_argument("--requests", type=int, default=5, help="Requests per endpoint.")
@@ -162,6 +188,7 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--prompt", default=DEFAULT_PROMPT)
     parser.add_argument("--max-p95-ms", type=float, default=None)
+    parser.add_argument("--max-overhead-ms", type=float, default=50.0)
     parser.add_argument("--min-success-rate", type=float, default=1.0)
     parser.add_argument("--output", default=None, help="Optional JSON report path.")
     args = parser.parse_args()
@@ -181,6 +208,17 @@ def main() -> int:
         timeout=args.timeout,
         prompt=args.prompt,
     )
+    if args.baseline_base_url:
+        baseline_report = run_benchmark(
+            base_url=args.baseline_base_url,
+            headers=build_headers(args.api_key, args.bearer),
+            requests_per_endpoint=args.requests,
+            concurrency=args.concurrency,
+            timeout=args.timeout,
+            prompt=args.prompt,
+        )
+        report["baseline"] = baseline_report
+        report["overhead_ms"] = compare_overhead(report, baseline_report)
 
     rendered = json.dumps(report, indent=2)
     print(rendered)
@@ -193,6 +231,8 @@ def main() -> int:
         return 2
     if args.max_p95_ms is not None and summary["latency_ms"]["p95"] > args.max_p95_ms:
         return 3
+    if args.baseline_base_url and report["overhead_ms"]["max_p95_overhead_ms"] > args.max_overhead_ms:
+        return 4
     return 0
 
 

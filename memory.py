@@ -1,9 +1,10 @@
 import json
 from database import engine
 from sqlalchemy import text
+from services.tenant_context import get_current_tenant_id
 
 
-def ensure_session_exists(session_id: str):
+def ensure_session_exists(session_id: str, tenant_id=None):
     """
     Ensures that a chat session exists in the database.
     """
@@ -14,10 +15,21 @@ def ensure_session_exists(session_id: str):
                 {"session_id": session_id}
             ).fetchone()
             if not res:
-                conn.execute(
-                    text("INSERT INTO chat_sessions (session_id, title, user_id) VALUES (:session_id, 'New Chat', 'admin_user')"),
-                    {"session_id": session_id}
-                )
+                if tenant_id is not None:
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO chat_sessions (session_id, title, user_id, tenant_id)
+                            VALUES (:session_id, 'New Chat', 'admin_user', :tenant_id)
+                            """
+                        ),
+                        {"session_id": session_id, "tenant_id": int(tenant_id)}
+                    )
+                else:
+                    conn.execute(
+                        text("INSERT INTO chat_sessions (session_id, title, user_id) VALUES (:session_id, 'New Chat', 'admin_user')"),
+                        {"session_id": session_id}
+                    )
                 conn.commit()
     except Exception as e:
         import logging
@@ -27,12 +39,30 @@ def ensure_session_exists(session_id: str):
 
 def add_message(session_id, role, content, trace=None):
     try:
-        ensure_session_exists(session_id)
+        tenant_id = get_current_tenant_id()
+        ensure_session_exists(session_id, tenant_id=tenant_id)
         with engine.connect() as conn:
-            conn.execute(
-                text("INSERT INTO chat_messages (session_id, role, content, trace) VALUES (:session_id, :role, :content, :trace)"),
-                {"session_id": session_id, "role": role, "content": content, "trace": trace}
-            )
+            if tenant_id is not None:
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO chat_messages (session_id, role, content, trace, tenant_id)
+                        VALUES (:session_id, :role, :content, :trace, :tenant_id)
+                        """
+                    ),
+                    {
+                        "session_id": session_id,
+                        "role": role,
+                        "content": content,
+                        "trace": trace,
+                        "tenant_id": int(tenant_id),
+                    }
+                )
+            else:
+                conn.execute(
+                    text("INSERT INTO chat_messages (session_id, role, content, trace) VALUES (:session_id, :role, :content, :trace)"),
+                    {"session_id": session_id, "role": role, "content": content, "trace": trace}
+                )
             conn.execute(
                 text("UPDATE chat_sessions SET updated_at = NOW() WHERE session_id = :session_id"),
                 {"session_id": session_id}

@@ -50,6 +50,11 @@ variable "api_image" {
   type        = string
 }
 
+variable "gateway_image" {
+  description = "Full ECR image URI for the AuthClaw Go gateway."
+  type        = string
+}
+
 variable "frontend_image" {
   description = "Full ECR image URI for the AuthClaw frontend Nginx container."
   type        = string

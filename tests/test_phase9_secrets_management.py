@@ -7,6 +7,7 @@ from database import engine
 from database.migrations import run_startup_migrations
 from main import app, create_jwt
 from services.provider_router import ProviderRouter
+from services.secret_manager import SecretManager
 
 
 client = TestClient(app)
@@ -62,7 +63,7 @@ def test_provider_secret_connect_list_health_and_rotate_never_returns_raw_key():
 
     assert response.status_code == 200
     body = response.json()
-    assert body["storage"] == "database_fernet"
+    assert body["storage"] == "local_env"
     assert raw_key not in str(body)
     assert body["key_prefix"].startswith("sk-tes")
 
@@ -107,6 +108,9 @@ def test_provider_secret_connect_list_health_and_rotate_never_returns_raw_key():
 
     assert row is not None
     assert rotated_key not in str(dict(row._mapping))
+    stored_payload = SecretManager().decrypt_from_database(row._mapping["encrypted_payload"])
+    assert rotated_key not in stored_payload
+    assert "secret_ref" in stored_payload
 
 
 def test_provider_router_uses_secret_manager_backed_credentials():

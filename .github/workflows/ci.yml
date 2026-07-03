@@ -109,8 +109,25 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - name: Build backend image
         run: docker build -t authclaw-api:ci -f Dockerfile .
+      - name: Build Go gateway image
+        run: docker build -t authclaw-gateway:ci -f gateway-go/Dockerfile gateway-go
       - name: Build frontend image
         run: docker build -t authclaw-frontend:ci -f frontend/Dockerfile frontend
+
+  go-gateway-tests:
+    name: Go gateway tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gateway-go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: gateway-go/go.mod
+      - name: Run Go gateway tests
+        run: go test ./...
 
   terraform-validate:
     name: Terraform validate
