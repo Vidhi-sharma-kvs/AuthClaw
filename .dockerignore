@@ -1,4 +1,8 @@
 .git
+.agents
+.codex
+.gemini
+.git_broken
 .pytest_cache
 __pycache__
 *.pyc
@@ -14,6 +18,10 @@ frontend/dist
 logs
 watched_documents
 scratch
+tests
+tools
+docs
+evidence
 .env
 *.env
 *.pem

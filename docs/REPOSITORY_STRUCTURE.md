@@ -44,6 +44,7 @@ This repository is organized around the gateway-first AuthClaw architecture.
 | Path | Responsibility |
 | --- | --- |
 | `.github/workflows/ci.yml` | Backend, frontend, security, Docker, and Terraform CI checks |
-| `test_*.py` | Backend, gateway, policy, tenant, document, and observability tests |
+| `tests/` | Backend, gateway, policy, tenant, document, and observability tests |
 | `gateway-go/*_test.go` | Go gateway tests |
-
+| `tools/verification/` | Local verification scripts and integration harnesses |
+| `tools/diagnostics/` | Developer diagnostics that are not runtime code |

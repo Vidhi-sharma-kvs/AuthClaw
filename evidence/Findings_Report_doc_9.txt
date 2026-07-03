@@ -1,9 +1,0 @@
-=========================================
-COMPLIANCE FINDINGS REPORT
-=========================================
-Document Name: test_security_policy.txt
-Analysis Timestamp: 2026-06-22T12:15:10.865503+00:00
------------------------------------------
-Detailed Findings:
-No major compliance issues detected.
-=========================================

@@ -3,7 +3,7 @@ from pathlib import Path
 from startup.validation import validate_production_environment
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def read(path: str) -> str:

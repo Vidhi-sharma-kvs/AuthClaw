@@ -88,7 +88,7 @@ It also returns gateway metadata:
 ## Remaining Non-Canonical Code
 
 - `resume.py::resume_approved_request()` still invokes `graph.invoke()` directly, but repository search shows no imports or callers outside `resume.py`.
-- `test_graph.py` contains manual/test-only direct graph execution.
+- `tests/test_graph.py` contains manual/test-only direct graph execution.
 - `nodes.llm_node` can call `providers.get_provider()` only if `provider_client` is missing from graph state. Canonical runtime reaches `llm_node` after `provider_router_node`, which sets `provider_client`.
 
 ## Provider Access

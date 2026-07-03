@@ -35,7 +35,8 @@ The dashboard is an administration surface for API keys, provider credentials, p
 | `frontend/` | React/Vite administration UI |
 | `deployment/` | Docker, Terraform, EC2, and production deployment assets |
 | `docs/` | Architecture, phase notes, runtime, and cleanup documentation |
-| `tests` / `test_*.py` | Backend and integration test suites |
+| `tests/` | Backend and integration test suites |
+| `tools/` | Local verification and diagnostic utilities |
 
 More detail: [docs/REPOSITORY_STRUCTURE.md](docs/REPOSITORY_STRUCTURE.md).
 
@@ -72,4 +73,3 @@ CI also validates Docker builds, Terraform formatting/validation, backend tests,
 Never commit `.env`, PEM files, provider API keys, SMTP credentials, JWT secrets, generated deployment env files, or local caches. The repository intentionally ignores these files.
 
 Report security issues using [SECURITY.md](SECURITY.md).
-

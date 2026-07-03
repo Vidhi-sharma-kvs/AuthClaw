@@ -8,11 +8,15 @@ $headers = @{
     "x-api-key" = $apiKey
 }
 
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Resolve-Path (Join-Path $scriptDir "..\..")
+$fixturePath = Join-Path $repoRoot "tests\fixtures\test_security_policy.txt"
+
 Write-Host "=== START POWERSHELL VERIFICATION ==="
 
 # 1. Upload using curl.exe
 Write-Host "Uploading file..."
-$uploadJson = curl.exe -s -H "x-api-key: $apiKey" -F "file=@test_security_policy.txt" http://127.0.0.1:8000/documents/upload
+$uploadJson = curl.exe -s -H "x-api-key: $apiKey" -F "file=@$fixturePath" http://127.0.0.1:8000/documents/upload
 
 Write-Host "Upload response: $uploadJson"
 

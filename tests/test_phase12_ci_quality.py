@@ -3,7 +3,7 @@ from pathlib import Path
 import importlib.util
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def read(path: str) -> str:
@@ -50,7 +50,7 @@ def test_phase12_required_quality_test_suites_exist():
     ]
 
     for filename in required_tests:
-        assert (ROOT / filename).exists(), f"Missing required suite: {filename}"
+        assert (ROOT / "tests" / filename).exists(), f"Missing required suite: {filename}"
 
 
 def test_phase12_load_test_uses_gateway_benchmark_and_enforces_thresholds():
@@ -75,4 +75,3 @@ def test_phase12_scope_document_names_mvp_boundaries():
     assert "Detect PII and secrets" in scope
     assert "Generate redacted text/PDF" in scope
     assert "Document chat and RAG should remain secondary" in scope
-

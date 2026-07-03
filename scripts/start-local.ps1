@@ -143,6 +143,12 @@ if ($DisableRemoteEmbeddings) {
 if (!$env:MODEL_NAME -or $env:MODEL_NAME -eq "gemini-3.1-flash-lite") {
     $env:MODEL_NAME = "gemini-2.5-flash-lite"
 }
+if (!$env:GOCACHE) {
+    $env:GOCACHE = Join-Path $root ".gocache"
+}
+if (!(Test-Path $env:GOCACHE)) {
+    New-Item -ItemType Directory -Path $env:GOCACHE | Out-Null
+}
 
 $backendOut = Join-Path $logs "local-backend.out.log"
 $backendErr = Join-Path $logs "local-backend.err.log"

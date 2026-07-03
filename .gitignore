@@ -11,6 +11,7 @@ deployment/ec2/parameters.json
 __pycache__/
 *.pyc
 .pytest_cache/
+.docker-local/
 
 venv/
 venv_default/
@@ -23,6 +24,11 @@ frontend/dist/
 logs/
 watched_documents/
 scratch/
+.agents/
+.codex/
+.gemini/
+.git_broken/
+evidence/
 .codex/visual-audit/
 
 .terraform/
@@ -33,5 +39,8 @@ scratch/
 authclaw-key.pem
 authclaw.pem
 *.pem
+*.key
+*.crt
+*.pfx
 
 commit_info.json

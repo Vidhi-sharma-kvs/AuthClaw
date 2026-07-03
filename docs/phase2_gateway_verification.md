@@ -35,6 +35,5 @@ cd frontend
 npm run build
 
 cd ..
-.\venv\Scripts\python.exe -m pytest test_auth_backend.py test_gateway_chat.py
+.\venv\Scripts\python.exe -m pytest tests/test_auth_backend.py tests/test_gateway_chat.py
 ```
-
