@@ -2,6 +2,17 @@
 
 This repository is organized around the gateway-first AuthClaw architecture.
 
+## GitHub Presentation
+
+These directories provide a clean GitHub landing structure without moving
+runtime code or changing application behavior.
+
+| Path | Responsibility |
+| --- | --- |
+| `apps/` | Product-facing index for backend, web console, and Go gateway |
+| `infrastructure/` | Deployment and cloud infrastructure index pointing to existing deployable assets |
+| `sdk/python/` | Python SDK placeholder and customer integration example |
+
 ## Runtime
 
 | Path | Responsibility |
@@ -35,6 +46,7 @@ This repository is organized around the gateway-first AuthClaw architecture.
 | Path | Responsibility |
 | --- | --- |
 | `Dockerfile` | Backend container build |
+| `docker-compose.yml` | Canonical compose entrypoint that includes production compose wiring |
 | `docker-compose.production.yml` | Production compose wiring for local validation |
 | `deployment/terraform/` | AWS infrastructure modules and validation |
 | `deployment/ec2/` | EC2 helper scripts and generated runtime env targets |

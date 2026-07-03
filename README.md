@@ -27,14 +27,17 @@ The dashboard is an administration surface for API keys, provider credentials, p
 
 | Path | Purpose |
 | --- | --- |
+| `apps/` | GitHub-facing application index for backend, web console, and Go gateway |
 | `gateway-go/` | Dedicated Go gateway and streaming redaction runtime |
 | `routers/` | FastAPI route modules |
 | `services/` | Backend business services, policy, auth, metrics, secrets |
 | `database/` | Database setup, migrations, and tenant/RLS helpers |
 | `document_processing/` | Document extraction, OCR, redaction, storage |
 | `frontend/` | React/Vite administration UI |
+| `infrastructure/` | GitHub-facing infrastructure index |
 | `deployment/` | Docker, Terraform, EC2, and production deployment assets |
 | `docs/` | Architecture, phase notes, runtime, and cleanup documentation |
+| `sdk/python/` | Python SDK package placeholder and customer integration example |
 | `tests/` | Backend and integration test suites |
 | `tools/` | Local verification and diagnostic utilities |
 

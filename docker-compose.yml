@@ -1,0 +1,6 @@
+name: authclaw
+
+# Canonical developer entrypoint that reuses the production compose definition.
+# Keeping service definitions in docker-compose.production.yml avoids drift.
+include:
+  - path: docker-compose.production.yml
