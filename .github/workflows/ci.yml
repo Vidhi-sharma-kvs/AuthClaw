@@ -148,16 +148,29 @@ jobs:
   live-benchmark:
     name: Live gateway benchmark
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && inputs.run_live_benchmark == 'true'
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Check benchmark environment
+        id: check-env
+        shell: bash
+        run: |
+          if [ -z "${{ vars.BENCHMARK_BASE_URL }}" ] || [ -z "${{ secrets.BENCHMARK_API_KEY }}" ]; then
+            echo "Benchmark configuration missing or empty. Skipping live tests gracefully."
+            echo "configured=false" >> $GITHUB_OUTPUT
+          else
+            echo "configured=true" >> $GITHUB_OUTPUT
+          fi
+      - name: Setup Python
+        if: steps.check-env.outputs.configured == 'true'
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
       - name: Install benchmark dependencies
+        if: steps.check-env.outputs.configured == 'true'
         run: pip install requests
       - name: Run live latency benchmark
+        if: steps.check-env.outputs.configured == 'true'
         env:
           BENCHMARK_BASE_URL: ${{ vars.BENCHMARK_BASE_URL }}
           BENCHMARK_API_KEY: ${{ secrets.BENCHMARK_API_KEY }}
