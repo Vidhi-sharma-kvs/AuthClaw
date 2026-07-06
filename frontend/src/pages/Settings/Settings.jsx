@@ -11,6 +11,12 @@ import {
 } from 'lucide-react';
 import Modal from '../../components/Common/Modal';
 import { useToast } from '../../components/Common/Toast';
+import { 
+  Button, 
+  GlassCard, 
+  StatusBadge, 
+  DataTable 
+} from '../../components/Common/DesignSystem';
 
 const Settings = () => {
   const [activeTab, setActiveTab] = useState('tenants');
@@ -74,17 +80,53 @@ const Settings = () => {
     setUserForm({ ...userForm, role, permissions: rolePermissions[role] || 'read_only' });
   };
 
-  const getRoleBadge = (role) => {
-    const maps = {
-      'Super Admin': 'bg-rose-500/10 text-rose-400 border border-rose-500/20',
-      'Security Admin': 'bg-amber-500/10 text-amber-400 border border-amber-500/20',
-      'Compliance Officer': 'bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20',
-      'Developer': 'bg-blue-500/10 text-blue-400 border border-blue-500/20',
-      'Auditor': 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20',
-      'Viewer': 'bg-gray-800 text-gray-400'
-    };
-    return maps[role] || 'bg-gray-800 text-gray-400';
-  };
+  // DataTable Columns for RBAC Permissions
+  const userColumns = [
+    {
+      key: 'username',
+      header: 'System User ID',
+      sortable: true,
+      render: (u) => (
+        <span className="font-semibold text-white font-sans flex items-center gap-2">
+          <UserCheck className="w-4 h-4 text-violet-400" />
+          {u.username}
+        </span>
+      )
+    },
+    {
+      key: 'role',
+      header: 'Assigned Role',
+      sortable: true,
+      render: (u) => <StatusBadge status={u.role} />
+    },
+    {
+      key: 'permissions',
+      header: 'Mapped Permissions',
+      render: (u) => <span className="text-xs text-gray-300 font-mono">{u.permissions}</span>
+    },
+    {
+      key: 'status',
+      header: 'Account Status',
+      render: () => <span className="text-emerald-400 text-xs font-semibold">ACTIVE</span>
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (u) => (
+        <div className="text-right">
+          <button 
+            onClick={() => {
+              setUserForm({ username: u.username, role: u.role, permissions: u.permissions });
+              setUserModalOpen(true);
+            }} 
+            className="text-violet-400 hover:text-violet-300 text-xs font-sans font-semibold transition-colors"
+          >
+            Edit Role
+          </button>
+        </div>
+      )
+    }
+  ];
 
   if (loading) {
     return (
@@ -108,7 +150,7 @@ const Settings = () => {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-white/5 pb-px">
+      <div className="flex border-b border-white/5 space-x-2">
         <button
           onClick={() => setActiveTab('tenants')}
           className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
@@ -133,11 +175,10 @@ const Settings = () => {
         </button>
       </div>
 
-      {/* Tenants list */}
+      {/* Tenant Isolation Content */}
       {activeTab === 'tenants' && (
-        <div className="space-y-4 animate-fadeIn">
-          {/* Action trigger */}
-          <div className="glass-card p-5 border border-emerald-500/10 bg-emerald-500/5">
+        <div className="space-y-4">
+          <GlassCard hover={false} className="border-emerald-500/10 bg-emerald-500/5">
             <div className="flex items-start gap-3">
               <Shield className="w-5 h-5 text-emerald-300 shrink-0 mt-0.5" />
               <div>
@@ -147,22 +188,17 @@ const Settings = () => {
                 </p>
               </div>
             </div>
-          </div>
+          </GlassCard>
 
-          {/* Tenants list */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {tenants.map((t) => (
-              <div key={t.id} className="glass-card p-6 flex flex-col justify-between h-[210px] space-y-4">
+              <GlassCard key={t.id} className="flex flex-col justify-between h-[210px] space-y-4">
                 <div className="flex justify-between items-start">
                   <div>
                     <h3 className="text-base font-bold text-white">{t.name}</h3>
                     <span className="text-[10px] text-gray-500 font-mono mt-1 block">Tenant ID: tenant-{t.id}</span>
                   </div>
-                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                    t.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-gray-800 text-gray-400'
-                  }`}>
-                    {t.status}
-                  </span>
+                  <StatusBadge status={t.status} />
                 </div>
 
                 <div className="space-y-1.5 text-xs text-gray-400">
@@ -182,18 +218,18 @@ const Settings = () => {
 
                 <div className="flex items-center justify-between border-t border-white/5 pt-3 text-[10px] text-gray-500">
                   <span>Managed by onboarding</span>
-                  <CheckCircle className="w-4 h-4 text-emerald-400" />
+                  <CheckCircle className="w-4 h-4 text-emerald-400 animate-pulse" />
                 </div>
-              </div>
+              </GlassCard>
             ))}
           </div>
         </div>
       )}
 
-      {/* RBAC List */}
+      {/* RBAC Content */}
       {activeTab === 'rbac' && (
-        <div className="space-y-4 animate-fadeIn">
-          <div className="glass-card p-5 border border-violet-500/10 bg-violet-500/5">
+        <div className="space-y-4">
+          <GlassCard hover={false} className="border-violet-500/10 bg-violet-500/5">
             <div className="flex items-start gap-3">
               <Shield className="w-5 h-5 text-violet-300 shrink-0 mt-0.5" />
               <div>
@@ -203,64 +239,27 @@ const Settings = () => {
                 </p>
               </div>
             </div>
-          </div>
+          </GlassCard>
 
-          {/* Action Trigger */}
           <div className="flex justify-end">
-            <button
+            <Button
+              variant="primary"
+              size="sm"
               onClick={() => {
                 setUserForm({ username: '', role: 'Developer', permissions: 'read_write_gateway' });
                 setUserModalOpen(true);
               }}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-sm font-semibold hover:opacity-90 shadow-lg shadow-violet-500/10 transition-all"
             >
               <Plus className="w-4 h-4" />
               Configure Role Mapping
-            </button>
+            </Button>
           </div>
 
-          {/* Table */}
-          <div className="glass-card overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-white/5 text-xs text-gray-400 uppercase tracking-wider bg-white/2">
-                  <th className="py-4 px-6">System User ID</th>
-                  <th className="py-4 px-6">Assigned Role</th>
-                  <th className="py-4 px-6">Mapped Permissions</th>
-                  <th className="py-4 px-6">Account Status</th>
-                  <th className="py-4 px-6 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5 text-sm font-mono">
-                {users.map((u) => (
-                  <tr key={u.id} className="hover:bg-white/2 transition-colors">
-                    <td className="py-4 px-6 font-semibold text-white font-sans flex items-center gap-2">
-                      <UserCheck className="w-4 h-4 text-violet-400" />
-                      {u.username}
-                    </td>
-                    <td className="py-4 px-6">
-                      <span className={`px-2.5 py-0.5 rounded text-[10px] font-sans font-bold uppercase ${getRoleBadge(u.role)}`}>
-                        {u.role}
-                      </span>
-                    </td>
-                    <td className="py-4 px-6 text-xs text-gray-300">{u.permissions}</td>
-                    <td className="py-4 px-6 font-sans text-xs text-emerald-400">ACTIVE</td>
-                    <td className="py-4 px-6 text-right">
-                      <button 
-                        onClick={() => {
-                          setUserForm({ username: u.username, role: u.role, permissions: u.permissions });
-                          setUserModalOpen(true);
-                        }} 
-                        className="text-violet-400 hover:text-violet-300 text-xs font-sans font-semibold transition-colors"
-                      >
-                        Edit Role
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            columns={userColumns}
+            data={users}
+            loading={loading}
+          />
         </div>
       )}
 
@@ -277,8 +276,8 @@ const Settings = () => {
               onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
               className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors"
             />
-            <p className="text-[10px] text-gray-500 mt-1.5 flex items-center gap-1.5">
-              <Mail className="w-3 h-3" />
+            <p className="text-[10px] text-gray-500 mt-1.5 flex items-center gap-1.5 font-sans">
+              <Mail className="w-3 h-3 text-violet-400" />
               The user must already exist in this tenant. Invite/onboard them first, then assign the role here.
             </p>
           </div>
@@ -289,7 +288,7 @@ const Settings = () => {
               <select
                 value={userForm.role}
                 onChange={(e) => handleRoleChange(e.target.value)}
-                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors"
+                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors font-bold text-xs"
               >
                 <option value="Super Admin">Super Admin</option>
                 <option value="Security Admin">Security Admin</option>
@@ -307,25 +306,27 @@ const Settings = () => {
                 readOnly
                 placeholder="e.g. read_write_gateway"
                 value={userForm.permissions}
-                className="w-full bg-slate-950 border border-white/10 rounded-lg p-2.5 text-gray-300 focus:outline-none cursor-not-allowed"
+                className="w-full bg-slate-950 border border-white/10 rounded-lg p-2.5 text-gray-300 focus:outline-none cursor-not-allowed font-mono"
               />
             </div>
           </div>
 
           <div className="flex justify-end gap-3 pt-4 border-t border-white/5">
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               type="button"
               onClick={() => setUserModalOpen(false)}
-              className="px-4 py-2 border border-white/10 text-gray-400 rounded-lg font-semibold hover:text-white hover:bg-white/5 transition-all"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
               type="submit"
-              className="px-4 py-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg font-semibold hover:opacity-90 shadow-lg shadow-violet-500/10 transition-all"
             >
               Assign Role Map
-            </button>
+            </Button>
           </div>
         </form>
       </Modal>

@@ -13,6 +13,11 @@ import {
 } from 'lucide-react';
 import Modal from '../../components/Common/Modal';
 import { useToast } from '../../components/Common/Toast';
+import { 
+  Button, 
+  GlassCard, 
+  StatusBadge 
+} from '../../components/Common/DesignSystem';
 
 const Guardrails = () => {
   const [activeTab, setActiveTab] = useState('policies');
@@ -79,14 +84,14 @@ const Guardrails = () => {
 
   const handleEditPolicy = (policy) => {
     setEditingPolicy(policy);
-      setPolicyForm({
-        name: policy.name,
-        type: policy.type,
-        rules: typeof policy.rules === 'string' ? policy.rules : JSON.stringify(policy.rules),
-        enabled: policy.enabled,
-        status: policy.status || 'published',
-        severity_level: policy.severity_level || 'MEDIUM'
-      });
+    setPolicyForm({
+      name: policy.name,
+      type: policy.type,
+      rules: typeof policy.rules === 'string' ? policy.rules : JSON.stringify(policy.rules),
+      enabled: policy.enabled,
+      status: policy.status || 'published',
+      severity_level: policy.severity_level || 'MEDIUM'
+    });
     setPolicyModalOpen(true);
   };
 
@@ -133,7 +138,6 @@ const Guardrails = () => {
     }
   };
 
-  // Redactor playground process
   const runRedactorPlayground = async () => {
     setPlaygroundEvaluating(true);
     try {
@@ -176,7 +180,7 @@ const Guardrails = () => {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-white/5 pb-px">
+      <div className="flex border-b border-white/5 space-x-2">
         <button
           onClick={() => setActiveTab('policies')}
           className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
@@ -203,9 +207,11 @@ const Guardrails = () => {
 
       {/* Policies View */}
       {activeTab === 'policies' && (
-        <div className="space-y-4 animate-fadeIn">
+        <div className="space-y-4">
           <div className="flex justify-end">
-            <button
+            <Button
+              variant="primary"
+              size="sm"
               onClick={() => {
                 setEditingPolicy(null);
                 setPolicyForm({
@@ -219,30 +225,29 @@ const Guardrails = () => {
                 setSimulationResult(null);
                 setPolicyModalOpen(true);
               }}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-sm font-semibold hover:opacity-90 shadow-lg shadow-violet-500/10 transition-all"
             >
               <Plus className="w-4 h-4" />
               Create Guardrail Policy
-            </button>
+            </Button>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {policies.length === 0 ? (
-              <div className="lg:col-span-3 glass-card p-10 text-center text-gray-400">
+              <div className="lg:col-span-3 flex flex-col items-center justify-center p-12 border border-dashed border-white/10 rounded-xl bg-slate-900/10">
                 <p className="text-sm font-semibold text-white">No policies configured yet.</p>
-                <p className="text-xs mt-1">Create tenant guardrails for PII, secrets, prompt injection, and compliance rules.</p>
+                <p className="text-xs text-gray-500 mt-1">Create tenant guardrails for PII, secrets, prompt injection, and compliance rules.</p>
               </div>
             ) : policies.map((p) => (
-              <div key={p.id} className="glass-card p-6 flex flex-col justify-between h-[210px] space-y-4">
+              <GlassCard key={p.id} className="flex flex-col justify-between h-[210px] space-y-4">
                 <div className="flex justify-between items-start">
                   <div>
                     <span className="text-xs uppercase tracking-wider text-fuchsia-400 font-mono font-bold">{p.type} Framework</span>
                     <h3 className="text-base font-bold text-white mt-0.5">{p.name}</h3>
-                    <p className="text-[10px] uppercase tracking-wider text-gray-500 mt-1">
+                    <p className="text-[10px] uppercase tracking-wider text-gray-500 mt-1 font-mono">
                       v{p.version || 1} - {p.status || 'published'} - {p.severity_level || 'MEDIUM'}
                     </p>
                   </div>
-                  <button onClick={() => handleTogglePolicy(p)} className="focus:outline-none">
+                  <button onClick={() => handleTogglePolicy(p)} className="focus:outline-none transition-transform hover:scale-105">
                     {p.enabled ? (
                       <ToggleRight className="w-6 h-6 text-emerald-500" />
                     ) : (
@@ -251,24 +256,24 @@ const Guardrails = () => {
                   </button>
                 </div>
 
-                <div className="bg-slate-900/50 p-2.5 rounded border border-white/5 text-[11px] font-mono text-gray-400 overflow-y-auto max-h-[70px]">
+                <div className="bg-slate-950/60 p-2.5 rounded border border-white/5 text-[11px] font-mono text-gray-400 overflow-y-auto max-h-[70px]">
                   {typeof p.rules === 'string' ? p.rules : JSON.stringify(p.rules)}
                 </div>
 
                 <div className="flex justify-between items-center text-xs text-gray-400 border-t border-white/5 pt-3">
-                  <span className={`flex items-center gap-1 font-semibold ${p.enabled ? 'text-emerald-400' : 'text-gray-500'}`}>
+                  <span className={`flex items-center gap-1 font-semibold ${p.enabled ? 'text-emerald-400 font-bold' : 'text-gray-500'}`}>
                     <ShieldCheck className="w-3.5 h-3.5" /> {p.enabled ? 'Active Guardrail' : 'Suspended'}
                   </span>
                   <div className="flex gap-3">
                     <button onClick={() => handleEditPolicy(p)} className="text-gray-400 hover:text-white transition-colors" title="Edit">
                       <Sliders className="w-3.5 h-3.5" />
                     </button>
-                    <button onClick={() => handleDeletePolicy(p.id)} className="text-rose-400 hover:text-rose-600 transition-colors" title="Delete">
+                    <button onClick={() => handleDeletePolicy(p.id)} className="text-rose-400 hover:text-rose-500 transition-colors" title="Delete">
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
-              </div>
+              </GlassCard>
             ))}
           </div>
         </div>
@@ -276,10 +281,10 @@ const Guardrails = () => {
 
       {/* Redaction Playground */}
       {activeTab === 'redaction' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fadeIn">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Playground inputs */}
           <div className="lg:col-span-2 space-y-4">
-            <div className="glass-card p-6 space-y-4">
+            <GlassCard hover={false} className="p-6 space-y-4">
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-violet-400" />
                 PII Redaction Playground Sandbox
@@ -289,34 +294,35 @@ const Guardrails = () => {
                 <textarea
                   value={playgroundInput}
                   onChange={(e) => setPlaygroundInput(e.target.value)}
-                  className="w-full bg-slate-900 border border-white/10 rounded-lg p-3 text-sm text-white focus:outline-none focus:border-violet-500 h-[120px] transition-colors"
+                  className="w-full bg-slate-900 border border-white/10 rounded-lg p-3 text-sm text-white focus:outline-none focus:border-violet-500 h-[120px] transition-colors resize-none"
                 ></textarea>
               </div>
 
               <div className="flex justify-end">
-                <button
+                <Button
+                  variant="primary"
+                  size="sm"
                   onClick={runRedactorPlayground}
                   disabled={playgroundEvaluating}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-sm font-semibold hover:opacity-90 transition-all disabled:opacity-50"
                 >
                   {playgroundEvaluating ? 'Evaluating...' : 'Inspect & Redact'}
                   <ArrowRight className="w-4 h-4" />
-                </button>
+                </Button>
               </div>
-            </div>
+            </GlassCard>
 
             {playgroundOutput && (
-              <div className="glass-card p-6 space-y-3 bg-violet-600/5 border-violet-500/20">
+              <GlassCard hover={false} className="p-6 space-y-3 border-violet-500/20 bg-violet-500/5">
                 <span className="text-xs font-bold uppercase tracking-wider text-violet-400">Inspected Output</span>
-                <p className="text-sm font-mono text-white p-3 bg-slate-900 rounded-lg border border-white/5 whitespace-pre-wrap">
+                <p className="text-sm font-mono text-white p-3 bg-slate-950 rounded-lg border border-white/5 whitespace-pre-wrap">
                   {playgroundOutput}
                 </p>
-              </div>
+              </GlassCard>
             )}
           </div>
 
           {/* Playground Metrics */}
-          <div className="glass-card p-6 h-fit space-y-6">
+          <GlassCard hover={false} className="p-6 h-fit space-y-6">
             <h4 className="text-sm font-bold text-white border-b border-white/5 pb-3">Playground Inspection telemetry</h4>
             
             <div className="space-y-4">
@@ -334,10 +340,10 @@ const Guardrails = () => {
               </div>
             </div>
 
-            <div className="p-3 bg-slate-900/30 border border-white/5 rounded-lg text-[11px] text-gray-400">
+            <div className="p-3 bg-slate-900/30 border border-white/5 rounded-lg text-[11px] text-gray-400 leading-relaxed font-sans">
               Supported detection categories include SSN, email, credit card, Aadhaar card, PAN card, and phone records.
             </div>
-          </div>
+          </GlassCard>
         </div>
       )}
 
@@ -362,7 +368,7 @@ const Guardrails = () => {
               <select
                 value={policyForm.type}
                 onChange={(e) => setPolicyForm({ ...policyForm, type: e.target.value })}
-                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors"
+                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors font-bold text-xs"
               >
                 <option value="PII">PII</option>
                 <option value="Secrets">Secrets</option>
@@ -382,7 +388,7 @@ const Guardrails = () => {
               <select
                 value={policyForm.enabled ? 'true' : 'false'}
                 onChange={(e) => setPolicyForm({ ...policyForm, enabled: e.target.value === 'true' })}
-                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors"
+                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors font-bold text-xs"
               >
                 <option value="true">Active</option>
                 <option value="false">Suspended</option>
@@ -396,7 +402,7 @@ const Guardrails = () => {
               <select
                 value={policyForm.status}
                 onChange={(e) => setPolicyForm({ ...policyForm, status: e.target.value })}
-                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors"
+                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors font-bold text-xs"
               >
                 <option value="draft">Draft</option>
                 <option value="published">Published</option>
@@ -407,7 +413,7 @@ const Guardrails = () => {
               <select
                 value={policyForm.severity_level}
                 onChange={(e) => setPolicyForm({ ...policyForm, severity_level: e.target.value })}
-                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors"
+                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors font-bold text-xs"
               >
                 <option value="LOW">LOW</option>
                 <option value="MEDIUM">MEDIUM</option>
@@ -424,7 +430,7 @@ const Guardrails = () => {
               placeholder='{"blocked_keywords": ["passcode"], "pii_redaction": true}'
               value={policyForm.rules}
               onChange={(e) => setPolicyForm({ ...policyForm, rules: e.target.value })}
-              className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 h-[100px] font-mono text-xs transition-colors"
+              className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 h-[100px] font-mono text-xs transition-colors resize-none"
             ></textarea>
           </div>
 
@@ -433,17 +439,18 @@ const Guardrails = () => {
             <textarea
               value={simulationText}
               onChange={(e) => setSimulationText(e.target.value)}
-              className="w-full bg-slate-950 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 h-[80px] text-xs transition-colors"
+              className="w-full bg-slate-950 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 h-[80px] text-xs transition-colors resize-none"
             />
             <div className="flex items-center justify-between gap-3">
-              <button
+              <Button
                 type="button"
+                variant="secondary"
+                size="sm"
                 onClick={runPolicySimulation}
                 disabled={simulationRunning}
-                className="px-3 py-2 border border-violet-500/40 text-violet-200 rounded-lg text-xs font-semibold hover:bg-violet-500/10 transition-all disabled:opacity-50"
               >
                 {simulationRunning ? 'Simulating...' : 'Simulate Before Publishing'}
-              </button>
+              </Button>
               {simulationResult && (
                 <span className="text-xs font-bold text-white">
                   {simulationResult.decision} - {simulationResult.risk_level}
@@ -461,19 +468,21 @@ const Guardrails = () => {
           </div>
 
           <div className="flex justify-end gap-3 pt-4 border-t border-white/5">
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               type="button"
               onClick={() => setPolicyModalOpen(false)}
-              className="px-4 py-2 border border-white/10 text-gray-400 rounded-lg font-semibold hover:text-white hover:bg-white/5 transition-all"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
               type="submit"
-              className="px-4 py-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg font-semibold hover:opacity-90 shadow-lg shadow-violet-500/10 transition-all"
             >
               {editingPolicy ? 'Save Policy' : 'Create Policy'}
-            </button>
+            </Button>
           </div>
         </form>
       </Modal>

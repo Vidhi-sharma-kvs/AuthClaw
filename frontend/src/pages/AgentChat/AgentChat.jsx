@@ -358,11 +358,11 @@ const AgentChat = () => {
     ].filter(([, value]) => value !== undefined && value !== null && value !== '');
 
     return (
-      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 border-t border-white/5 pt-3">
+      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 border-t border-slate-200/50 pt-3">
         {rows.map(([label, value]) => (
-          <div key={label} className="bg-slate-950/45 border border-white/5 rounded-lg px-2.5 py-2">
-            <p className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">{label}</p>
-            <p className="text-[11px] text-gray-200 font-mono truncate mt-0.5">{value}</p>
+          <div key={label} className="bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-2">
+            <p className="text-[9px] text-slate-500 uppercase font-bold tracking-wider font-display">{label}</p>
+            <p className="text-[11px] text-slate-700 font-mono truncate mt-0.5">{value}</p>
           </div>
         ))}
       </div>
@@ -401,37 +401,37 @@ const AgentChat = () => {
     if (msg.role === 'approval') {
       return (
         <div key={index} className="flex justify-center">
-          <div className="glass-card max-w-lg w-full p-4 bg-amber-950/30 border border-amber-500/20 text-amber-200 text-sm">
+          <div className="glass-card max-w-lg w-full p-4 bg-amber-50/50 border border-amber-500/30 text-amber-900 text-sm">
             <div className="flex gap-3">
               <div className="shrink-0 mt-0.5">
                 <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
-                  <Clock className="w-4 h-4 text-amber-400" />
+                  <Clock className="w-4 h-4 text-amber-600" />
                 </div>
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-semibold text-amber-300 text-sm">Approval Required</p>
-                <p className="text-amber-200/80 text-xs mt-1 leading-relaxed">{msg.content}</p>
+                <p className="font-bold text-amber-800 text-sm font-display">Approval Required</p>
+                <p className="text-amber-800/90 text-xs mt-1 leading-relaxed">{msg.content}</p>
                 {msg.riskLevel && (
                   <div className="mt-2 flex items-center gap-2">
-                    <span className="text-[10px] text-amber-400/70 uppercase tracking-wider">Risk Level:</span>
-                    <span className="text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded">{msg.riskLevel}</span>
+                    <span className="text-[10px] text-amber-700/70 uppercase tracking-wider font-display">Risk Level:</span>
+                    <span className="text-xs font-bold text-amber-700 bg-amber-500/15 px-2 py-0.5 rounded">{msg.riskLevel}</span>
                   </div>
                 )}
                 {msg.approvalId && (
-                  <div className="mt-3 flex items-center gap-2 bg-slate-950/40 p-2 border border-white/5 rounded text-xs font-mono text-gray-400">
-                    <span className="text-gray-500">ID:</span>
+                  <div className="mt-3 flex items-center gap-2 bg-white/70 p-2 border border-amber-200 rounded text-xs font-mono text-amber-800">
+                    <span className="text-amber-600/70">ID:</span>
                     <span className="truncate">{msg.approvalId}</span>
                   </div>
                 )}
                 {renderGatewayMeta(msg.gatewayMeta)}
                 <div className="flex items-center gap-4 mt-3 pt-3 border-t border-amber-500/15">
-                  <p className="text-xs text-amber-300/60 italic flex-1">
+                  <p className="text-xs text-amber-700/60 italic flex-1">
                     Visit the Approval Center to review this request.
                   </p>
                   {hasTrace && (
                     <button
                       onClick={() => setActiveTrace(msg.trace)}
-                      className="flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 font-semibold transition"
+                      className="flex items-center gap-1 text-xs text-amber-700 hover:text-amber-800 font-semibold transition"
                     >
                       <Activity className="w-3.5 h-3.5" /> View Trace
                     </button>
@@ -449,22 +449,22 @@ const AgentChat = () => {
       const isApproval = msg.approvalId || (msg.content && msg.content.includes('manual approval'));
       return (
         <div key={index} className="flex justify-center">
-          <div className={`glass-card max-w-lg p-4 text-sm flex gap-3.5 ${isApproval ? 'bg-amber-950/30 border-amber-500/20 text-amber-200' : 'bg-slate-900/50 border-white/10 text-gray-300'}`}>
-            <AlertTriangle className={`w-5 h-5 shrink-0 ${isApproval ? 'text-amber-400' : 'text-gray-400'}`} />
+          <div className={`glass-card max-w-lg p-4 text-sm flex gap-3.5 ${isApproval ? 'bg-amber-50/50 border border-amber-500/30 text-amber-900' : 'bg-slate-100/80 border border-slate-200 text-slate-700'}`}>
+            <AlertTriangle className={`w-5 h-5 shrink-0 ${isApproval ? 'text-amber-600' : 'text-slate-500'}`} />
             <div className="flex-1 min-w-0">
-              <p className="font-semibold">{msg.content}</p>
+              <p className="font-bold">{msg.content}</p>
               {msg.riskLevel && (
                 <p className="text-xs mt-1 opacity-80">Risk Level: <span className="font-bold">{msg.riskLevel}</span></p>
               )}
               {msg.approvalId && (
-                <div className="mt-3 flex items-center gap-2 bg-slate-950/40 p-2 border border-white/5 rounded text-xs font-mono">
+                <div className="mt-3 flex items-center gap-2 bg-white/70 p-2 border border-slate-200 rounded text-xs font-mono">
                   <span>Approval ID: {msg.approvalId}</span>
                 </div>
               )}
               {hasTrace && (
                 <button
                   onClick={() => setActiveTrace(msg.trace)}
-                  className="mt-3 flex items-center gap-1 text-xs text-violet-400 hover:text-violet-300 font-semibold transition"
+                  className="mt-3 flex items-center gap-1 text-xs text-[#6D28D9] hover:text-[#7C3AED] font-semibold transition"
                 >
                   <Activity className="w-3.5 h-3.5" /> View Trace Logs
                 </button>
@@ -483,18 +483,18 @@ const AgentChat = () => {
       };
       return (
         <div key={index} className="flex justify-center">
-          <div className="glass-card max-w-lg w-full p-4 bg-red-950/30 border border-red-500/20 text-red-200 text-sm">
+          <div className="glass-card max-w-lg w-full p-4 bg-rose-50/50 border border-rose-500/30 text-rose-900 text-sm">
             <div className="flex gap-3">
               <div className="shrink-0 mt-0.5">
-                <div className="w-8 h-8 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-center">
-                  <ShieldAlert className="w-4 h-4 text-red-400" />
+                <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center">
+                  <ShieldAlert className="w-4 h-4 text-rose-600" />
                 </div>
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-semibold text-red-400 text-sm">Request Blocked</p>
-                <p className="text-xs text-red-300/80 mt-1">Reason: <span className="font-bold text-red-200">Policy Violation</span></p>
-                <p className="text-xs text-red-300/80 mt-0.5">Category: <span className="font-bold text-red-200">{formatCategory(msg.category)}</span></p>
-                <p className="text-xs text-red-300/60 mt-3 border-t border-red-500/10 pt-2 leading-relaxed">
+                <p className="font-bold text-rose-700 text-sm font-display">Request Blocked</p>
+                <p className="text-xs text-rose-800 mt-1">Reason: <span className="font-bold text-rose-900">Policy Violation</span></p>
+                <p className="text-xs text-rose-800 mt-0.5">Category: <span className="font-bold text-rose-900">{formatCategory(msg.category)}</span></p>
+                <p className="text-xs text-rose-700/60 mt-3 border-t border-rose-500/15 pt-2 leading-relaxed font-sans">
                   This request violated AuthClaw security policies and was prevented from reaching the model provider.
                 </p>
                 {renderGatewayMeta(msg.gatewayMeta)}
@@ -502,7 +502,7 @@ const AgentChat = () => {
                   <div className="mt-3 flex justify-end">
                     <button
                       onClick={() => setActiveTrace(msg.trace)}
-                      className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 font-semibold transition"
+                      className="flex items-center gap-1 text-xs text-rose-600 hover:text-rose-700 font-semibold transition"
                     >
                       <Activity className="w-3.5 h-3.5" /> View Policy Block Trace
                     </button>
@@ -519,8 +519,8 @@ const AgentChat = () => {
     if (msg.role === 'error') {
       return (
         <div key={index} className="flex justify-center">
-          <div className="glass-card max-w-lg p-4 bg-slate-900/60 border border-white/10 text-gray-300 text-sm flex gap-3">
-            <AlertTriangle className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" />
+          <div className="glass-card max-w-lg p-4 bg-rose-50 border border-rose-200 text-rose-700 text-sm flex gap-3">
+            <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
             <p>{msg.content}</p>
           </div>
         </div>
@@ -533,25 +533,25 @@ const AgentChat = () => {
       const findings = result.findings || result.triggered_policies || [];
       return (
         <div key={index} className="flex gap-4 justify-start">
-          <div className="w-8 h-8 rounded-lg bg-violet-600/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shrink-0 shadow-lg">
+          <div className="w-8 h-8 rounded-lg bg-[#6D28D9]/10 border border-[#6D28D9]/20 flex items-center justify-center text-[#6D28D9] shrink-0 shadow-sm">
             <FileText className="w-4 h-4" />
           </div>
-          <div className="glass-card text-gray-300 rounded-xl rounded-tl-none p-4 max-w-2xl text-sm leading-relaxed shadow-lg">
+          <div className="glass-card text-slate-700 rounded-xl rounded-tl-none p-4 max-w-2xl text-sm leading-relaxed shadow-sm">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <p className="font-semibold text-white truncate">{result.filename || 'Document inspected'}</p>
-                <p className="text-xs text-gray-500 mt-1">
-                  Status: <span className="text-gray-300 font-semibold">{result.status || 'processed'}</span>
-                  <span className="mx-2 text-gray-700">|</span>
-                  Redacted fields: <span className="text-violet-300 font-semibold">{result.redacted_count ?? 0}</span>
-                  <span className="mx-2 text-gray-700">|</span>
-                  OCR: <span className="text-gray-300 font-semibold">{result.ocr_status || 'not_required'}</span>
+                <p className="font-bold text-slate-900 truncate font-display">{result.filename || 'Document inspected'}</p>
+                <p className="text-xs text-slate-500 mt-1">
+                  Status: <span className="text-slate-800 font-semibold">{result.status || 'processed'}</span>
+                  <span className="mx-2 text-slate-300">|</span>
+                  Redacted fields: <span className="text-[#6D28D9] font-semibold">{result.redacted_count ?? 0}</span>
+                  <span className="mx-2 text-slate-300">|</span>
+                  OCR: <span className="text-slate-800 font-semibold">{result.ocr_status || 'not_required'}</span>
                 </p>
               </div>
               <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${
                 result.decision === 'REDACT'
-                  ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
-                  : 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'
+                  ? 'bg-amber-500/10 text-amber-700 border border-amber-500/20'
+                  : 'bg-emerald-500/10 text-emerald-700 border border-emerald-500/20'
               }`}>
                 {result.decision || 'ALLOW'}
               </span>
@@ -560,54 +560,54 @@ const AgentChat = () => {
             {renderGatewayMeta(msg.gatewayMeta)}
 
             <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <div className="bg-slate-950/45 border border-white/5 rounded-lg px-2.5 py-2">
-                <p className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">Security Agent</p>
-                <p className="text-[11px] text-emerald-300 font-semibold mt-0.5">
+              <div className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2">
+                <p className="text-[9px] text-slate-500 uppercase font-bold tracking-wider font-display">Security Agent</p>
+                <p className="text-[11px] text-emerald-600 font-bold mt-0.5 font-display">
                   Scanned {findings.length} field{findings.length === 1 ? '' : 's'}
                 </p>
               </div>
-              <div className="bg-slate-950/45 border border-white/5 rounded-lg px-2.5 py-2">
-                <p className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">Policy Agent</p>
-                <p className="text-[11px] text-violet-300 font-semibold mt-0.5">{result.decision || 'ALLOW'}</p>
+              <div className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2">
+                <p className="text-[9px] text-slate-500 uppercase font-bold tracking-wider font-display">Policy Agent</p>
+                <p className="text-[11px] text-[#6D28D9] font-bold mt-0.5 font-display">{result.decision || 'ALLOW'}</p>
               </div>
-              <div className="bg-slate-950/45 border border-white/5 rounded-lg px-2.5 py-2">
-                <p className="text-[9px] text-gray-500 uppercase font-bold tracking-wider">Audit Agent</p>
-                <p className="text-[11px] text-gray-300 font-mono truncate mt-0.5">{result.request_id || 'recorded'}</p>
+              <div className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2">
+                <p className="text-[9px] text-slate-500 uppercase font-bold tracking-wider font-display">Audit Agent</p>
+                <p className="text-[11px] text-slate-700 font-mono truncate mt-0.5">{result.request_id || 'recorded'}</p>
               </div>
             </div>
 
             {findings.length > 0 && (
-              <div className="mt-3 border border-white/5 rounded-lg bg-slate-950/40 overflow-hidden">
-                <div className="px-3 py-2 border-b border-white/5 text-[10px] font-bold uppercase tracking-wider text-violet-300">
+              <div className="mt-3 border border-slate-200 rounded-lg bg-slate-50/50 overflow-hidden">
+                <div className="px-3 py-2 border-b border-slate-200 text-[10px] font-bold uppercase tracking-wider text-[#6D28D9] font-display">
                   Findings Report
                 </div>
-                <div className="max-h-48 overflow-y-auto divide-y divide-white/5">
+                <div className="max-h-48 overflow-y-auto divide-y divide-slate-200">
                   {findings.slice(0, 12).map((finding, idx) => (
                     <div key={`${finding.token_id || finding.value_hash || idx}`} className="grid grid-cols-4 gap-2 px-3 py-2 text-[11px]">
-                      <span className="text-gray-200 font-semibold">{finding.field_type || finding.matched_pattern}</span>
-                      <span className="text-gray-400">{finding.location || `page ${finding.page || 1}`}</span>
-                      <span className="text-gray-400">{Math.round((finding.confidence || 0.8) * 100)}%</span>
-                      <span className="text-violet-300 font-semibold">{finding.action_taken || finding.action || 'redact'}</span>
+                      <span className="text-slate-800 font-semibold">{finding.field_type || finding.matched_pattern}</span>
+                      <span className="text-slate-500">{finding.location || `page ${finding.page || 1}`}</span>
+                      <span className="text-slate-500">{Math.round((finding.confidence || 0.8) * 100)}%</span>
+                      <span className="text-[#6D28D9] font-semibold">{finding.action_taken || finding.action || 'redact'}</span>
                     </div>
                   ))}
                 </div>
               </div>
             )}
 
-            <div className="mt-3 border border-white/5 rounded-lg bg-slate-950/50 overflow-hidden">
-              <div className="px-3 py-2 border-b border-white/5 text-[10px] font-bold uppercase tracking-wider text-violet-300">
+            <div className="mt-3 border border-[#E6E9F0] rounded-lg bg-[#0B1F3F] overflow-hidden">
+              <div className="px-3 py-2 border-b border-white/5 text-[10px] font-bold uppercase tracking-wider text-violet-300 font-display">
                 Inspected Output
               </div>
-              <pre className="p-3 text-xs text-gray-300 whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
+              <pre className="p-3 text-xs text-[#E7EDF9] whitespace-pre-wrap break-words max-h-64 overflow-y-auto font-mono">
                 {redactedPreview || 'No redacted text returned.'}
               </pre>
             </div>
 
-            <div className="mt-3 pt-3 border-t border-white/5 flex flex-wrap justify-end gap-2">
+            <div className="mt-3 pt-3 border-t border-slate-200 flex flex-wrap justify-end gap-2">
               {result.redacted_pdf_base64 && (
                 <button
                   onClick={() => downloadBase64File(result.redacted_pdf_base64, `${result.request_id || 'authclaw'}-redacted.pdf`, 'application/pdf')}
-                  className="flex items-center gap-1.5 text-xs text-emerald-300 hover:text-emerald-200 font-semibold transition"
+                  className="flex items-center gap-1.5 text-xs text-emerald-600 hover:text-emerald-700 font-semibold transition"
                 >
                   <Download className="w-3.5 h-3.5" /> Redacted PDF
                 </button>
@@ -615,7 +615,7 @@ const AgentChat = () => {
               {result.findings_report && (
                 <button
                   onClick={() => downloadJsonFile(result.findings_report, `${result.request_id || 'authclaw'}-findings.json`)}
-                  className="flex items-center gap-1.5 text-xs text-sky-300 hover:text-sky-200 font-semibold transition"
+                  className="flex items-center gap-1.5 text-xs text-sky-600 hover:text-sky-700 font-semibold transition"
                 >
                   <Download className="w-3.5 h-3.5" /> JSON Report
                 </button>
@@ -623,7 +623,7 @@ const AgentChat = () => {
               {hasTrace && (
                 <button
                   onClick={() => setActiveTrace(msg.trace)}
-                  className="flex items-center gap-1 text-xs text-violet-400 hover:text-violet-300 font-semibold transition"
+                  className="flex items-center gap-1 text-xs text-[#6D28D9] hover:text-[#7C3AED] font-semibold transition"
                 >
                   <Activity className="w-3.5 h-3.5" /> View Document Trace
                 </button>
@@ -639,22 +639,22 @@ const AgentChat = () => {
     return (
       <div key={index} className={`flex gap-4 ${isUser ? 'justify-end' : 'justify-start'}`}>
         {!isUser && (
-          <div className="w-8 h-8 rounded-lg bg-violet-600/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shrink-0 shadow-lg">
+          <div className="w-8 h-8 rounded-lg bg-[#6D28D9]/10 border border-[#6D28D9]/20 flex items-center justify-center text-[#6D28D9] shrink-0 shadow-sm">
             <Bot className="w-4 h-4" />
           </div>
         )}
-        <div className={`p-4 rounded-xl max-w-xl text-sm leading-relaxed shadow-lg flex flex-col ${
+        <div className={`p-4 rounded-xl max-w-xl text-sm leading-relaxed shadow-sm flex flex-col ${
           isUser
-            ? 'bg-gradient-to-tr from-violet-600 to-fuchsia-600 text-white rounded-tr-none'
-            : 'glass-card text-gray-300 rounded-tl-none'
+            ? 'bg-[#6D28D9] text-white rounded-tr-none'
+            : 'glass-card text-slate-700 rounded-tl-none font-medium'
         }`}>
           <p className="whitespace-pre-wrap">{msg.content}</p>
           {!isUser && renderGatewayMeta(msg.gatewayMeta)}
           {!isUser && hasTrace && (
-            <div className="mt-2.5 pt-2.5 border-t border-white/5 flex justify-end">
+            <div className="mt-2.5 pt-2.5 border-t border-slate-200/50 flex justify-end">
               <button
                 onClick={() => setActiveTrace(msg.trace)}
-                className="flex items-center gap-1 text-xs text-violet-400 hover:text-violet-300 font-semibold transition"
+                className="flex items-center gap-1 text-xs text-[#6D28D9] hover:text-[#7C3AED] font-semibold transition"
               >
                 <Activity className="w-3.5 h-3.5" /> View Security Trace
               </button>
@@ -662,7 +662,7 @@ const AgentChat = () => {
           )}
         </div>
         {isUser && (
-          <div className="w-8 h-8 rounded-lg bg-fuchsia-600/10 border border-fuchsia-500/20 flex items-center justify-center text-fuchsia-400 shrink-0 shadow-lg">
+          <div className="w-8 h-8 rounded-lg bg-[#6D28D9]/10 border border-[#6D28D9]/20 flex items-center justify-center text-[#6D28D9] shrink-0 shadow-sm">
             <User className="w-4 h-4" />
           </div>
         )}
@@ -687,35 +687,35 @@ const AgentChat = () => {
   const guardEvents = activeTrace?.filter(e => e.agent?.toLowerCase().includes('guard')) || [];
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] rounded-xl border border-white/5 bg-slate-950/45 overflow-hidden relative">
+    <div className="flex h-[calc(100vh-8rem)] rounded-xl border border-[#E6E9F0] bg-white/70 overflow-hidden relative font-sans shadow-sm">
       {/* Sidebar for Sessions */}
-      <div className="w-64 border-r border-white/5 bg-slate-950/20 flex flex-col">
-        <div className="p-4 border-b border-white/5 space-y-2">
+      <div className="w-64 border-r border-[#E6E9F0] bg-slate-50/50 flex flex-col shrink-0">
+        <div className="p-4 border-b border-[#E6E9F0] space-y-2">
           <button
             onClick={handleNewSession}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 rounded-lg text-sm font-semibold hover:opacity-90 transition shadow-lg shadow-violet-500/10"
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#6D28D9] hover:bg-[#7C3AED] text-white rounded-lg text-xs font-semibold hover:opacity-90 transition shadow-md shadow-violet-600/10 font-display"
           >
             <Plus className="w-4 h-4" />
-            New Gateway Session
+            New Session
           </button>
           <button
             onClick={handleDeleteAllSessions}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-950/45 border border-red-500/20 text-red-200 rounded-lg text-xs font-semibold hover:bg-red-900/30 transition"
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-rose-50 border border-rose-200 text-rose-600 rounded-lg text-[10px] font-semibold hover:bg-rose-100/50 transition font-display"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            Clear Gateway History
+            Clear History
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          <span className="text-xs text-gray-500 font-bold uppercase tracking-wider block mb-2">Gateway Sessions</span>
+          <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block mb-2 font-display">Gateway Sessions</span>
           {sessionsList.map((id) => (
             <div
               key={id}
-              className={`group flex items-center justify-between px-3 py-1.5 rounded-lg border transition ${
+              className={`group flex items-center justify-between px-3 py-2 rounded-lg border transition ${
                 id === sessionId
-                  ? 'bg-violet-600/10 border-violet-500/20 text-white font-medium'
-                  : 'text-gray-400 hover:bg-white/5 hover:text-white border-transparent'
+                  ? 'bg-[#6D28D9]/10 border-[#6D28D9]/20 text-[#6D28D9] font-bold shadow-sm'
+                  : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800 border-transparent'
               }`}
             >
               <button
@@ -726,7 +726,7 @@ const AgentChat = () => {
               </button>
               <button
                 onClick={(e) => handleDeleteSession(e, id)}
-                className="opacity-0 group-hover:opacity-100 hover:text-red-400 p-1 rounded transition"
+                className="opacity-0 group-hover:opacity-100 hover:text-rose-600 p-1 rounded transition"
                 title="Delete Session"
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -737,18 +737,18 @@ const AgentChat = () => {
       </div>
 
       {/* Main Chat Interface */}
-      <div className="flex-1 flex flex-col bg-slate-950/10 min-w-0">
+      <div className="flex-1 flex flex-col bg-slate-50/20 min-w-0">
         {/* Chat Header */}
-        <div className="h-14 border-b border-white/5 bg-slate-950/45 px-6 flex items-center justify-between">
-          <span className="text-sm font-medium text-white flex items-center gap-2">
+        <div className="h-14 border-b border-[#E6E9F0] bg-white/70 px-6 flex items-center justify-between">
+          <span className="text-sm font-bold text-[#0E1726] flex items-center gap-2 font-display">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
             Gateway Chat Console
           </span>
           <div className="flex items-center gap-3">
-            <span className="px-3 py-1.5 rounded-lg bg-violet-600/15 border border-violet-500/25 text-[11px] font-bold text-violet-200">
+            <span className="px-3 py-1 rounded bg-[#6D28D9]/10 border border-[#6D28D9]/20 text-[10px] font-bold text-[#6D28D9] uppercase tracking-wider font-mono">
               Gateway Pipeline
             </span>
-            <span className="text-xs font-mono text-gray-500">ID: {sessionId}</span>
+            <span className="text-[11px] font-mono text-slate-400">ID: {sessionId}</span>
           </div>
         </div>
 
@@ -758,10 +758,10 @@ const AgentChat = () => {
 
           {loading && (
             <div className="flex gap-4 justify-start">
-              <div className="w-8 h-8 rounded-lg bg-violet-600/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shrink-0 animate-spin">
+              <div className="w-8 h-8 rounded-lg bg-[#6D28D9]/10 border border-[#6D28D9]/20 flex items-center justify-center text-[#6D28D9] shrink-0 animate-spin">
                 <Loader className="w-4 h-4" />
               </div>
-              <div className="p-4 glass-card text-gray-400 rounded-xl rounded-tl-none flex items-center gap-2 text-xs">
+              <div className="p-4 glass-card text-slate-600 rounded-xl rounded-tl-none flex items-center gap-2 text-xs">
                 <span>Running Security Agent, Policy Agent, and Audit Agent checks...</span>
               </div>
             </div>
@@ -771,7 +771,7 @@ const AgentChat = () => {
         </div>
 
         {/* Input Form */}
-        <form onSubmit={handleSend} className="p-4 border-t border-white/5 bg-slate-950/45">
+        <form onSubmit={handleSend} className="p-4 border-t border-[#E6E9F0] bg-white/70">
           <div className="flex gap-3">
             <input
               ref={fileInputRef}
@@ -785,7 +785,7 @@ const AgentChat = () => {
               onClick={() => fileInputRef.current?.click()}
               disabled={loading}
               title="Upload document for gateway redaction"
-              className="px-4 py-3 glass-card hover:border-violet-500/40 rounded-lg text-violet-300 font-semibold transition disabled:opacity-50 flex items-center justify-center"
+              className="px-4 py-3 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg text-slate-600 font-semibold transition disabled:opacity-50 flex items-center justify-center"
             >
               <FileText className="w-4 h-4" />
             </button>
@@ -800,7 +800,7 @@ const AgentChat = () => {
             <button
               type="submit"
               disabled={loading || !input.trim()}
-              className="px-5 py-3 bg-gradient-to-tr from-violet-600 to-fuchsia-600 hover:opacity-90 rounded-lg text-white font-semibold transition disabled:opacity-50 flex items-center justify-center"
+              className="px-5 py-3 bg-[#6D28D9] hover:bg-[#7C3AED] rounded-lg text-white font-semibold transition disabled:opacity-50 flex items-center justify-center"
             >
               <Send className="w-4 h-4" />
             </button>
@@ -810,16 +810,16 @@ const AgentChat = () => {
 
       {/* Multi-Agent Trace Drawer */}
       {activeTrace && (
-        <div className="w-96 border-l border-white/5 bg-slate-950/95 flex flex-col h-full z-20 absolute right-0 top-0 shadow-2xl animate-slideLeft">
+        <div className="w-96 border-l border-[#E6E9F0] bg-white flex flex-col h-full z-20 absolute right-0 top-0 shadow-xl animate-slideLeft">
           {/* Header */}
-          <div className="h-14 px-5 border-b border-white/5 flex items-center justify-between shrink-0">
+          <div className="h-14 px-5 border-b border-[#E6E9F0] flex items-center justify-between shrink-0 bg-slate-50">
             <div className="flex items-center gap-2">
-              <Activity className="w-4 h-4 text-violet-400" />
-              <span className="text-sm font-bold text-white">Security execution Trace</span>
+              <Activity className="w-4 h-4 text-[#6D28D9]" />
+              <span className="text-xs font-bold text-[#0E1726] uppercase tracking-wider font-display">Security execution Trace</span>
             </div>
             <button 
               onClick={() => setActiveTrace(null)} 
-              className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition"
+              className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition"
             >
               <X className="w-4 h-4" />
             </button>
@@ -829,50 +829,50 @@ const AgentChat = () => {
           <div className="flex-1 overflow-y-auto p-5 space-y-6 scrollbar-thin">
             
             {/* Sequence flow illustration */}
-            <div className="flex items-center justify-between p-2.5 bg-slate-900/60 rounded-lg border border-white/5 text-[8.5px] text-gray-400 font-semibold tracking-wider uppercase mb-2">
+            <div className="flex items-center justify-between p-2.5 bg-slate-50 rounded-lg border border-[#E6E9F0] text-[8.5px] text-slate-500 font-semibold tracking-wider uppercase mb-2 font-mono">
               <span>Security</span>
-              <ArrowRight className="w-2.5 h-2.5 text-violet-500" />
+              <ArrowRight className="w-2.5 h-2.5 text-[#6D28D9]" />
               <span>Policy</span>
-              <ArrowRight className="w-2.5 h-2.5 text-violet-500" />
+              <ArrowRight className="w-2.5 h-2.5 text-[#6D28D9]" />
               <span>Audit</span>
             </div>
 
             {/* Timeline */}
-            <div className="relative pl-6 border-l border-dashed border-white/10 space-y-6">
+            <div className="relative pl-6 border-l border-dashed border-slate-200 space-y-6">
               
               {/* Agent 1: Security */}
               <div className="relative">
                 <div className={`absolute -left-[31px] top-0 w-4 h-4 rounded-full flex items-center justify-center border ${
                   securityEvents.length > 0 
-                    ? 'bg-emerald-500/10 border-emerald-500 text-emerald-400' 
-                    : 'bg-slate-900 border-white/15 text-gray-500'
+                    ? 'bg-emerald-500/10 border-emerald-500 text-emerald-600' 
+                    : 'bg-slate-100 border-slate-300 text-slate-400'
                 }`}>
                   <div className="w-1.5 h-1.5 rounded-full bg-current" />
                 </div>
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
-                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">1. Security Agent</h4>
+                    <h4 className="text-xs font-bold text-[#0E1726] uppercase tracking-wider font-display">1. Security Agent</h4>
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${
-                      securityEvents.length > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-900 text-gray-500'
+                      securityEvents.length > 0 ? 'bg-emerald-500/10 text-emerald-700' : 'bg-slate-100 text-slate-500'
                     }`}>
                       {securityEvents.length > 0 ? 'Executed' : 'Skipped'}
                     </span>
                   </div>
-                  <p className="text-[10px] text-gray-500 leading-relaxed">
+                  <p className="text-[10px] text-slate-500 leading-relaxed font-sans">
                     Validates input, detects prompt injection, secrets, PII, and assigns request risk.
                   </p>
 
                   <div className="space-y-1.5">
                     {securityEvents.map((e, idx) => (
-                      <div key={idx} className="bg-slate-900/80 p-2.5 rounded border border-white/5 text-xs font-mono">
-                        <div className="text-[10px] text-violet-400 font-bold mb-1">{e.event}</div>
-                        <pre className="text-[10px] text-gray-400 whitespace-pre-wrap break-all leading-normal">
+                      <div key={idx} className="bg-[#0B1F3F] p-2.5 rounded border border-white/5 text-xs font-mono text-[#E7EDF9]">
+                        <div className="text-[10px] text-violet-300 font-bold mb-1">{e.event}</div>
+                        <pre className="text-[10px] text-[#8FA0C4] whitespace-pre-wrap break-all leading-normal">
                           {renderDetails(e.details)}
                         </pre>
                       </div>
                     ))}
                     {securityEvents.length === 0 && (
-                      <div className="text-xs text-gray-600 italic">No events recorded.</div>
+                      <div className="text-xs text-slate-400 italic">No events recorded.</div>
                     )}
                   </div>
                 </div>
@@ -882,43 +882,43 @@ const AgentChat = () => {
               <div className="relative">
                 <div className={`absolute -left-[31px] top-0 w-4 h-4 rounded-full flex items-center justify-center border ${
                   policyEvents.length > 0 
-                    ? (activeTrace.some(e => e.event?.toLowerCase().includes('violation') || e.event?.toLowerCase().includes('blocked') || e.event?.toLowerCase().includes('leak')) ? 'bg-red-500/10 border-red-500 text-red-400' : 'bg-emerald-500/10 border-emerald-500 text-emerald-400')
-                    : 'bg-slate-900 border-white/15 text-gray-500'
+                    ? (activeTrace.some(e => e.event?.toLowerCase().includes('violation') || e.event?.toLowerCase().includes('blocked') || e.event?.toLowerCase().includes('leak')) ? 'bg-red-500/10 border-red-500 text-red-600' : 'bg-emerald-500/10 border-emerald-500 text-emerald-600')
+                    : 'bg-slate-100 border-slate-300 text-slate-400'
                 }`}>
                   <div className="w-1.5 h-1.5 rounded-full bg-current" />
                 </div>
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
-                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">2. Policy Agent</h4>
+                    <h4 className="text-xs font-bold text-[#0E1726] uppercase tracking-wider font-display">2. Policy Agent</h4>
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${
-                      policyEvents.length > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-900 text-gray-500'
+                      policyEvents.length > 0 ? 'bg-emerald-500/10 text-emerald-700' : 'bg-slate-100 text-slate-500'
                     }`}>
                       {policyEvents.length > 0 ? 'Executed' : 'Skipped'}
                     </span>
                   </div>
-                  <p className="text-[10px] text-gray-500 leading-relaxed">
+                  <p className="text-[10px] text-slate-500 leading-relaxed font-sans">
                     Evaluates prompt safety, scans for PII/PHI leak vectors, redacts inputs statefully, and checks custom tenant policies.
                   </p>
 
                   <div className="space-y-1.5">
                     {policyEvents.map((e, idx) => (
-                      <div key={idx} className={`p-2.5 rounded border text-xs font-mono ${
+                      <div key={idx} className={`p-2.5 rounded border text-xs font-mono text-[#E7EDF9] ${
                         e.event?.toLowerCase().includes('block') || e.event?.toLowerCase().includes('violation') || e.event?.toLowerCase().includes('leak')
-                          ? 'bg-red-950/20 border-red-500/20'
-                          : 'bg-slate-900/80 border-white/5'
+                          ? 'bg-red-950/60 border-red-500/20'
+                          : 'bg-[#0B1F3F]'
                       }`}>
                         <div className={`text-[10px] font-bold mb-1 ${
                           e.event?.toLowerCase().includes('block') || e.event?.toLowerCase().includes('violation') || e.event?.toLowerCase().includes('leak')
                             ? 'text-red-400'
-                            : 'text-violet-400'
+                            : 'text-violet-300'
                         }`}>{e.event}</div>
-                        <pre className="text-[10px] text-gray-400 whitespace-pre-wrap break-all leading-normal">
+                        <pre className="text-[10px] text-[#8FA0C4] whitespace-pre-wrap break-all leading-normal">
                           {renderDetails(e.details)}
                         </pre>
                       </div>
                     ))}
                     {policyEvents.length === 0 && (
-                      <div className="text-xs text-gray-600 italic">No events recorded.</div>
+                      <div className="text-xs text-slate-400 italic">No events recorded.</div>
                     )}
                   </div>
                 </div>
@@ -928,117 +928,35 @@ const AgentChat = () => {
               <div className="relative">
                 <div className={`absolute -left-[31px] top-0 w-4 h-4 rounded-full flex items-center justify-center border ${
                   registrarEvents.length > 0 
-                    ? 'bg-emerald-500/10 border-emerald-500 text-emerald-400' 
-                    : 'bg-slate-900 border-white/15 text-gray-500'
+                    ? 'bg-emerald-500/10 border-emerald-500 text-emerald-600' 
+                    : 'bg-slate-100 border-slate-300 text-slate-400'
                 }`}>
                   <div className="w-1.5 h-1.5 rounded-full bg-current" />
                 </div>
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
-                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">3. Audit Agent</h4>
+                    <h4 className="text-xs font-bold text-[#0E1726] uppercase tracking-wider font-display">3. Audit Agent</h4>
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${
-                      registrarEvents.length > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-900 text-gray-500'
+                      registrarEvents.length > 0 ? 'bg-emerald-500/10 text-emerald-700' : 'bg-slate-100 text-slate-500'
                     }`}>
                       {registrarEvents.length > 0 ? 'Executed' : 'Skipped'}
                     </span>
                   </div>
-                  <p className="text-[10px] text-gray-500 leading-relaxed">
+                  <p className="text-[10px] text-slate-500 leading-relaxed font-sans">
                     Records immutable request, response, decision, and compliance evidence for this tenant.
                   </p>
 
                   <div className="space-y-1.5">
                     {registrarEvents.map((e, idx) => (
-                      <div key={idx} className="bg-slate-900/80 p-2.5 rounded border border-white/5 text-xs font-mono">
-                        <div className="text-[10px] text-violet-400 font-bold mb-1">{e.event}</div>
-                        <pre className="text-[10px] text-gray-400 whitespace-pre-wrap break-all leading-normal">
+                      <div key={idx} className="bg-[#0B1F3F] p-2.5 rounded border border-white/5 text-xs font-mono text-[#E7EDF9]">
+                        <div className="text-[10px] text-violet-300 font-bold mb-1">{e.event}</div>
+                        <pre className="text-[10px] text-[#8FA0C4] whitespace-pre-wrap break-all leading-normal">
                           {renderDetails(e.details)}
                         </pre>
                       </div>
                     ))}
                     {registrarEvents.length === 0 && (
-                      <div className="text-xs text-gray-600 italic">No events recorded.</div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Agent 4: LLM Router */}
-              <div className="relative hidden">
-                <div className={`absolute -left-[31px] top-0 w-4 h-4 rounded-full flex items-center justify-center border ${
-                  routerEvents.length > 0 
-                    ? 'bg-emerald-500/10 border-emerald-500 text-emerald-400' 
-                    : 'bg-slate-900 border-white/15 text-gray-500'
-                }`}>
-                  <div className="w-1.5 h-1.5 rounded-full bg-current" />
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">4. LLM Router</h4>
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${
-                      routerEvents.length > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-900 text-gray-500'
-                    }`}>
-                      {routerEvents.length > 0 ? 'Executed' : 'Skipped'}
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-gray-500 leading-relaxed">
-                    Dynamically routes compliant queries to selected models (OpenAI, Gemini, Claude) with retry failover logic.
-                  </p>
-
-                  <div className="space-y-1.5">
-                    {routerEvents.map((e, idx) => (
-                      <div key={idx} className="bg-slate-900/80 p-2.5 rounded border border-white/5 text-xs font-mono">
-                        <div className="text-[10px] text-violet-400 font-bold mb-1">{e.event}</div>
-                        <pre className="text-[10px] text-gray-400 whitespace-pre-wrap break-all leading-normal">
-                          {renderDetails(e.details)}
-                        </pre>
-                      </div>
-                    ))}
-                    {routerEvents.length === 0 && (
-                      <div className="text-xs text-gray-600 italic">No events recorded.</div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Agent 5: Response Guard */}
-              <div className="relative hidden">
-                <div className={`absolute -left-[31px] top-0 w-4 h-4 rounded-full flex items-center justify-center border ${
-                  guardEvents.length > 0 
-                    ? (activeTrace.some(e => e.event?.toLowerCase().includes('redact')) ? 'bg-amber-500/10 border-amber-500 text-amber-400' : 'bg-emerald-500/10 border-emerald-500 text-emerald-400')
-                    : 'bg-slate-900 border-white/15 text-gray-500'
-                }`}>
-                  <div className="w-1.5 h-1.5 rounded-full bg-current" />
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">5. Response Guard</h4>
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${
-                      guardEvents.length > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-900 text-gray-500'
-                    }`}>
-                      {guardEvents.length > 0 ? 'Executed' : 'Skipped'}
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-gray-500 leading-relaxed">
-                    Filters model outputs for security leaks, redacts accidental PII disclosure, and audits response payload content.
-                  </p>
-
-                  <div className="space-y-1.5">
-                    {guardEvents.map((e, idx) => (
-                      <div key={idx} className={`p-2.5 rounded border text-xs font-mono ${
-                        e.event?.toLowerCase().includes('redact')
-                          ? 'bg-amber-950/20 border-amber-500/20'
-                          : 'bg-slate-900/80 border-white/5'
-                      }`}>
-                        <div className={`text-[10px] font-bold mb-1 ${
-                          e.event?.toLowerCase().includes('redact') ? 'text-amber-400' : 'text-violet-400'
-                        }`}>{e.event}</div>
-                        <pre className="text-[10px] text-gray-400 whitespace-pre-wrap break-all leading-normal">
-                          {renderDetails(e.details)}
-                        </pre>
-                      </div>
-                    ))}
-                    {guardEvents.length === 0 && (
-                      <div className="text-xs text-gray-600 italic">No events recorded.</div>
+                      <div className="text-xs text-slate-400 italic">No events recorded.</div>
                     )}
                   </div>
                 </div>

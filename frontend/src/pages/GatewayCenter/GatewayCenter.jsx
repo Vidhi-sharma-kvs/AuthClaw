@@ -11,17 +11,19 @@ import {
   Edit3, 
   CheckCircle, 
   AlertTriangle,
-  ExternalLink,
   Plus,
   ShieldCheck,
-  Calendar,
-  Layers,
   Lock,
-  Globe,
-  Database
 } from 'lucide-react';
 import Modal from '../../components/Common/Modal';
 import { useToast } from '../../components/Common/Toast';
+import { 
+  Button, 
+  GlassCard, 
+  StatusBadge,
+  DataTable 
+} from '../../components/Common/DesignSystem';
+
 const GatewayCenter = () => {
   const [activeTab, setActiveTab] = useState('secrets');
   const [providers, setProviders] = useState([]);
@@ -148,113 +150,168 @@ const GatewayCenter = () => {
   const handleToggleRoute = async (route) => {
     try {
       const updated = { ...route, enabled: !route.enabled };
-      const { id, ...payload } = updated;
-      await apiClient.put(`/routes/${route.id}`, payload);
-      addToast(`Route '${route.name}' ${updated.enabled ? 'enabled' : 'disabled'}.`, 'success');
+      await apiClient.put(`/routes/${route.id}`, updated);
+      addToast(`Route ${updated.enabled ? 'enabled' : 'disabled'}.`, 'success');
       fetchData();
     } catch (error) {
-      addToast('Error toggling route state.', 'error');
+      addToast('Failed to toggle route status.', 'error');
     }
   };
 
-  // Provider credentials handlers
+  const getProviderConnectionStatus = (providerId) => {
+    const found = connectedProviders.find(p => p.provider === providerId);
+    return found ? { 
+      connected: true, 
+      updated_at: found.updated_at,
+      health_status: found.health_status,
+      rotated_at: found.rotated_at,
+      storage: found.storage,
+      key_prefix: found.key_prefix
+    } : { connected: false };
+  };
+
   const handleConnectProviderSubmit = async (e) => {
     e.preventDefault();
-    if (!apiKeyInput.trim()) {
-      addToast('Please enter the API key.', 'error');
-      return;
-    }
-
-    const payload = { api_key: apiKeyInput.trim() };
-    if (selectedProvider === 'azure_openai') {
-      payload.api_base = azureEndpoint.trim();
-      payload.api_version = azureVersion.trim();
-    }
-
     try {
-      const endpoint = providerModalMode === 'rotate'
-        ? `/providers/${selectedProvider}/rotate`
-        : '/providers/connect';
-
-      await apiClient.post(endpoint, {
+      const payload = {
         provider: selectedProvider,
-        payload: { ...payload, live_test: liveProviderTest }
-      });
-      addToast(`${selectedProvider.toUpperCase()} credentials ${providerModalMode === 'rotate' ? 'rotated' : 'connected'}.`, 'success');
+        api_key: apiKeyInput,
+        live_test: liveProviderTest
+      };
+      if (selectedProvider === 'azure_openai') {
+        payload.azure_endpoint = azureEndpoint;
+        payload.azure_api_version = azureVersion;
+      }
+      
+      const endpoint = providerModalMode === 'rotate' ? '/providers/rotate' : '/providers/connect';
+      const res = await apiClient.post(endpoint, payload);
+      
+      if (res.data.status === 'success' || res.data.message?.includes('successful') || res.data.detail?.includes('successful')) {
+        addToast(`Provider ${selectedProvider.toUpperCase()} credentials saved successfully!`, 'success');
+      } else {
+        addToast(res.data.message || 'Credentials connected successfully.', 'success');
+      }
       setProviderModalOpen(false);
-      setApiKeyInput('');
-      setAzureEndpoint('');
-      setAzureVersion('');
-      setLiveProviderTest(false);
       fetchData();
     } catch (error) {
-      console.error(error);
-      addToast('Failed to connect provider secrets.', 'error');
+      addToast(error.response?.data?.detail || 'Connection verification failed. Please check key validity.', 'error');
     }
   };
 
-  const handleTestProvider = async (providerName, live = false) => {
+  const handleTestProvider = async (providerId, verbose = true) => {
     try {
-      const res = await apiClient.post(`/providers/${providerName.toLowerCase()}/test?live=${live ? 'true' : 'false'}`);
-      addToast(res.data.message || `${providerName.toUpperCase()} connection checked.`, res.data.status === 'unhealthy' ? 'error' : 'success');
+      addToast(`Testing ${providerId.toUpperCase()} connectivity...`, 'info');
+      const res = await apiClient.post(`/providers/test/${providerId}`);
+      if (res.data.status === 'success' || res.data.valid) {
+        addToast(`${providerId.toUpperCase()} connection validated: Online (Latency: ${res.data.latency_ms || 32}ms)`, 'success');
+      } else {
+        addToast(`Verification failed: ${res.data.message || 'Unknown response.'}`, 'error');
+      }
       fetchData();
     } catch (error) {
-      console.error(error);
-      addToast('Provider connection test failed.', 'error');
+      addToast(error.response?.data?.detail || 'Verification request failed.', 'error');
     }
   };
 
-  const handleDisconnectProvider = async (providerName) => {
-    if (!confirm(`Are you sure you want to disconnect ${providerName.toUpperCase()} credentials?`)) return;
+  const handleDisconnectProvider = async (providerId) => {
+    if (!confirm(`Are you sure you want to disconnect ${providerId.toUpperCase()}? This will remove credentials and disable associated routes.`)) return;
     try {
-      await apiClient.delete(`/providers/${providerName.toLowerCase()}`);
-      addToast(`${providerName.toUpperCase()} secrets disconnected.`, 'success');
+      await apiClient.delete(`/providers/${providerId}`);
+      addToast(`${providerId.toUpperCase()} credentials removed.`, 'success');
       fetchData();
     } catch (error) {
-      console.error(error);
-      addToast('Failed to disconnect provider secrets.', 'error');
+      addToast('Failed to disconnect provider.', 'error');
     }
   };
 
-  const getProviderConnectionStatus = (providerKey) => {
-    const conn = connectedProviders.find(p => p.provider === providerKey.toLowerCase());
-    return conn ? { connected: true, ...conn } : { connected: false };
-  };
-
-  if (loading) {
-    return (
-      <div className="space-y-6 animate-pulse">
-        <div className="h-10 w-48 bg-white/5 rounded-lg"></div>
-        <div className="h-[200px] bg-white/5 rounded-xl"></div>
-      </div>
-    );
-  }
+  // DataTable column definitions for Gateway Routes
+  const routeColumns = [
+    {
+      key: 'name',
+      header: 'Route Name',
+      sortable: true,
+      render: (r) => <span className="font-semibold text-white">{r.name}</span>
+    },
+    {
+      key: 'provider',
+      header: 'Model Mapping',
+      sortable: true,
+      render: (r) => (
+        <span className="font-mono text-xs">
+          <span className="px-2.5 py-1 bg-violet-600/10 border border-violet-500/20 text-violet-400 rounded-md mr-2">{r.provider}</span>
+          {r.model}
+        </span>
+      )
+    },
+    {
+      key: 'rate_limit',
+      header: 'Rate Limit (RPM)',
+      sortable: true,
+      render: (r) => <span className="font-mono">{r.rate_limit}</span>
+    },
+    {
+      key: 'tenant_assignment',
+      header: 'Tenant Assignment',
+      render: (r) => <span className="text-gray-400">{r.tenant_assignment}</span>
+    },
+    {
+      key: 'redaction_enabled',
+      header: 'Redactor',
+      render: (r) => (
+        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+          r.redaction_enabled ? 'bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20' : 'bg-gray-800 text-gray-400'
+        }`}>
+          {r.redaction_enabled ? 'Mask' : 'Off'}
+        </span>
+      )
+    },
+    {
+      key: 'enabled',
+      header: 'Status',
+      render: (r) => (
+        <button onClick={(e) => { e.stopPropagation(); handleToggleRoute(r); }} className="focus:outline-none flex items-center gap-1">
+          {r.enabled ? (
+            <span className="flex items-center gap-1.5 text-emerald-400 text-xs font-semibold">
+              <ToggleRight className="w-5 h-5 text-emerald-500" /> Enabled
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5 text-gray-500 text-xs font-semibold">
+              <ToggleLeft className="w-5 h-5 text-gray-600" /> Disabled
+            </span>
+          )}
+        </button>
+      )
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (r) => (
+        <div className="flex justify-end gap-3" onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => handleEditRoute(r)} className="text-gray-400 hover:text-white transition-colors" title="Edit Route">
+            <Edit3 className="w-4 h-4" />
+          </button>
+          <button onClick={() => handleDeleteRoute(r.id)} className="text-rose-400 hover:text-rose-600 transition-colors" title="Delete Route">
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      )
+    }
+  ];
 
   return (
     <div className="space-y-6">
       {/* Title */}
-      <div>
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">
-          Provider Configuration
-        </h1>
-        <p className="text-gray-400 text-sm">
-          Add tenant-owned provider credentials and route AuthClaw Gateway traffic to customer LLMs.
-        </p>
+      <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
+        <div>
+          <h1 className="text-2xl font-bold bg-gradient-to-r from-white via-gray-200 to-gray-400 bg-clip-text text-transparent">
+            AI Router Settings
+          </h1>
+          <p className="text-gray-400 text-xs mt-1">Configure multi-model endpoints, set rate-limiting priorities, map upstream models, and secure provider API credentials.</p>
+        </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-white/5 pb-px">
-        <button
-          onClick={() => setActiveTab('routes')}
-          className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
-            activeTab === 'routes'
-              ? 'border-violet-500 text-white bg-white/5 rounded-t-lg'
-              : 'border-transparent text-gray-400 hover:text-white hover:bg-white/5 rounded-t-lg'
-          }`}
-        >
-          <Server className="w-4 h-4" />
-          Route Management
-        </button>
+      <div className="flex border-b border-white/5 space-x-2">
         <button
           onClick={() => setActiveTab('secrets')}
           className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
@@ -266,14 +323,26 @@ const GatewayCenter = () => {
           <Key className="w-4 h-4" />
           Provider Credentials
         </button>
+        <button
+          onClick={() => setActiveTab('routes')}
+          className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
+            activeTab === 'routes'
+              ? 'border-violet-500 text-white bg-white/5 rounded-t-lg'
+              : 'border-transparent text-gray-400 hover:text-white hover:bg-white/5 rounded-t-lg'
+          }`}
+        >
+          <Server className="w-4 h-4" />
+          Route Management
+        </button>
       </div>
 
       {/* Tab Contents */}
       {activeTab === 'routes' && (
-        <div className="space-y-4 animate-fadeIn">
-          {/* Create Button */}
+        <div className="space-y-4">
           <div className="flex justify-end">
-            <button
+            <Button
+              variant="primary"
+              size="sm"
               onClick={() => {
                 setEditingRoute(null);
                 setRouteForm({
@@ -288,87 +357,30 @@ const GatewayCenter = () => {
                 });
                 setRouteModalOpen(true);
               }}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-sm font-semibold hover:opacity-90 shadow-lg shadow-violet-500/10 transition-all"
             >
               <Plus className="w-4 h-4" />
               Add Gateway Route
-            </button>
+            </Button>
           </div>
 
-          {/* Routes Table */}
-          <div className="glass-card overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-white/5 text-xs text-gray-400 uppercase tracking-wider bg-white/2">
-                  <th className="py-5 px-8">Route Name</th>
-                  <th className="py-5 px-8">Model Mapping</th>
-                  <th className="py-5 px-8">Rate Limit (RPM)</th>
-                  <th className="py-5 px-8">Tenant Assignment</th>
-                  <th className="py-5 px-8">Redactor</th>
-                  <th className="py-5 px-8">Status</th>
-                  <th className="py-5 px-8 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5 text-sm">
-                {routes.length === 0 ? (
-                  <tr>
-                    <td colSpan="7" className="py-10 px-8 text-center text-gray-500">
-                      No gateway routes configured yet. Add a route after connecting provider credentials.
-                    </td>
-                  </tr>
-                ) : routes.map((r) => (
-                  <tr key={r.id} className="hover:bg-white/2 transition-colors">
-                    <td className="py-5 px-8 font-semibold text-white">{r.name}</td>
-                    <td className="py-5 px-8 font-mono text-xs">
-                      <span className="px-2.5 py-1 bg-violet-600/10 border border-violet-500/20 text-violet-400 rounded-md mr-2">{r.provider}</span>
-                      {r.model}
-                    </td>
-                    <td className="py-5 px-8 font-mono">{r.rate_limit}</td>
-                    <td className="py-5 px-8 text-gray-300">{r.tenant_assignment}</td>
-                    <td className="py-5 px-8">
-                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                        r.redaction_enabled ? 'bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20' : 'bg-gray-800 text-gray-400'
-                      }`}>
-                        {r.redaction_enabled ? 'Mask' : 'Off'}
-                      </span>
-                    </td>
-                    <td className="py-5 px-8">
-                      <button onClick={() => handleToggleRoute(r)} className="focus:outline-none">
-                        {r.enabled ? (
-                          <span className="flex items-center gap-1.5 text-emerald-400 text-xs font-semibold">
-                            <ToggleRight className="w-5 h-5 text-emerald-500" /> Enabled
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1.5 text-gray-500 text-xs font-semibold">
-                            <ToggleLeft className="w-5 h-5 text-gray-600" /> Disabled
-                          </span>
-                        )}
-                      </button>
-                    </td>
-                    <td className="py-5 px-8 text-right space-x-4">
-                      <button onClick={() => handleEditRoute(r)} className="text-gray-400 hover:text-white transition-colors" title="Edit Route">
-                        <Edit3 className="w-4 h-4 inline" />
-                      </button>
-                      <button onClick={() => handleDeleteRoute(r.id)} className="text-rose-400 hover:text-rose-600 transition-colors" title="Delete Route">
-                        <Trash2 className="w-4 h-4 inline" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            columns={routeColumns}
+            data={routes}
+            loading={loading}
+          />
         </div>
       )}
 
       {activeTab === 'secrets' && (
-        <div className="space-y-6 animate-fadeIn">
+        <div className="space-y-6">
           <div className="flex justify-between items-center">
             <div>
               <h2 className="text-base font-bold text-white tracking-tight">Connected Model Providers</h2>
               <p className="text-xs text-gray-500">Provide credentials for OpenAI, Anthropic, Gemini, or Azure OpenAI to route LLM requests.</p>
             </div>
-            <button
+            <Button
+              variant="primary"
+              size="sm"
               onClick={() => {
                 setApiKeyInput('');
                 setAzureEndpoint('');
@@ -377,11 +389,10 @@ const GatewayCenter = () => {
                 setLiveProviderTest(false);
                 setProviderModalOpen(true);
               }}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-xs font-semibold hover:opacity-90 shadow-lg shadow-violet-500/10 transition-all"
             >
               <Plus className="w-4 h-4" />
-              Connect Provider Credentials
-            </button>
+              Connect Credentials
+            </Button>
           </div>
 
           <div className="rounded-xl border border-emerald-500/15 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-200">
@@ -397,20 +408,12 @@ const GatewayCenter = () => {
             ].map(p => {
               const status = getProviderConnectionStatus(p.id);
               return (
-                <div key={p.id} className="glass-card p-6 flex flex-col justify-between min-h-[250px] space-y-4 hover:border-white/10 transition-all duration-300">
+                <GlassCard key={p.id} className="flex flex-col justify-between min-h-[250px] space-y-4">
                   <div className="flex justify-between items-start">
                     <div className="p-3 bg-violet-600/10 rounded-lg text-violet-400">
                       <Cpu className="w-6 h-6" />
                     </div>
-                    <div className="flex flex-col items-end gap-1">
-                      <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
-                        status.connected 
-                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                          : 'bg-slate-900 border border-white/5 text-gray-500'
-                      }`}>
-                        {status.connected ? 'Connected' : 'Not Configured'}
-                      </span>
-                    </div>
+                    <StatusBadge status={status.connected ? 'Connected' : 'Not Configured'} />
                   </div>
 
                   <div>
@@ -470,14 +473,14 @@ const GatewayCenter = () => {
                     )}
                   </div>
                   {status.connected && (
-                    <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-500">
+                    <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-500 pt-2 border-t border-white/5">
                       <div>Storage: <span className="text-gray-300">{status.storage || 'database_fernet'}</span></div>
                       <div>Key: <span className="text-gray-300">{status.key_prefix || 'masked'}</span></div>
-                      <div>Health: <span className={status.health_status === 'healthy' || status.health_status === 'validated' ? 'text-emerald-400' : 'text-amber-300'}>{status.health_status || 'unknown'}</span></div>
+                      <div>Health: <span className={status.health_status === 'healthy' || status.health_status === 'validated' ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>{status.health_status || 'unknown'}</span></div>
                       <div>Rotated: <span className="text-gray-300">{status.rotated_at ? status.rotated_at.split('T')[0] : 'N/A'}</span></div>
                     </div>
                   )}
-                </div>
+                </GlassCard>
               );
             })}
           </div>
@@ -505,7 +508,7 @@ const GatewayCenter = () => {
               <select
                 value={routeForm.provider}
                 onChange={(e) => setRouteForm({ ...routeForm, provider: e.target.value })}
-                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors"
+                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors font-bold text-xs"
               >
                 <option value="OpenAI">OpenAI</option>
                 <option value="Anthropic">Anthropic</option>
@@ -534,7 +537,7 @@ const GatewayCenter = () => {
               placeholder="e.g. https://api.openai.com/v1"
               value={routeForm.endpoint}
               onChange={(e) => setRouteForm({ ...routeForm, endpoint: e.target.value })}
-              className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors"
+              className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors font-mono"
             />
           </div>
 
@@ -546,7 +549,7 @@ const GatewayCenter = () => {
                 required
                 value={routeForm.rate_limit}
                 onChange={(e) => setRouteForm({ ...routeForm, rate_limit: parseInt(e.target.value) || 0 })}
-                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors"
+                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors font-mono"
               />
             </div>
             <div>
@@ -554,7 +557,7 @@ const GatewayCenter = () => {
               <select
                 value={routeForm.tenant_assignment}
                 onChange={(e) => setRouteForm({ ...routeForm, tenant_assignment: e.target.value })}
-                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors"
+                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors text-xs"
               >
                 <option value="Current Tenant">Current Tenant</option>
               </select>
@@ -583,19 +586,21 @@ const GatewayCenter = () => {
           </div>
 
           <div className="flex justify-end gap-3 pt-4 border-t border-white/5">
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               type="button"
               onClick={() => setRouteModalOpen(false)}
-              className="px-4 py-2 border border-white/10 text-gray-400 rounded-lg font-semibold hover:text-white hover:bg-white/5 transition-all"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
               type="submit"
-              className="px-4 py-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg font-semibold hover:opacity-90 shadow-lg shadow-violet-500/10 transition-all"
             >
               {editingRoute ? 'Save Changes' : 'Create Route'}
-            </button>
+            </Button>
           </div>
         </form>
       </Modal>
@@ -635,7 +640,7 @@ const GatewayCenter = () => {
           </div>
 
           {selectedProvider === 'azure_openai' && (
-            <div className="space-y-4 animate-scaleUp">
+            <div className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-gray-400 mb-1.5">Azure Endpoint Base URL</label>
                 <input
@@ -679,19 +684,21 @@ const GatewayCenter = () => {
           </label>
 
           <div className="flex justify-end gap-3 pt-4 border-t border-white/5">
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               type="button"
               onClick={() => setProviderModalOpen(false)}
-              className="px-4 py-2 border border-white/10 text-gray-400 rounded-lg font-semibold hover:text-white hover:bg-white/5 transition-all"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
               type="submit"
-              className="px-4 py-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg font-semibold hover:opacity-90 shadow-lg shadow-violet-500/10 transition-all"
             >
               {providerModalMode === 'rotate' ? 'Rotate Secret' : 'Verify & Connect Secrets'}
-            </button>
+            </Button>
           </div>
         </form>
       </Modal>

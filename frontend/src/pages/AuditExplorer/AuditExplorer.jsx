@@ -5,7 +5,6 @@ import {
   RefreshCw, 
   Activity, 
   Lock, 
-  Link2,
   FileCheck2,
   Search,
   Download,
@@ -19,6 +18,12 @@ import {
 } from '../../services/auditService';
 import apiClient from '../../services/api';
 import { useToast } from '../../components/Common/Toast';
+import { 
+  Button, 
+  GlassCard, 
+  StatusBadge,
+  SearchBar 
+} from '../../components/Common/DesignSystem';
 
 const AuditExplorer = () => {
   const [chainList, setChainList] = useState([]);
@@ -41,7 +46,7 @@ const AuditExplorer = () => {
   const fetchData = async (showLoading = false) => {
     if (showLoading) setLoading(true);
     try {
-      const logs = await getHashChain(100); // fetch more records for better filtering/pagination
+      const logs = await getHashChain(100);
       const sum = await getAuditSummary();
       setChainList(logs);
       setSummary(sum);
@@ -144,14 +149,14 @@ const AuditExplorer = () => {
           <p className="text-gray-400 text-sm">Chain verification ledger protecting logs against deletion and modifications.</p>
         </div>
         <div className="flex items-center gap-3">
-          <button
+          <Button
+            variant="primary"
+            size="sm"
             onClick={handleVerifyChain}
-            disabled={verifying}
-            className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-tr from-violet-600 to-fuchsia-600 rounded-lg text-xs font-semibold hover:opacity-90 disabled:opacity-50 transition shadow-lg shadow-violet-500/15"
+            loading={verifying}
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${verifying ? 'animate-spin' : ''}`} />
-            {verifying ? 'Verifying Integrity...' : 'Verify Hash Chain'}
-          </button>
+            Verify Hash Chain
+          </Button>
         </div>
       </div>
 
@@ -159,8 +164,8 @@ const AuditExplorer = () => {
       {summary && (
         <div className={`p-4 rounded-xl border flex items-center gap-4 ${
           summary.valid 
-            ? 'bg-emerald-950/20 border-emerald-500/20 text-emerald-300' 
-            : 'bg-rose-950/20 border-rose-500/20 text-rose-300'
+            ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-300' 
+            : 'bg-rose-500/5 border-rose-500/20 text-rose-300'
         }`}>
           {summary.valid ? (
             <ShieldCheck className="w-8 h-8 text-emerald-400 shrink-0" />
@@ -184,39 +189,34 @@ const AuditExplorer = () => {
       {/* Chain Metadata summary boxes */}
       {summary && summary.valid && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="glass-card p-5 space-y-2">
+          <GlassCard hover={false} className="p-5 space-y-2">
             <span className="text-xs text-gray-500 font-bold uppercase tracking-wider block">Verified Chain Blocks</span>
             <span className="text-2xl font-bold text-white block">{summary.records_checked}</span>
-          </div>
-          <div className="glass-card p-5 space-y-2 md:col-span-2">
+          </GlassCard>
+          <GlassCard hover={false} className="p-5 space-y-2 md:col-span-2">
             <span className="text-xs text-gray-500 font-bold uppercase tracking-wider block">Latest Hash (SHA-256)</span>
-            <span className="text-xs font-mono break-all text-gray-300 block bg-slate-900/40 p-2 border border-white/5 rounded mt-1">
+            <span className="text-xs font-mono break-all text-gray-300 block bg-slate-950/60 p-2 border border-white/5 rounded mt-1">
               {summary.latest_hash || 'N/A'}
             </span>
-          </div>
+          </GlassCard>
         </div>
       )}
 
       {/* Search, Filter, and Export Toolbar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-950/40 border border-white/5 p-4 rounded-xl">
+      <GlassCard hover={false} className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4">
         <div className="flex flex-wrap items-center gap-3 flex-1">
-          {/* Search Input */}
-          <div className="relative min-w-[200px] flex-1 max-w-sm">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Search by block ID, query, approver..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-slate-900 border border-white/10 rounded-lg py-2 pl-9 pr-4 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-violet-500 transition-colors"
-            />
-          </div>
+          <SearchBar 
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search by block ID, query, approver..."
+            className="w-full md:w-80"
+          />
 
           {/* Risk Filter */}
           <select
             value={riskFilter}
             onChange={(e) => setRiskFilter(e.target.value)}
-            className="bg-slate-900 border border-white/10 rounded-lg py-2 px-3 text-xs text-white focus:outline-none focus:border-violet-500"
+            className="bg-slate-950 border border-white/5 rounded-lg py-2 px-3 text-xs text-white focus:outline-none focus:border-violet-500"
           >
             <option value="ALL">All Risks</option>
             <option value="LOW">Low Risk</option>
@@ -229,7 +229,7 @@ const AuditExplorer = () => {
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="bg-slate-900 border border-white/10 rounded-lg py-2 px-3 text-xs text-white focus:outline-none focus:border-violet-500"
+            className="bg-slate-950 border border-white/5 rounded-lg py-2 px-3 text-xs text-white focus:outline-none focus:border-violet-500"
           >
             <option value="ALL">All Statuses</option>
             <option value="COMPLETED">Completed</option>
@@ -240,20 +240,22 @@ const AuditExplorer = () => {
 
         {/* Exports */}
         <div className="flex items-center gap-2 shrink-0">
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => handleExport('csv')}
-            className="flex items-center gap-1.5 px-3 py-2 bg-slate-900 border border-white/10 rounded-lg text-xs font-semibold text-gray-300 hover:text-white hover:bg-white/5 transition-all"
           >
             <Download className="w-3.5 h-3.5" /> Export CSV
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => handleExport('pdf')}
-            className="flex items-center gap-1.5 px-3 py-2 bg-slate-900 border border-white/10 rounded-lg text-xs font-semibold text-gray-300 hover:text-white hover:bg-white/5 transition-all"
           >
             <Download className="w-3.5 h-3.5" /> Export PDF
-          </button>
+          </Button>
         </div>
-      </div>
+      </GlassCard>
 
       {/* Audit Log Table */}
       {loading ? (
@@ -263,18 +265,18 @@ const AuditExplorer = () => {
           ))}
         </div>
       ) : currentRecords.length === 0 ? (
-        <div className="glass-card p-12 text-center flex flex-col items-center justify-center">
+        <div className="flex flex-col items-center justify-center p-12 border border-dashed border-white/10 rounded-xl bg-slate-900/10">
           <Lock className="w-8 h-8 text-gray-500 mb-3" />
-          <h4 className="text-gray-300 font-semibold">No matching cryptographic records</h4>
-          <p className="text-gray-500 text-sm mt-1">Try adjusting your filters or search queries.</p>
+          <h3 className="text-sm font-bold text-gray-300">No matching cryptographic records</h3>
+          <p className="text-xs text-gray-500 mt-1">Try adjusting your filters or search queries.</p>
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="glass-card overflow-hidden">
+          <div className="w-full overflow-hidden border border-white/5 rounded-xl bg-slate-950/20 backdrop-blur-md">
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
+              <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="border-b border-white/5 text-xs font-semibold text-gray-400 uppercase tracking-wider bg-slate-950/20">
+                  <tr className="border-b border-white/5 text-gray-400 uppercase tracking-wider bg-slate-900/50">
                     <th className="p-4">BLOCK</th>
                     <th className="p-4">USER / TENANT</th>
                     <th className="p-4">REQUEST</th>
@@ -285,7 +287,7 @@ const AuditExplorer = () => {
                     <th className="p-4">TIMESTAMP</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5 text-xs text-gray-300">
+                <tbody className="divide-y divide-white/5 text-gray-300">
                   {currentRecords.map((log) => (
                     <React.Fragment key={log.record_id}>
                       <tr 
@@ -294,66 +296,36 @@ const AuditExplorer = () => {
                       >
                         <td className="p-4 font-semibold text-white font-mono" title={log.hash_reference}># {log.record_id}</td>
                         <td className="p-4 text-gray-300">
-                          <span className="block text-white">{log.username || log.approver || 'System'}</span>
+                          <span className="block text-white font-semibold">{log.username || log.approver || 'System'}</span>
                           <span className="block text-[10px] text-gray-500 font-mono">Tenant {log.tenant_id || 'N/A'}</span>
                         </td>
                         <td className="p-4 text-gray-300 max-w-[200px] truncate" title={log.original_request}>
                           {log.original_request || 'N/A'}
                         </td>
-                        <td className="p-4 text-gray-400">{log.provider || 'Gateway Route'}</td>
+                        <td className="p-4 text-gray-400 capitalize">{log.provider || 'Gateway Route'}</td>
                         <td className="p-4">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                            log.security_decision === 'BLOCK'
-                              ? 'bg-rose-500/10 text-rose-400 border-rose-500/15'
-                              : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/15'
-                          }`}>
-                            {log.security_decision || 'ALLOW'}
-                          </span>
+                          <StatusBadge status={log.security_decision || 'ALLOW'} />
                         </td>
                         <td className="p-4 text-gray-300 max-w-[140px] truncate" title={log.policy_decision}>
                           {log.policy_decision || 'N/A'}
                         </td>
                         <td className="p-4 text-center">
-                          <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[10px] font-bold border uppercase ${
-                            log.status === 'executed' || log.status === 'COMPLETED'
-                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/15'
-                              : log.status === 'approved'
-                              ? 'bg-blue-500/10 text-blue-400 border-blue-500/15'
-                              : log.status === 'rejected'
-                              ? 'bg-rose-500/10 text-rose-400 border-rose-500/15'
-                              : log.status === 'pending'
-                              ? 'bg-amber-500/10 text-amber-400 border-amber-500/15 animate-pulse'
-                              : 'bg-slate-500/10 text-slate-400 border-slate-500/15'
-                          }`}>
-                            {log.status === 'executed' ? 'COMPLETED' : (log.status || 'DIRECT')}
-                          </span>
+                          <StatusBadge status={log.status === 'executed' ? 'COMPLETED' : (log.status || 'DIRECT')} />
                         </td>
                         <td className="p-4 font-mono text-gray-400" title={log.timestamp}>
                           {log.timestamp ? log.timestamp.split('T')[0] + ' ' + (log.timestamp.split('T')[1]?.split('.')[0] || '') : 'N/A'}
                         </td>
                       </tr>
                       {expandedRowId === log.record_id && (
-                        <tr className="bg-slate-950/45">
+                        <tr className="bg-slate-950/40">
                           <td colSpan="8" className="p-6 text-gray-300 border-b border-white/5">
-                            <div className="space-y-4 font-sans text-xs">
+                            <div className="space-y-4 text-xs font-sans">
                               <div className="flex items-center justify-between border-b border-white/5 pb-2">
                                 <h4 className="text-sm font-bold text-white tracking-tight flex items-center gap-1.5">
                                   <FileCheck2 className="w-4 h-4 text-violet-400" />
-                                  Block #{log.record_id} Cryptographic & Approval Metadata
+                                  Block #{log.record_id} Cryptographic &amp; Approval Metadata
                                 </h4>
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase ${
-                                  log.approval_status === 'executed'
-                                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/15'
-                                    : log.approval_status === 'approved'
-                                    ? 'bg-blue-500/10 text-blue-400 border-blue-500/15'
-                                    : log.approval_status === 'rejected'
-                                    ? 'bg-rose-500/10 text-rose-400 border-rose-500/15'
-                                    : log.approval_status === 'pending'
-                                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/15 animate-pulse'
-                                    : 'bg-slate-500/10 text-slate-400 border-slate-500/15'
-                                }`}>
-                                  {log.approval_status ? log.approval_status : 'DIRECT_EXECUTION'}
-                                </span>
+                                <StatusBadge status={log.approval_status ? log.approval_status : 'DIRECT_EXECUTION'} />
                               </div>
 
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -412,7 +384,7 @@ const AuditExplorer = () => {
           </div>
 
           {/* Pagination Controls */}
-          <div className="flex items-center justify-between border-t border-white/5 pt-4 text-xs">
+          <div className="flex items-center justify-between pt-2 text-xs">
             <span className="text-gray-500">
               Showing <strong className="text-white">{indexOfFirstRecord + 1}</strong> to{' '}
               <strong className="text-white">{Math.min(indexOfLastRecord, filteredChain.length)}</strong> of{' '}
@@ -420,23 +392,25 @@ const AuditExplorer = () => {
             </span>
 
             <div className="flex items-center gap-2">
-              <button
+              <Button
+                variant="secondary"
+                size="sm"
                 disabled={currentPage === 1}
                 onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                className="p-2 bg-slate-900 border border-white/10 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition disabled:opacity-30 disabled:hover:bg-transparent"
               >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
+                Previous
+              </Button>
               <span className="text-gray-400 px-2 font-mono">
                 Page <strong className="text-white">{currentPage}</strong> of {totalPages}
               </span>
-              <button
+              <Button
+                variant="secondary"
+                size="sm"
                 disabled={currentPage === totalPages}
                 onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                className="p-2 bg-slate-900 border border-white/10 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition disabled:opacity-30 disabled:hover:bg-transparent"
               >
-                <ChevronRight className="w-4 h-4" />
-              </button>
+                Next
+              </Button>
             </div>
           </div>
         </div>

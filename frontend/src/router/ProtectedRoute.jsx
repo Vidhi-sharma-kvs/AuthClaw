@@ -8,6 +8,7 @@ const ROUTE_PERMISSIONS = {
   '/platform': ['Platform Admin'],
   '/platform/dashboard': ['Platform Admin'],
   '/dashboard': ['Super Admin', 'Security Admin', 'Compliance Officer', 'Developer', 'Auditor', 'Viewer'],
+  '/observability': ['Super Admin', 'Security Admin', 'Compliance Officer', 'Developer', 'Auditor', 'Viewer'],
   '/chat': ['Super Admin', 'Security Admin', 'Compliance Officer', 'Developer'],
   '/providers': ['Super Admin', 'Security Admin', 'Developer'],
   '/api-keys': ['Super Admin', 'Security Admin', 'Developer'],

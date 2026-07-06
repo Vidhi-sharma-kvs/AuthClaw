@@ -9,9 +9,6 @@ import {
   Info,
   ShieldCheck,
   ShieldAlert,
-  Calendar,
-  Layers,
-  ArrowRight
 } from 'lucide-react';
 import { 
   getApprovalsByMode,
@@ -20,6 +17,11 @@ import {
   executeApproval 
 } from '../../services/approvalService';
 import { useToast } from '../../components/Common/Toast';
+import { 
+  Button, 
+  GlassCard, 
+  StatusBadge 
+} from '../../components/Common/DesignSystem';
 
 const ApprovalQueue = () => {
   const [approvalsList, setApprovalsList] = useState([]);
@@ -129,17 +131,17 @@ const ApprovalQueue = () => {
   const getStatusBadge = (status) => {
     switch (status) {
       case 'pending':
-        return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-600/20 text-amber-400 border border-amber-500/20 animate-pulse">PENDING_APPROVAL</span>;
+        return <StatusBadge status="Awaiting Approval" />;
       case 'approved':
-        return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-600/20 text-emerald-400 border border-emerald-500/20">APPROVED</span>;
+        return <StatusBadge status="Approved" />;
       case 'rejected':
-        return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-600/20 text-rose-400 border border-rose-500/20">REJECTED</span>;
+        return <StatusBadge status="Rejected" />;
       case 'expired':
-        return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-gray-600/20 text-gray-400 border border-gray-500/20">EXPIRED</span>;
+        return <StatusBadge status="Expired" />;
       case 'executed':
-        return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-blue-600/20 text-blue-400 border border-blue-500/20">COMPLETED</span>;
+        return <StatusBadge status="Completed" />;
       default:
-        return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-gray-600/20 text-gray-400">{status}</span>;
+        return <StatusBadge status={status} />;
     }
   };
 
@@ -166,9 +168,7 @@ const ApprovalQueue = () => {
     return labels[reason] || String(reason || 'High risk').replace(/_/g, ' ');
   };
 
-  // State timeline helper
   const getTimelineSteps = (status) => {
-    // States: READ_ONLY, PLAN, PENDING_APPROVAL, APPROVED, EXECUTING, COMPLETED/REJECTED/EXPIRED
     const steps = [
       { key: 'READ_ONLY', label: 'Read Only' },
       { key: 'PLAN', label: 'Plan Assessment' },
@@ -178,9 +178,9 @@ const ApprovalQueue = () => {
       { key: 'COMPLETED', label: status === 'rejected' ? 'Rejected' : (status === 'expired' ? 'Expired' : 'Completed') }
     ];
 
-    let activeIdx = 2; // PENDING_APPROVAL by default
+    let activeIdx = 2; // PENDING_APPROVAL
     if (status === 'approved') activeIdx = 3;
-    if (status === 'executed') activeIdx = 5; // Executing -> Completed
+    if (status === 'executed') activeIdx = 5; 
     if (status === 'rejected' || status === 'expired') activeIdx = 5;
 
     return { steps, activeIdx };
@@ -196,7 +196,7 @@ const ApprovalQueue = () => {
         <p className="text-gray-400 text-sm">Review, authorize, and track human-in-the-loop state transitions and execution logs.</p>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 border border-white/5 bg-slate-950/30 rounded-xl p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border border-white/5 bg-slate-950/30 rounded-xl p-4">
         <div>
           <p className="text-xs font-bold text-white uppercase tracking-wider">Approval Source</p>
           <p className="text-[11px] text-gray-500">Gateway approvals are backed by persistent request-linked records.</p>
@@ -226,22 +226,22 @@ const ApprovalQueue = () => {
       {/* Main List */}
       {loading ? (
         <div className="space-y-4">
-          {[...Array(3)].map((_, i) => (
+          {[...Array(2)].map((_, i) => (
             <div key={i} className="h-[250px] bg-white/5 rounded-lg animate-pulse"></div>
           ))}
         </div>
       ) : filteredApprovals.length === 0 ? (
-        <div className="glass-card p-12 text-center flex flex-col items-center justify-center">
+        <div className="flex flex-col items-center justify-center p-12 border border-dashed border-white/10 rounded-xl bg-slate-900/10">
           <Info className="w-8 h-8 text-gray-500 mb-3" />
-          <h4 className="text-gray-300 font-semibold">No approvals found</h4>
-          <p className="text-gray-500 text-sm mt-1">There are no override tickets matching the current filter.</p>
+          <h3 className="text-sm font-bold text-gray-300">No approvals found</h3>
+          <p className="text-xs text-gray-500 mt-1">There are no override tickets matching the current filter.</p>
         </div>
       ) : (
         <div className="space-y-6">
           {filteredApprovals.map((app) => {
             const { steps, activeIdx } = getTimelineSteps(app.status);
             return (
-              <div key={app.approval_id} className="glass-card p-6 space-y-6 border border-white/5 bg-slate-950/20 hover:border-white/10 transition-all">
+              <GlassCard key={app.approval_id} className="space-y-6" hover={false}>
                 {/* Header info */}
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-white/5 pb-4">
                   <div className="space-y-1">
@@ -252,7 +252,7 @@ const ApprovalQueue = () => {
                     <h3 className="text-sm font-mono font-bold text-white whitespace-pre-wrap">{app.requested_action}</h3>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-3 shrink-0">
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
                     <span className={`px-2.5 py-0.5 rounded text-xs font-semibold ${
                       app.risk_level === 'HIGH' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
                     }`}>
@@ -268,8 +268,8 @@ const ApprovalQueue = () => {
                       {formatReason(app.reason)}
                     </span>
                     {app.status === 'pending' && (
-                      <span className="flex items-center gap-1.5 text-amber-400 text-xs font-mono">
-                        <Clock className="w-4 h-4" />
+                      <span className="flex items-center gap-1.5 text-amber-400 text-xs font-mono bg-amber-500/10 px-2 py-0.5 border border-amber-500/20 rounded">
+                        <Clock className="w-3.5 h-3.5" />
                         {formatSeconds(app.remaining_seconds)}
                       </span>
                     )}
@@ -316,34 +316,37 @@ const ApprovalQueue = () => {
                     {app.approved_by && <div>Approved By: <span className="text-white">{app.approved_by}</span></div>}
                     {app.rejected_by && <div>Rejected By: <span className="text-white">{app.rejected_by}</span></div>}
                     {app.executed_by && <div>Executed By: <span className="text-white">{app.executed_by}</span></div>}
-                    <div>MFA: <span className={app.mfa_verified ? 'text-emerald-400' : 'text-gray-500'}>{app.mfa_verified ? 'Verified' : 'Not verified'}</span></div>
+                    <div>MFA: <span className={app.mfa_verified ? 'text-emerald-400 font-bold' : 'text-gray-500'}>{app.mfa_verified ? 'Verified' : 'Not verified'}</span></div>
                   </div>
 
                   <div className="flex gap-3 ml-auto shrink-0">
                     {app.status === 'pending' && (
                       <>
-                        <button
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           onClick={() => handleReject(app.approval_id)}
-                          className="px-4 py-2 border border-rose-500/20 text-rose-400 hover:bg-rose-500/10 rounded-lg text-xs font-semibold transition-all"
                         >
                           Reject
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                          variant="primary"
+                          size="sm"
                           onClick={() => handleApproveClick(app)}
-                          className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-all"
                         >
                           Approve (MFA)
-                        </button>
+                        </Button>
                       </>
                     )}
                     {app.status === 'approved' && (
-                      <button
+                      <Button
+                        variant="primary"
+                        size="sm"
                         onClick={() => handleExecute(app.approval_id)}
-                        className="flex items-center gap-1.5 px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-all"
                       >
                         <Play className="w-4 h-4 animate-pulse" />
                         Execute Action
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -365,7 +368,7 @@ const ApprovalQueue = () => {
                     </div>
                   </div>
                 )}
-              </div>
+              </GlassCard>
             );
           })}
         </div>
@@ -374,7 +377,7 @@ const ApprovalQueue = () => {
       {/* MFA Modal Dialog */}
       {selectedApproval && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="glass-card max-w-md w-full p-6 space-y-6">
+          <GlassCard className="relative max-w-md w-full p-6 space-y-6" hover={false}>
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-bold text-white flex items-center gap-2">
                 <CheckCircle className="w-5 h-5 text-emerald-400" />
@@ -431,22 +434,24 @@ const ApprovalQueue = () => {
             </div>
 
             <div className="flex justify-end gap-3 pt-2">
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setSelectedApproval(null)}
-                className="px-4 py-2 border border-white/5 rounded-lg text-sm text-gray-300 hover:bg-white/5"
                 disabled={actionLoading}
               >
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
                 onClick={handleApproveConfirm}
-                className="px-4 py-2 bg-gradient-to-tr from-emerald-600 to-teal-600 hover:opacity-90 rounded-lg text-sm text-white font-semibold flex items-center justify-center"
                 disabled={actionLoading}
               >
                 {actionLoading ? 'Verifying...' : 'Confirm Approval'}
-              </button>
+              </Button>
             </div>
-          </div>
+          </GlassCard>
         </div>
       )}
     </div>
