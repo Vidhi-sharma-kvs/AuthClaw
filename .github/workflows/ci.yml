@@ -98,7 +98,6 @@ jobs:
       - name: Frontend dependency audit
         working-directory: frontend
         run: |
-          npm ci
           npm audit --audit-level=high || { echo "NPM audit flagged warnings, bypassing block..."; exit 0; }
 
   docker-build:
