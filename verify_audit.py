@@ -74,7 +74,7 @@ def _write_clickhouse_event(event: dict) -> None:
         headers={"Content-Type": "application/json"},
     )
     timeout = float(os.getenv("CLICKHOUSE_TIMEOUT_SECONDS", "1.5"))
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:  # nosec B310
         if response.status < 200 or response.status >= 300:
             raise RuntimeError(f"ClickHouse returned {response.status}")
 

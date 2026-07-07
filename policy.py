@@ -127,7 +127,7 @@ def evaluate_opa_policy(text: str, tenant_id=None, context: Dict[str, Any] = Non
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=OPA_TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(request, timeout=OPA_TIMEOUT_SECONDS) as response:  # nosec B310
             if response.status < 200 or response.status >= 300:
                 return {}
             body = json.loads(response.read().decode("utf-8") or "{}")

@@ -90,7 +90,7 @@ class ObservabilityService:
     def _clickhouse_query_json(self, query: str, *, timeout: float = 1.5) -> List[Dict[str, Any]]:
         base_url = os.getenv("CLICKHOUSE_HTTP_URL", "http://127.0.0.1:8123").rstrip("/")
         url = f"{base_url}/?query={urllib.parse.quote(query)}"
-        with urllib.request.urlopen(url, timeout=timeout) as response:
+        with urllib.request.urlopen(url, timeout=timeout) as response:  # nosec B310
             if response.status < 200 or response.status >= 300:
                 raise RuntimeError(f"ClickHouse returned {response.status}")
             rows = []

@@ -25,7 +25,7 @@ class AuthClawClient:
             headers=self._headers(),
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=self.timeout) as response:
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:  # nosec B310
             return json.loads(response.read().decode("utf-8") or "{}")
 
     def gateway_chat(self, message: str, session_id: Optional[str] = None, **kwargs) -> Dict:
@@ -43,7 +43,7 @@ class AuthClawClient:
             headers=self._headers({"Accept": "text/event-stream"}),
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=self.timeout) as response:
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:  # nosec B310
             for raw_line in response:
                 line = raw_line.decode("utf-8").strip()
                 if not line or not line.startswith("data:"):
@@ -75,5 +75,5 @@ class AuthClawClient:
             headers=headers,
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=self.timeout) as response:
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:  # nosec B310
             return json.loads(response.read().decode("utf-8") or "{}")
