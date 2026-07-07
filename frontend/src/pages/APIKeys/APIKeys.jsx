@@ -113,12 +113,12 @@ const APIKeys = () => {
       key: 'name',
       header: 'Name',
       sortable: true,
-      render: (key) => <span className="font-semibold text-white">{key.name}</span>
+      render: (key) => <span className="font-semibold text-[#0E1726]">{key.name}</span>
     },
     {
       key: 'key_prefix',
       header: 'Prefix',
-      render: (key) => <span className="font-mono text-gray-400">{key.key_prefix || 'N/A'}</span>
+      render: (key) => <span className="font-mono text-[#475069]">{key.key_prefix || 'N/A'}</span>
     },
     {
       key: 'status',
@@ -130,17 +130,17 @@ const APIKeys = () => {
       key: 'created_at',
       header: 'Created',
       sortable: true,
-      render: (key) => <span className="text-gray-400">{key.created_at || 'N/A'}</span>
+      render: (key) => <span className="text-[#475069]">{key.created_at || 'N/A'}</span>
     },
     {
       key: 'last_used_at',
       header: 'Last Used',
-      render: (key) => <span className="text-gray-400">{key.last_used_at || 'Never'}</span>
+      render: (key) => <span className="text-[#475069]">{key.last_used_at || 'Never'}</span>
     },
     {
       key: 'expires_at',
       header: 'Expires',
-      render: (key) => <span className="text-gray-400">{key.expires_at || 'No expiration'}</span>
+      render: (key) => <span className="text-[#475069]">{key.expires_at || 'No expiration'}</span>
     },
     {
       key: 'actions',
@@ -150,7 +150,7 @@ const APIKeys = () => {
           <button
             onClick={() => rotateKey(key)}
             disabled={key.status !== 'active'}
-            className="inline-flex items-center gap-1.5 text-violet-400 hover:text-violet-300 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+            className="inline-flex items-center gap-1.5 text-[#6D28D9] hover:text-[#6D28D9] disabled:opacity-40 disabled:pointer-events-none transition-colors"
           >
             <RotateCcw className="w-3.5 h-3.5" /> Rotate
           </button>
@@ -169,10 +169,10 @@ const APIKeys = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold bg-gradient-to-r from-white via-gray-200 to-gray-400 bg-clip-text text-transparent">
+        <h1 className="text-2xl font-bold text-[#0E1726]">
           API Keys
         </h1>
-        <p className="text-sm text-gray-400 mt-1">
+        <p className="text-sm text-[#475069] mt-1">
           Create, rotate, and revoke AuthClaw gateway keys for tenant-scoped integrations.
         </p>
       </div>
@@ -184,15 +184,15 @@ const APIKeys = () => {
         </div>
       </GlassCard>
 
-      <GlassCard hover={false} className="border-violet-500/10 bg-violet-500/5 space-y-3">
+      <GlassCard hover={false} className="border-[#6D28D9]/10 bg-[#F1ECFE]/70 space-y-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-violet-300">Customer Gateway URL</p>
-          <p className="text-sm text-gray-300 mt-1">
+          <p className="text-xs font-semibold uppercase tracking-wider text-[#6D28D9]">Customer Gateway URL</p>
+          <p className="text-sm text-[#475069] mt-1">
             Use this endpoint from your company app. Every request passes through AuthClaw governance before reaching the configured LLM provider.
           </p>
         </div>
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <code className="flex-1 rounded-lg bg-slate-950 border border-white/5 p-3 text-sm text-white break-all font-mono">
+          <code className="flex-1 rounded-lg bg-[#F5F7FA] border border-[#E6E9F0] p-3 text-sm text-[#0E1726] break-all font-mono">
             POST {gatewayEndpoint}
           </code>
           <Button
@@ -204,7 +204,7 @@ const APIKeys = () => {
             {copiedEndpoint ? 'Copied' : 'Copy URL'}
           </Button>
         </div>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-[#6B7488]">
           Send the generated AuthClaw API key as a Bearer token from your backend service. Do not expose it in browser code.
         </p>
       </GlassCard>
@@ -212,10 +212,10 @@ const APIKeys = () => {
       {createdKey && (
         <GlassCard hover={false} className="border-amber-500/20 bg-amber-500/5">
           <p className="text-xs font-semibold uppercase tracking-wider text-amber-300 mb-2">New API Key</p>
-          <code className="block rounded bg-slate-950 border border-white/5 p-3 text-sm text-white break-all font-mono">
+          <code className="block rounded bg-[#F5F7FA] border border-[#E6E9F0] p-3 text-sm text-[#0E1726] break-all font-mono">
             {createdKey}
           </code>
-          <p className="text-xs text-gray-400 mt-2">This is the only time the full key is displayed.</p>
+          <p className="text-xs text-[#475069] mt-2">This is the only time the full key is displayed.</p>
         </GlassCard>
       )}
 
@@ -225,7 +225,7 @@ const APIKeys = () => {
           onChange={(event) => setName(event.target.value)}
           placeholder="Production gateway key"
           aria-label="API key name"
-          className="flex-1 bg-slate-950 border border-white/5 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-purple-500/40 focus:ring-1 focus:ring-purple-500/40 transition duration-200"
+          className="flex-1 bg-[#F5F7FA] border border-[#E6E9F0] rounded-lg px-4 py-2.5 text-sm text-[#0E1726] focus:outline-none focus:border-[#A78BFA] focus:ring-2 focus:ring-[#6D28D9]/15 transition duration-200"
         />
         <Button type="submit">
           <Plus className="w-4 h-4" /> Create Key
@@ -233,9 +233,9 @@ const APIKeys = () => {
       </form>
 
       <GlassCard hover={false} className="p-0 overflow-hidden">
-        <div className="flex items-center justify-between p-5 border-b border-white/5">
-          <h2 className="text-sm font-semibold text-white">Tenant API Keys</h2>
-          <button onClick={loadKeys} className="text-gray-400 hover:text-white" title="Refresh">
+        <div className="flex items-center justify-between p-5 border-b border-[#E6E9F0]">
+          <h2 className="text-sm font-semibold text-[#0E1726]">Tenant API Keys</h2>
+          <button onClick={loadKeys} className="text-[#475069] hover:text-[#0E1726]" title="Refresh">
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>

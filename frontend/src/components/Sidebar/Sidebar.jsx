@@ -57,21 +57,21 @@ const Sidebar = ({ isOpen, toggleSidebar }) => {
   });
 
   return (
-    <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-[#08152B] border-r border-[#1B3663]/30 transition-transform duration-300 transform ${isOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 lg:static lg:inset-0 flex flex-col shrink-0`}>
+    <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-[#FBFAF9]/95 border-r border-[#E6E9F0] shadow-[0_1px_2px_rgba(11,31,63,0.05),0_18px_44px_-28px_rgba(11,31,63,0.45)] backdrop-blur-xl transition-transform duration-300 transform ${isOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 lg:static lg:inset-0 flex flex-col shrink-0`}>
 
       {/* Logo Section */}
-      <div className="h-16 flex items-center justify-between px-6 border-b border-[#1B3663]/20 bg-black/10 shrink-0">
+      <div className="h-16 flex items-center justify-between px-6 border-b border-[#E6E9F0] bg-white/80 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-gradient-to-tr from-[#6D28D9] to-[#1B3663] rounded-lg shadow-lg shadow-violet-500/10">
+          <div className="p-2 bg-[linear-gradient(135deg,#6D28D9_0%,#E9A93C_100%)] rounded-lg shadow-[0_10px_24px_-12px_rgba(109,40,217,0.7)]">
             <ShieldAlert className="w-5 h-5 text-white" />
           </div>
-          <span className="font-bold text-lg bg-gradient-to-r from-white via-gray-200 to-gray-400 bg-clip-text text-transparent font-display tracking-tight">
-            AuthClaw
+          <span className="font-bold text-lg text-[#0E1726] font-display tracking-tight">
+            Auth<span className="text-[#6D28D9]">Claw</span>
           </span>
         </div>
         <button
           onClick={toggleSidebar}
-          className="lg:hidden text-gray-400 hover:text-white focus:outline-none"
+          className="lg:hidden text-[#6B7488] hover:text-[#0E1726] focus:outline-none"
           aria-label="Close navigation"
         >
           <X className="w-4 h-4" />
@@ -91,8 +91,8 @@ const Sidebar = ({ isOpen, toggleSidebar }) => {
                 className={({ isActive }) =>
                   `flex items-center gap-3.5 px-4 py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 group ${
                     isActive
-                      ? 'bg-[#6D28D9]/15 border-l-2 border-[#6D28D9] text-white shadow-inner font-display'
-                      : 'text-gray-400 hover:bg-white/[0.03] hover:text-white border-l-2 border-transparent'
+                      ? 'bg-[#F1ECFE] border-l-2 border-[#6D28D9] text-[#0E1726] shadow-[inset_0_0_0_1px_rgba(167,139,250,0.22)] font-display'
+                      : 'text-[#475069] hover:bg-white hover:text-[#0E1726] border-l-2 border-transparent hover:shadow-[0_8px_22px_-16px_rgba(11,31,63,0.28)]'
                   }`
                 }
                 onClick={() => {
@@ -109,17 +109,17 @@ const Sidebar = ({ isOpen, toggleSidebar }) => {
         {/* User Card */}
         {user && (
           <div className="px-4 pt-3 pb-2">
-            <div className="flex items-center gap-3 bg-white/[0.02] border border-white/5 p-2.5 rounded-lg">
-              <div className="w-9 h-9 rounded-full bg-[#6D28D9] border border-violet-500/20 flex items-center justify-center font-bold text-white text-xs uppercase shadow-inner shrink-0 font-display">
+            <div className="flex items-center gap-3 bg-white/85 border border-[#E6E9F0] p-2.5 rounded-lg shadow-[0_8px_24px_-18px_rgba(11,31,63,0.32)]">
+              <div className="w-9 h-9 rounded-full bg-[#F1ECFE] border border-[#A78BFA]/40 flex items-center justify-center font-bold text-[#6D28D9] text-xs uppercase shrink-0 font-display">
                 {user.username.charAt(0)}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-[11px] font-bold text-white truncate">{user.username}</p>
-                <p className="text-[9px] text-gray-500 truncate font-mono uppercase font-bold">{user.role}</p>
+                <p className="text-[11px] font-bold text-[#0E1726] truncate">{user.username}</p>
+                <p className="text-[9px] text-[#6B7488] truncate font-mono uppercase font-bold">{user.role}</p>
               </div>
               <button
                 onClick={logout}
-                className="p-1.5 hover:bg-white/5 text-gray-400 hover:text-rose-400 rounded-lg transition-colors shrink-0"
+                className="p-1.5 hover:bg-rose-50 text-[#6B7488] hover:text-rose-600 rounded-lg transition-colors shrink-0"
                 title="Logout session"
               >
                 <LogOut className="w-4 h-4" />
@@ -130,8 +130,8 @@ const Sidebar = ({ isOpen, toggleSidebar }) => {
       </div>
 
       {/* Footer */}
-      <div className="p-4 border-t border-[#1B3663]/20 bg-black/10 text-center shrink-0">
-        <span className="text-[9px] text-gray-600 tracking-wider font-mono">AuthClaw v2.0.0 | Production Admin</span>
+      <div className="p-4 border-t border-[#E6E9F0] bg-white/70 text-center shrink-0">
+        <span className="text-[9px] text-[#6B7488] tracking-wider font-mono">AuthClaw.ai | Gateway Runtime</span>
       </div>
 
     </aside>

@@ -87,8 +87,8 @@ const Settings = () => {
       header: 'System User ID',
       sortable: true,
       render: (u) => (
-        <span className="font-semibold text-white font-sans flex items-center gap-2">
-          <UserCheck className="w-4 h-4 text-violet-400" />
+        <span className="font-semibold text-[#0E1726] font-sans flex items-center gap-2">
+          <UserCheck className="w-4 h-4 text-[#6D28D9]" />
           {u.username}
         </span>
       )
@@ -102,7 +102,7 @@ const Settings = () => {
     {
       key: 'permissions',
       header: 'Mapped Permissions',
-      render: (u) => <span className="text-xs text-gray-300 font-mono">{u.permissions}</span>
+      render: (u) => <span className="text-xs text-[#475069] font-mono">{u.permissions}</span>
     },
     {
       key: 'status',
@@ -119,7 +119,7 @@ const Settings = () => {
               setUserForm({ username: u.username, role: u.role, permissions: u.permissions });
               setUserModalOpen(true);
             }} 
-            className="text-violet-400 hover:text-violet-300 text-xs font-sans font-semibold transition-colors"
+            className="text-[#6D28D9] hover:text-[#6D28D9] text-xs font-sans font-semibold transition-colors"
           >
             Edit Role
           </button>
@@ -131,8 +131,8 @@ const Settings = () => {
   if (loading) {
     return (
       <div className="space-y-6 animate-pulse">
-        <div className="h-10 w-48 bg-white/5 rounded-lg"></div>
-        <div className="h-[200px] bg-white/5 rounded-xl"></div>
+        <div className="h-10 w-48 bg-[#F5F7FA] rounded-lg"></div>
+        <div className="h-[200px] bg-[#F5F7FA] rounded-xl"></div>
       </div>
     );
   }
@@ -141,22 +141,22 @@ const Settings = () => {
     <div className="space-y-6">
       {/* Title */}
       <div>
-        <h1 className="text-2xl font-bold bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">
+        <h1 className="text-2xl font-bold text-[#0E1726]">
           Settings & Access Control
         </h1>
-        <p className="text-gray-400 text-sm">
+        <p className="text-[#475069] text-sm">
           Orchestrate multi-tenant data boundaries and assign granular role-based permissions (RBAC).
         </p>
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-white/5 space-x-2">
+      <div className="flex border-b border-[#E6E9F0] space-x-2">
         <button
           onClick={() => setActiveTab('tenants')}
           className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
             activeTab === 'tenants'
-              ? 'border-violet-500 text-white bg-white/5 rounded-t-lg'
-              : 'border-transparent text-gray-400 hover:text-white hover:bg-white/5 rounded-t-lg'
+              ? 'border-[#6D28D9] text-[#0E1726] bg-[#F5F7FA] rounded-t-lg'
+              : 'border-transparent text-[#475069] hover:text-[#0E1726] hover:bg-[#F5F7FA] rounded-t-lg'
           }`}
         >
           <Layers className="w-4 h-4" />
@@ -166,8 +166,8 @@ const Settings = () => {
           onClick={() => setActiveTab('rbac')}
           className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
             activeTab === 'rbac'
-              ? 'border-violet-500 text-white bg-white/5 rounded-t-lg'
-              : 'border-transparent text-gray-400 hover:text-white hover:bg-white/5 rounded-t-lg'
+              ? 'border-[#6D28D9] text-[#0E1726] bg-[#F5F7FA] rounded-t-lg'
+              : 'border-transparent text-[#475069] hover:text-[#0E1726] hover:bg-[#F5F7FA] rounded-t-lg'
           }`}
         >
           <Users className="w-4 h-4" />
@@ -182,8 +182,8 @@ const Settings = () => {
             <div className="flex items-start gap-3">
               <Shield className="w-5 h-5 text-emerald-300 shrink-0 mt-0.5" />
               <div>
-                <h2 className="text-sm font-bold text-white">Tenant Workspace Is Created During Registration</h2>
-                <p className="text-xs text-gray-400 mt-1 leading-relaxed">
+                <h2 className="text-sm font-bold text-[#0E1726]">Tenant Workspace Is Created During Registration</h2>
+                <p className="text-xs text-[#475069] mt-1 leading-relaxed">
                   Tenant creation is handled by the verified onboarding flow. This page shows your active tenant isolation boundary and runtime usage.
                 </p>
               </div>
@@ -195,28 +195,28 @@ const Settings = () => {
               <GlassCard key={t.id} className="flex flex-col justify-between h-[210px] space-y-4">
                 <div className="flex justify-between items-start">
                   <div>
-                    <h3 className="text-base font-bold text-white">{t.name}</h3>
-                    <span className="text-[10px] text-gray-500 font-mono mt-1 block">Tenant ID: tenant-{t.id}</span>
+                    <h3 className="text-base font-bold text-[#0E1726]">{t.name}</h3>
+                    <span className="text-[10px] text-[#6B7488] font-mono mt-1 block">Tenant ID: tenant-{t.id}</span>
                   </div>
                   <StatusBadge status={t.status} />
                 </div>
 
-                <div className="space-y-1.5 text-xs text-gray-400">
+                <div className="space-y-1.5 text-xs text-[#475069]">
                   <div className="flex justify-between">
                     <span>Isolation Status:</span>
                     <strong className="text-emerald-400">Verified</strong>
                   </div>
                   <div className="flex justify-between">
                     <span>Requests Checked:</span>
-                    <strong className="text-white font-mono">{t.usage_count}</strong>
+                    <strong className="text-[#0E1726] font-mono">{t.usage_count}</strong>
                   </div>
                   <div className="flex justify-between">
                     <span>Tokens Processed:</span>
-                    <strong className="text-white font-mono">{t.tokens_used}</strong>
+                    <strong className="text-[#0E1726] font-mono">{t.tokens_used}</strong>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between border-t border-white/5 pt-3 text-[10px] text-gray-500">
+                <div className="flex items-center justify-between border-t border-[#E6E9F0] pt-3 text-[10px] text-[#6B7488]">
                   <span>Managed by onboarding</span>
                   <CheckCircle className="w-4 h-4 text-emerald-400 animate-pulse" />
                 </div>
@@ -229,12 +229,12 @@ const Settings = () => {
       {/* RBAC Content */}
       {activeTab === 'rbac' && (
         <div className="space-y-4">
-          <GlassCard hover={false} className="border-violet-500/10 bg-violet-500/5">
+          <GlassCard hover={false} className="border-[#6D28D9]/10 bg-[#F1ECFE]/70">
             <div className="flex items-start gap-3">
-              <Shield className="w-5 h-5 text-violet-300 shrink-0 mt-0.5" />
+              <Shield className="w-5 h-5 text-[#6D28D9] shrink-0 mt-0.5" />
               <div>
-                <h2 className="text-sm font-bold text-white">Tenant Role Management</h2>
-                <p className="text-xs text-gray-400 mt-1 leading-relaxed">
+                <h2 className="text-sm font-bold text-[#0E1726]">Tenant Role Management</h2>
+                <p className="text-xs text-[#475069] mt-1 leading-relaxed">
                   Public registration always creates the first verified administrator as a Super Admin. Use this page after onboarding to assign tenant users roles such as Security Admin, Compliance Officer, Developer, Auditor, or Viewer.
                 </p>
               </div>
@@ -267,28 +267,28 @@ const Settings = () => {
       <Modal isOpen={userModalOpen} onClose={() => setUserModalOpen(false)} title="Configure User Access Level">
         <form onSubmit={handleUserSubmit} className="space-y-4 text-sm">
           <div>
-            <label className="block text-xs font-semibold text-gray-400 mb-1.5">Tenant User Work Email</label>
+            <label className="block text-xs font-semibold text-[#475069] mb-1.5">Tenant User Work Email</label>
             <input
               type="email"
               required
               placeholder="e.g. user@company.com"
               value={userForm.username}
               onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
-              className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors"
+              className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] transition-colors"
             />
-            <p className="text-[10px] text-gray-500 mt-1.5 flex items-center gap-1.5 font-sans">
-              <Mail className="w-3 h-3 text-violet-400" />
+            <p className="text-[10px] text-[#6B7488] mt-1.5 flex items-center gap-1.5 font-sans">
+              <Mail className="w-3 h-3 text-[#6D28D9]" />
               The user must already exist in this tenant. Invite/onboard them first, then assign the role here.
             </p>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-400 mb-1.5">System Role</label>
+              <label className="block text-xs font-semibold text-[#475069] mb-1.5">System Role</label>
               <select
                 value={userForm.role}
                 onChange={(e) => handleRoleChange(e.target.value)}
-                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors font-bold text-xs"
+                className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] transition-colors font-bold text-xs"
               >
                 <option value="Super Admin">Super Admin</option>
                 <option value="Security Admin">Security Admin</option>
@@ -299,19 +299,19 @@ const Settings = () => {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-semibold text-gray-400 mb-1.5">Mapped Scope Permission</label>
+              <label className="block text-xs font-semibold text-[#475069] mb-1.5">Mapped Scope Permission</label>
               <input
                 type="text"
                 required
                 readOnly
                 placeholder="e.g. read_write_gateway"
                 value={userForm.permissions}
-                className="w-full bg-slate-950 border border-white/10 rounded-lg p-2.5 text-gray-300 focus:outline-none cursor-not-allowed font-mono"
+                className="w-full bg-[#F5F7FA] border border-[#E6E9F0] rounded-lg p-2.5 text-[#475069] focus:outline-none cursor-not-allowed font-mono"
               />
             </div>
           </div>
 
-          <div className="flex justify-end gap-3 pt-4 border-t border-white/5">
+          <div className="flex justify-end gap-3 pt-4 border-t border-[#E6E9F0]">
             <Button
               variant="ghost"
               size="sm"

@@ -38,16 +38,16 @@ const GatewayRequestDetail = () => {
   }, [requestId]);
 
   if (loading) {
-    return <div className="glass-card p-6 text-sm text-gray-400">Loading gateway request detail...</div>;
+    return <div className="glass-card p-6 text-sm text-[#475069]">Loading gateway request detail...</div>;
   }
 
   if (!request) {
     return (
       <div className="space-y-4">
-        <Link to="/requests" className="inline-flex items-center gap-2 text-sm text-violet-400 hover:text-violet-300">
+        <Link to="/requests" className="inline-flex items-center gap-2 text-sm text-[#6D28D9] hover:text-[#6D28D9]">
           <ArrowLeft className="w-4 h-4" /> Back to Gateway Requests
         </Link>
-        <div className="glass-card p-6 text-sm text-gray-400">Gateway request not found.</div>
+        <div className="glass-card p-6 text-sm text-[#475069]">Gateway request not found.</div>
       </div>
     );
   }
@@ -61,60 +61,60 @@ const GatewayRequestDetail = () => {
     <div className="space-y-6 font-sans">
       <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
         <div>
-          <Link to="/requests" className="inline-flex items-center gap-2 text-xs text-violet-400 hover:text-violet-300 mb-3">
+          <Link to="/requests" className="inline-flex items-center gap-2 text-xs text-[#6D28D9] hover:text-[#6D28D9] mb-3">
             <ArrowLeft className="w-3.5 h-3.5" /> Back to Gateway Requests
           </Link>
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent font-display">
+          <h1 className="text-2xl font-bold text-[#0E1726] font-display">
             Request Detail
           </h1>
-          <p className="text-xs text-gray-400 font-mono mt-1">{request.request_id}</p>
+          <p className="text-xs text-[#475069] font-mono mt-1">{request.request_id}</p>
         </div>
         <StatusBadge status={request.decision || request.status || 'UNKNOWN'} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         <GlassCard hover={false} className="p-4">
-          <div className="flex items-center gap-2 text-[10px] text-gray-500 uppercase font-bold tracking-wider font-display">
-            <Database className="w-4 h-4 text-violet-400" /> Tenant
+          <div className="flex items-center gap-2 text-[10px] text-[#6B7488] uppercase font-bold tracking-wider font-display">
+            <Database className="w-4 h-4 text-[#6D28D9]" /> Tenant
           </div>
-          <p className="text-lg font-bold text-white mt-2 font-mono">{request.tenant_id || 'N/A'}</p>
+          <p className="text-lg font-bold text-[#0E1726] mt-2 font-mono">{request.tenant_id || 'N/A'}</p>
         </GlassCard>
         
         <GlassCard hover={false} className="p-4">
-          <div className="flex items-center gap-2 text-[10px] text-gray-500 uppercase font-bold tracking-wider font-display">
-            <Router className="w-4 h-4 text-violet-400" /> Provider
+          <div className="flex items-center gap-2 text-[10px] text-[#6B7488] uppercase font-bold tracking-wider font-display">
+            <Router className="w-4 h-4 text-[#6D28D9]" /> Provider
           </div>
-          <p className="text-lg font-bold text-white mt-2 capitalize font-mono">{request.provider || 'N/A'}</p>
-          <p className="text-xs text-gray-500 font-mono mt-1">{request.model || 'N/A'}</p>
+          <p className="text-lg font-bold text-[#0E1726] mt-2 capitalize font-mono">{request.provider || 'N/A'}</p>
+          <p className="text-xs text-[#6B7488] font-mono mt-1">{request.model || 'N/A'}</p>
         </GlassCard>
         
         <GlassCard hover={false} className="p-4">
-          <div className="flex items-center gap-2 text-[10px] text-gray-500 uppercase font-bold tracking-wider font-display">
-            <GitBranch className="w-4 h-4 text-violet-400" /> Route
+          <div className="flex items-center gap-2 text-[10px] text-[#6B7488] uppercase font-bold tracking-wider font-display">
+            <GitBranch className="w-4 h-4 text-[#6D28D9]" /> Route
           </div>
-          <p className="text-lg font-bold text-white mt-2 font-mono">{request.route_id || 'Default'}</p>
+          <p className="text-lg font-bold text-[#0E1726] mt-2 font-mono">{request.route_id || 'Default'}</p>
         </GlassCard>
         
         <GlassCard hover={false} className="p-4">
-          <div className="flex items-center gap-2 text-[10px] text-gray-500 uppercase font-bold tracking-wider font-display">
-            <Clock className="w-4 h-4 text-violet-400" /> Duration
+          <div className="flex items-center gap-2 text-[10px] text-[#6B7488] uppercase font-bold tracking-wider font-display">
+            <Clock className="w-4 h-4 text-[#6D28D9]" /> Duration
           </div>
-          <p className="text-lg font-bold text-white mt-2 font-mono">{request.duration_ms ?? request.latency ?? 0} ms</p>
-          <p className="text-xs text-gray-500 mt-1 font-mono">{formatDate(request.created_at || request.timestamp)}</p>
+          <p className="text-lg font-bold text-[#0E1726] mt-2 font-mono">{request.duration_ms ?? request.latency ?? 0} ms</p>
+          <p className="text-xs text-[#6B7488] mt-1 font-mono">{formatDate(request.created_at || request.timestamp)}</p>
         </GlassCard>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <GlassCard hover={false} className="p-5">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-white mb-3 font-display">Provider Routing</h3>
+          <h3 className="text-xs font-bold uppercase tracking-wider text-[#0E1726] mb-3 font-display">Provider Routing</h3>
           {routerEvents.length === 0 ? (
-            <p className="text-xs text-gray-500">No provider router events recorded.</p>
+            <p className="text-xs text-[#6B7488]">No provider router events recorded.</p>
           ) : (
             <div className="space-y-2">
               {routerEvents.map((event, index) => (
-                <div key={index} className="bg-slate-950/60 border border-white/5 rounded-lg p-3 text-xs font-mono">
-                  <p className="font-bold text-violet-300">{event.event_type || event.event}</p>
-                  <p className="text-gray-400 mt-1">{event.details}</p>
+                <div key={index} className="bg-[#F5F7FA] border border-[#E6E9F0] rounded-lg p-3 text-xs font-mono">
+                  <p className="font-bold text-[#6D28D9]">{event.event_type || event.event}</p>
+                  <p className="text-[#475069] mt-1">{event.details}</p>
                 </div>
               ))}
             </div>
@@ -122,15 +122,15 @@ const GatewayRequestDetail = () => {
         </GlassCard>
 
         <GlassCard hover={false} className="p-5">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-white mb-3 font-display">Approval Decisions</h3>
+          <h3 className="text-xs font-bold uppercase tracking-wider text-[#0E1726] mb-3 font-display">Approval Decisions</h3>
           {approvalEvents.length === 0 ? (
-            <p className="text-xs text-gray-500">No approval events recorded for this request.</p>
+            <p className="text-xs text-[#6B7488]">No approval events recorded for this request.</p>
           ) : (
             <div className="space-y-2">
               {approvalEvents.map((event, index) => (
-                <div key={index} className="bg-slate-950/60 border border-white/5 rounded-lg p-3 text-xs font-mono">
+                <div key={index} className="bg-[#F5F7FA] border border-[#E6E9F0] rounded-lg p-3 text-xs font-mono">
                   <p className="font-bold text-amber-300">{event.event_type || event.event}</p>
-                  <p className="text-gray-400 mt-1">{event.details}</p>
+                  <p className="text-[#475069] mt-1">{event.details}</p>
                 </div>
               ))}
             </div>
@@ -138,15 +138,15 @@ const GatewayRequestDetail = () => {
         </GlassCard>
 
         <GlassCard hover={false} className="p-5">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-white mb-3 font-display">Audit References</h3>
+          <h3 className="text-xs font-bold uppercase tracking-wider text-[#0E1726] mb-3 font-display">Audit References</h3>
           {auditEvents.length === 0 ? (
-            <p className="text-xs text-gray-500">No audit or registrar events recorded.</p>
+            <p className="text-xs text-[#6B7488]">No audit or registrar events recorded.</p>
           ) : (
             <div className="space-y-2">
               {auditEvents.map((event, index) => (
-                <div key={index} className="bg-slate-950/60 border border-white/5 rounded-lg p-3 text-xs font-mono">
+                <div key={index} className="bg-[#F5F7FA] border border-[#E6E9F0] rounded-lg p-3 text-xs font-mono">
                   <p className="font-bold text-emerald-300">{event.agent_name || event.agent}</p>
-                  <p className="text-gray-400 mt-1">{event.details}</p>
+                  <p className="text-[#475069] mt-1">{event.details}</p>
                 </div>
               ))}
             </div>
@@ -155,24 +155,24 @@ const GatewayRequestDetail = () => {
       </div>
 
       <GlassCard hover={false} className="p-5">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-white mb-4 flex items-center gap-2 font-display">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0E1726] mb-4 flex items-center gap-2 font-display">
           <ShieldCheck className="w-4 h-4 text-emerald-400 animate-pulse" />
           Agent Sequence
         </h3>
         <div className="space-y-3">
           {trace.length === 0 ? (
-            <p className="text-xs text-gray-500">No trace events recorded for this request.</p>
+            <p className="text-xs text-[#6B7488]">No trace events recorded for this request.</p>
           ) : (
             trace.map((event, index) => (
-              <div key={index} className="grid grid-cols-[64px_160px_1fr] gap-4 items-start bg-slate-950/40 border border-white/5 rounded-lg p-3 text-xs">
-                <div className="font-mono text-violet-300">#{event.sequence ?? index + 1}</div>
+              <div key={index} className="grid grid-cols-[64px_160px_1fr] gap-4 items-start bg-[#F5F7FA] border border-[#E6E9F0] rounded-lg p-3 text-xs">
+                <div className="font-mono text-[#6D28D9]">#{event.sequence ?? index + 1}</div>
                 <div>
-                  <p className="font-bold text-white">{event.agent_name || event.agent || 'Agent'}</p>
-                  <p className="text-[10px] text-gray-500 font-mono">{formatDate(event.timestamp)}</p>
+                  <p className="font-bold text-[#0E1726]">{event.agent_name || event.agent || 'Agent'}</p>
+                  <p className="text-[10px] text-[#6B7488] font-mono">{formatDate(event.timestamp)}</p>
                 </div>
                 <div>
-                  <p className="font-bold text-gray-300">{event.event_type || event.event}</p>
-                  <p className="text-gray-500 mt-1 whitespace-pre-wrap break-words">{event.details}</p>
+                  <p className="font-bold text-[#475069]">{event.event_type || event.event}</p>
+                  <p className="text-[#6B7488] mt-1 whitespace-pre-wrap break-words">{event.details}</p>
                 </div>
               </div>
             ))

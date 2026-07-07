@@ -16,7 +16,9 @@ import {
   Building2, 
   Copy, 
   Check, 
-  Info 
+  Info,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 
 const Login = ({ initialStep = 'login' }) => {
@@ -71,6 +73,11 @@ const Login = ({ initialStep = 'login' }) => {
   // UI states
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showRegPassword, setShowRegPassword] = useState(false);
+  const [showPasswordResetNew, setShowPasswordResetNew] = useState(false);
+  const [showPasswordResetConfirm, setShowPasswordResetConfirm] = useState(false);
+  const [showMfaResetPassword, setShowMfaResetPassword] = useState(false);
   const [totpSecret, setTotpSecret] = useState('');
   const [otpauthUri, setOtpauthUri] = useState('');
   // Transition helper when MFA is required
@@ -279,8 +286,8 @@ const Login = ({ initialStep = 'login' }) => {
   };
 
   const startMfaReset = () => {
-    setMfaResetEmail(username.trim());
-    setMfaResetPassword(password);
+    setMfaResetEmail(passwordResetEmail.trim() || username.trim());
+    setMfaResetPassword(step === 'login' ? password : '');
     setMfaResetToken('');
     setError(null);
     setStep('mfa_reset_request');
@@ -324,7 +331,9 @@ const Login = ({ initialStep = 'login' }) => {
 
     try {
       const response = await apiClient.post('/auth/mfa/reset-confirm', {
-        token: mfaResetToken.trim()
+        token: mfaResetToken.trim(),
+        username: mfaResetEmail.trim(),
+        password: mfaResetPassword
       });
       setTotpSecret(response.data.totp_secret || '');
       setOtpauthUri(response.data.otpauth_uri || '');
@@ -450,7 +459,7 @@ const Login = ({ initialStep = 'login' }) => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#08152B] px-4 relative overflow-hidden font-sans">
+    <div className="min-h-screen flex items-center justify-center bg-[radial-gradient(circle_at_top_left,rgba(109,40,217,0.08),transparent_34%),radial-gradient(circle_at_top_right,rgba(233,169,60,0.09),transparent_30%),#FBFAF9] px-4 relative overflow-hidden font-sans">
       {/* Background gradients */}
       <div 
         className="absolute inset-0 pointer-events-none"
@@ -464,31 +473,31 @@ const Login = ({ initialStep = 'login' }) => {
       />
 
       {/* Core card */}
-      <div className="w-full max-w-[460px] glass-card p-8 space-y-6 border border-white/5 shadow-2xl relative z-10 select-none rounded-xl backdrop-blur-md bg-navy-900/40">
+      <div className="w-full max-w-[460px] glass-card p-8 space-y-6 border border-[#E6E9F0] shadow-[0_1px_2px_rgba(11,31,63,0.05),0_24px_60px_-24px_rgba(11,31,63,0.28)] relative z-10 select-none rounded-xl backdrop-blur-md bg-white/90">
         
         {/* Logo Section */}
         <div className="flex flex-col items-center text-center space-y-2">
-          <div className="p-3 bg-gradient-to-tr from-violet-600 to-fuchsia-600 rounded-xl shadow-xl shadow-violet-500/20">
+          <div className="p-3 bg-[linear-gradient(135deg,#6D28D9_0%,#E9A93C_100%)] rounded-xl shadow-xl shadow-violet-500/20">
             <ShieldAlert className="w-7 h-7 text-white" />
           </div>
-          <h1 className="text-xl font-bold bg-gradient-to-r from-white via-gray-200 to-gray-400 bg-clip-text text-transparent tracking-tight font-display">
+          <h1 className="text-xl font-bold text-[#0E1726] tracking-tight font-display">
             AuthClaw Console
           </h1>
-          <p className="text-xs text-gray-500 max-w-[320px]">
+          <p className="text-xs text-[#6B7488] max-w-[320px]">
             Enterprise AI Security Gateway and Governance Platform
           </p>
         </div>
 
         {/* Tab switcher for Sign In / Register (only in login/register steps) */}
         {(step === 'login' || step === 'register') && (
-          <div className="flex bg-slate-950/60 p-1 rounded-lg border border-white/5">
+          <div className="flex bg-white p-1 rounded-lg border border-[#E6E9F0]">
             <button
               type="button"
               onClick={() => { setStep('login'); setError(null); }}
               className={`flex-1 py-2 text-xs font-semibold rounded-md transition-all font-display ${
                 step === 'login' 
-                  ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow' 
-                  : 'text-gray-400 hover:text-white'
+                  ? 'bg-[#6D28D9] hover:bg-[#7C3AED] text-white shadow' 
+                  : 'text-[#475069] hover:text-[#6D28D9]'
               }`}
             >
               Sign In
@@ -498,8 +507,8 @@ const Login = ({ initialStep = 'login' }) => {
               onClick={() => { setStep('register'); setError(null); }}
               className={`flex-1 py-2 text-xs font-semibold rounded-md transition-all font-display ${
                 step === 'register' 
-                  ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow' 
-                  : 'text-gray-400 hover:text-white'
+                  ? 'bg-[#6D28D9] hover:bg-[#7C3AED] text-white shadow' 
+                  : 'text-[#475069] hover:text-[#6D28D9]'
               }`}
             >
               Register Tenant
@@ -520,9 +529,9 @@ const Login = ({ initialStep = 'login' }) => {
             <div className="space-y-3">
               {/* Username */}
               <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-1">Security Username or Email</label>
+                <label className="block text-xs font-semibold text-[#475069] mb-1">Security Username or Email</label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#6B7488]">
                     <Mail className="w-4 h-4" />
                   </div>
                   <input
@@ -531,7 +540,7 @@ const Login = ({ initialStep = 'login' }) => {
                     placeholder="admin@organization.com"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    className="w-full bg-slate-950/60 border border-white/5 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/50 transition duration-200 placeholder-gray-600 font-medium"
+                    className="w-full bg-white border border-[#E6E9F0] rounded-lg pl-10 pr-4 py-2.5 text-sm text-[#0E1726] shadow-sm focus:outline-none focus:border-[#A78BFA] focus:ring-2 focus:ring-[#6D28D9]/15 transition duration-200 placeholder-[#6B7488] font-medium"
                   />
                 </div>
               </div>
@@ -539,49 +548,64 @@ const Login = ({ initialStep = 'login' }) => {
               {/* Password */}
               <div>
                 <div className="flex justify-between items-center mb-1">
-                  <label className="block text-xs font-semibold text-gray-400">Security Passcode</label>
+                  <label className="block text-xs font-semibold text-[#475069]">Security Passcode</label>
                   <a 
                     href="#forgot" 
                     onClick={handleForgotPassword}
-                    className="text-[11px] font-semibold text-violet-400 hover:text-violet-300 transition-colors"
+                    className="text-[11px] font-semibold text-[#6D28D9] hover:text-[#6D28D9] transition-colors"
                   >
                     Forgot Password?
                   </a>
                 </div>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#6B7488]">
                     <Lock className="w-4 h-4" />
                   </div>
                   <input
-                    type="password"
+                    type={showPassword ? 'text' : 'password'}
                     required
-                    placeholder="••••••••••••"
+                    placeholder="************"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-slate-950/60 border border-white/5 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/50 transition duration-200 placeholder-gray-600 font-medium"
+                    className="w-full bg-white border border-[#E6E9F0] rounded-lg pl-10 pr-12 py-2.5 text-sm text-[#0E1726] shadow-sm focus:outline-none focus:border-[#A78BFA] focus:ring-2 focus:ring-[#6D28D9]/15 transition duration-200 placeholder-[#6B7488] font-medium"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((value) => !value)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[#6B7488] hover:text-[#6D28D9] transition-colors"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
             </div>
 
             {/* Remember Me */}
-            <div className="flex items-center justify-between text-xs select-none pt-1">
-              <label className="flex items-center gap-2 text-gray-400 cursor-pointer">
+            <div className="flex items-center justify-between gap-3 text-xs select-none pt-1">
+              <label className="flex items-center gap-2 text-[#475069] cursor-pointer">
                 <input
                   type="checkbox"
                   checked={rememberMe}
                   onChange={(e) => setRememberMe(e.target.checked)}
-                  className="rounded border-white/10 bg-slate-900 text-violet-600 focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                  className="rounded border-[#E6E9F0] bg-white text-violet-600 focus:ring-0 focus:ring-offset-0 cursor-pointer"
                 />
                 Remember this workstation
               </label>
+              <button
+                type="button"
+                onClick={startMfaReset}
+                className="font-semibold text-[#6D28D9] hover:text-[#7C3AED] transition-colors"
+              >
+                Lost authenticator?
+              </button>
             </div>
 
             {/* Submit */}
             <button
               type="submit"
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
+              className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#6D28D9] hover:bg-[#7C3AED] text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
             >
               {loading ? (
                 <>
@@ -603,9 +627,9 @@ const Login = ({ initialStep = 'login' }) => {
             <div className="space-y-3">
               {/* Organization Name */}
               <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-1">Organization Name</label>
+                <label className="block text-xs font-semibold text-[#475069] mb-1">Organization Name</label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#6B7488]">
                     <Building2 className="w-4 h-4" />
                   </div>
                   <input
@@ -614,16 +638,16 @@ const Login = ({ initialStep = 'login' }) => {
                     placeholder="e.g. TrueFirms Inc."
                     value={regName}
                     onChange={(e) => setRegName(e.target.value)}
-                    className="w-full bg-slate-950/60 border border-white/5 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/50 transition duration-200 placeholder-gray-600 font-medium"
+                    className="w-full bg-white border border-[#E6E9F0] rounded-lg pl-10 pr-4 py-2.5 text-sm text-[#0E1726] shadow-sm focus:outline-none focus:border-[#A78BFA] focus:ring-2 focus:ring-[#6D28D9]/15 transition duration-200 placeholder-[#6B7488] font-medium"
                   />
                 </div>
               </div>
 
               {/* Full Name */}
               <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-1">Full Name</label>
+                <label className="block text-xs font-semibold text-[#475069] mb-1">Full Name</label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#6B7488]">
                     <User className="w-4 h-4" />
                   </div>
                   <input
@@ -632,16 +656,16 @@ const Login = ({ initialStep = 'login' }) => {
                     placeholder="Your full name"
                     value={regFullName}
                     onChange={(e) => setRegFullName(e.target.value)}
-                    className="w-full bg-slate-950/60 border border-white/5 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/50 transition duration-200 placeholder-gray-600 font-medium"
+                    className="w-full bg-white border border-[#E6E9F0] rounded-lg pl-10 pr-4 py-2.5 text-sm text-[#0E1726] shadow-sm focus:outline-none focus:border-[#A78BFA] focus:ring-2 focus:ring-[#6D28D9]/15 transition duration-200 placeholder-[#6B7488] font-medium"
                   />
                 </div>
               </div>
 
               {/* Email */}
               <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-1">Administrator Email</label>
+                <label className="block text-xs font-semibold text-[#475069] mb-1">Administrator Email</label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#6B7488]">
                     <Mail className="w-4 h-4" />
                   </div>
                   <input
@@ -650,19 +674,19 @@ const Login = ({ initialStep = 'login' }) => {
                     placeholder="admin@organization.com"
                     value={regEmail}
                     onChange={(e) => setRegEmail(e.target.value)}
-                    className="w-full bg-slate-950/60 border border-white/5 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/50 transition duration-200 placeholder-gray-600 font-medium"
+                    className="w-full bg-white border border-[#E6E9F0] rounded-lg pl-10 pr-4 py-2.5 text-sm text-[#0E1726] shadow-sm focus:outline-none focus:border-[#A78BFA] focus:ring-2 focus:ring-[#6D28D9]/15 transition duration-200 placeholder-[#6B7488] font-medium"
                   />
                 </div>
-                <p className="mt-1.5 text-[10px] text-violet-300">
+                <p className="mt-1.5 text-[10px] text-[#6D28D9]">
                   This first verified user becomes the Tenant Super Admin. Additional roles are assigned later in Settings.
                 </p>
               </div>
 
               {/* Domain */}
               <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-1">Company Domain</label>
+                <label className="block text-xs font-semibold text-[#475069] mb-1">Company Domain</label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#6B7488]">
                     <Globe className="w-4 h-4" />
                   </div>
                   <input
@@ -671,34 +695,42 @@ const Login = ({ initialStep = 'login' }) => {
                     placeholder="organization.com"
                     value={regDomain}
                     onChange={(e) => setRegDomain(e.target.value)}
-                    className="w-full bg-slate-950/60 border border-white/5 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/50 transition duration-200 placeholder-gray-600 font-medium"
+                    className="w-full bg-white border border-[#E6E9F0] rounded-lg pl-10 pr-4 py-2.5 text-sm text-[#0E1726] shadow-sm focus:outline-none focus:border-[#A78BFA] focus:ring-2 focus:ring-[#6D28D9]/15 transition duration-200 placeholder-[#6B7488] font-medium"
                   />
                 </div>
               </div>
 
               {/* Password */}
               <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-1">Access Passcode</label>
+                <label className="block text-xs font-semibold text-[#475069] mb-1">Access Passcode</label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#6B7488]">
                     <Lock className="w-4 h-4" />
                   </div>
                   <input
-                    type="password"
+                    type={showRegPassword ? 'text' : 'password'}
                     required
-                    placeholder="••••••••••••"
+                    placeholder="************"
                     value={regPassword}
                     onChange={(e) => setRegPassword(e.target.value)}
-                    className="w-full bg-slate-950/60 border border-white/5 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/50 transition duration-200 placeholder-gray-600 font-medium"
+                    className="w-full bg-white border border-[#E6E9F0] rounded-lg pl-10 pr-12 py-2.5 text-sm text-[#0E1726] shadow-sm focus:outline-none focus:border-[#A78BFA] focus:ring-2 focus:ring-[#6D28D9]/15 transition duration-200 placeholder-[#6B7488] font-medium"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowRegPassword((value) => !value)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[#6B7488] hover:text-[#6D28D9] transition-colors"
+                    aria-label={showRegPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showRegPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
             </div>
 
             {/* Disclaimer */}
-            <div className="p-3 bg-violet-950/20 border border-violet-500/10 rounded-lg flex items-start gap-2.5">
-              <Info className="w-4 h-4 text-violet-400 shrink-0 mt-0.5" />
-              <p className="text-[10px] text-gray-400 leading-normal font-sans">
+            <div className="p-3 bg-[#F1ECFE]/80 border border-[#A78BFA]/35 rounded-lg flex items-start gap-2.5">
+              <Info className="w-4 h-4 text-[#6D28D9] shrink-0 mt-0.5" />
+              <p className="text-[10px] text-[#475069] leading-normal font-sans">
                 <strong>Key Security Notice:</strong> Registration activates only after email and domain verification. The registering administrator receives Super Admin access for this tenant; provider secrets are encrypted and never exposed across tenants.
               </p>
             </div>
@@ -707,7 +739,7 @@ const Login = ({ initialStep = 'login' }) => {
             <button
               type="submit"
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
+              className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#6D28D9] hover:bg-[#7C3AED] text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
             >
               {loading ? (
                 <>
@@ -726,19 +758,19 @@ const Login = ({ initialStep = 'login' }) => {
         {step === 'mfa_enroll' && (
           <div className="space-y-5 animate-fadeIn">
             <div className="space-y-2 text-center">
-              <div className="flex justify-center text-violet-400 mb-1">
+              <div className="flex justify-center text-[#6D28D9] mb-1">
                 <ShieldAlert className="w-8 h-8" />
               </div>
-              <h3 className="text-sm font-bold text-white font-display">MFA Enrollment (Security Configuration)</h3>
-              <p className="text-[11px] text-gray-400 leading-relaxed">
+              <h3 className="text-sm font-bold text-[#0E1726] font-display">MFA Enrollment (Security Configuration)</h3>
+              <p className="text-[11px] text-[#475069] leading-relaxed">
                 Scan the QR link or manually enter the secret key in your authenticator app (e.g. Google Authenticator, Authy).
               </p>
             </div>
 
-            <div className="space-y-3 bg-[#08152B] p-3.5 rounded-lg border border-white/5">
+            <div className="space-y-3 bg-[radial-gradient(circle_at_top_left,rgba(109,40,217,0.08),transparent_34%),radial-gradient(circle_at_top_right,rgba(233,169,60,0.09),transparent_30%),#FBFAF9] p-3.5 rounded-lg border border-[#E6E9F0]">
               <div>
-                <label className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Base32 Secret Key</label>
-                <div className="flex items-center justify-between gap-2 bg-slate-950 p-2.5 rounded border border-white/5 font-mono text-xs text-violet-400 select-all overflow-x-auto">
+                <label className="block text-[10px] uppercase font-bold text-[#6B7488] mb-1">Base32 Secret Key</label>
+                <div className="flex items-center justify-between gap-2 bg-white p-2.5 rounded border border-[#E6E9F0] font-mono text-xs text-[#6D28D9] select-all overflow-x-auto">
                   <span className="whitespace-nowrap break-all">{totpSecret}</span>
                   <button
                     type="button"
@@ -746,7 +778,7 @@ const Login = ({ initialStep = 'login' }) => {
                       navigator.clipboard.writeText(totpSecret);
                       addToast('Secret Key copied to clipboard!', 'success');
                     }}
-                    className="text-gray-400 hover:text-white shrink-0"
+                    className="text-[#475069] hover:text-[#6D28D9] shrink-0"
                   >
                     <Copy className="w-3.5 h-3.5" />
                   </button>
@@ -754,8 +786,8 @@ const Login = ({ initialStep = 'login' }) => {
               </div>
 
               <div>
-                <label className="block text-[10px] uppercase font-bold text-gray-500 mb-1">OTPAuth URI (QR Link)</label>
-                <div className="flex items-center justify-between gap-2 bg-slate-950 p-2.5 rounded border border-white/5 font-mono text-[10px] text-gray-400 select-all overflow-x-auto">
+                <label className="block text-[10px] uppercase font-bold text-[#6B7488] mb-1">OTPAuth URI (QR Link)</label>
+                <div className="flex items-center justify-between gap-2 bg-white p-2.5 rounded border border-[#E6E9F0] font-mono text-[10px] text-[#475069] select-all overflow-x-auto">
                   <span className="truncate max-w-[220px]">{otpauthUri}</span>
                   <button
                     type="button"
@@ -763,7 +795,7 @@ const Login = ({ initialStep = 'login' }) => {
                       navigator.clipboard.writeText(otpauthUri);
                       addToast('OTPAuth URI copied to clipboard!', 'success');
                     }}
-                    className="text-gray-400 hover:text-white shrink-0"
+                    className="text-[#475069] hover:text-[#6D28D9] shrink-0"
                   >
                     <Copy className="w-3.5 h-3.5" />
                   </button>
@@ -771,9 +803,9 @@ const Login = ({ initialStep = 'login' }) => {
               </div>
             </div>
 
-            <div className="p-3 bg-slate-900/40 border border-white/5 rounded-lg flex items-start gap-2.5">
-              <Info className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" />
-              <p className="text-[10px] text-gray-500 leading-normal font-sans">
+            <div className="p-3 bg-[#F5F7FA]/80 border border-[#E6E9F0] rounded-lg flex items-start gap-2.5">
+              <Info className="w-4 h-4 text-[#475069] shrink-0 mt-0.5" />
+              <p className="text-[10px] text-[#6B7488] leading-normal font-sans">
                 IMPORTANT: This secret key is shown ONLY once. Ensure you save it securely now before proceeding.
               </p>
             </div>
@@ -781,7 +813,7 @@ const Login = ({ initialStep = 'login' }) => {
             <button
               type="button"
               onClick={() => setStep('verify_email')}
-              className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all font-display"
+              className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#6D28D9] hover:bg-[#7C3AED] text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all font-display"
             >
               I have saved the key, proceed to verify email
             </button>
@@ -792,31 +824,31 @@ const Login = ({ initialStep = 'login' }) => {
         {step === 'verify_email' && (
           <form onSubmit={handleVerifyEmailSubmit} className="space-y-5 animate-fadeIn">
             <div className="space-y-2 text-center">
-              <div className="flex justify-center text-violet-400 mb-1">
+              <div className="flex justify-center text-[#6D28D9] mb-1">
                 <Mail className="w-8 h-8 animate-pulse" />
               </div>
-              <h3 className="text-sm font-bold text-white font-display">Email Verification Required</h3>
-              <p className="text-[11px] text-gray-400 leading-relaxed px-2">
-                We sent a verification token to <strong className="text-violet-400">{emailToVerify}</strong>. Enter the token from that email below.
+              <h3 className="text-sm font-bold text-[#0E1726] font-display">Email Verification Required</h3>
+              <p className="text-[11px] text-[#475069] leading-relaxed px-2">
+                We sent a verification token to <strong className="text-[#6D28D9]">{emailToVerify}</strong>. Enter the token from that email below.
               </p>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-400 mb-1">Verification Token</label>
+              <label className="block text-xs font-semibold text-[#475069] mb-1">Verification Token</label>
               <input
                 type="text"
                 required
                 placeholder="Paste email token here..."
                 value={emailToken}
                 onChange={(e) => setEmailToken(e.target.value)}
-                className="w-full bg-slate-950/60 border border-white/5 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/50 transition duration-200 text-center font-mono placeholder-gray-600"
+                className="w-full bg-white border border-[#E6E9F0] rounded-lg px-4 py-2.5 text-sm text-[#0E1726] shadow-sm focus:outline-none focus:border-[#A78BFA] focus:ring-2 focus:ring-[#6D28D9]/15 transition duration-200 text-center font-mono placeholder-[#6B7488]"
               />
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
+              className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#6D28D9] hover:bg-[#7C3AED] text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
             >
               {loading ? (
                 <RefreshCw className="w-4 h-4 animate-spin" />
@@ -829,9 +861,9 @@ const Login = ({ initialStep = 'login' }) => {
               <button
                 type="button"
                 onClick={goBackToLogin}
-                className="text-xs text-gray-500 hover:text-white transition-colors"
+                className="text-xs text-[#6B7488] hover:text-[#6D28D9] transition-colors"
               >
-                ← Return to Sign In
+                Back to Sign In
               </button>
             </div>
           </form>
@@ -841,35 +873,35 @@ const Login = ({ initialStep = 'login' }) => {
         {step === 'verify_domain' && (
           <form onSubmit={handleVerifyDomainSubmit} className="space-y-5 animate-fadeIn">
             <div className="space-y-2 text-center">
-              <div className="flex justify-center text-violet-400 mb-1">
+              <div className="flex justify-center text-[#6D28D9] mb-1">
                 <Globe className="w-8 h-8" />
               </div>
-              <h3 className="text-sm font-bold text-white font-display">Domain Ownership Verification</h3>
-              <p className="text-[11px] text-gray-400 leading-relaxed">
-                Configure the following TXT record on your DNS zone for domain <strong className="text-violet-400">{domainToVerify}</strong>:
+              <h3 className="text-sm font-bold text-[#0E1726] font-display">Domain Ownership Verification</h3>
+              <p className="text-[11px] text-[#475069] leading-relaxed">
+                Configure the following TXT record on your DNS zone for domain <strong className="text-[#6D28D9]">{domainToVerify}</strong>:
               </p>
             </div>
 
-            <div className="space-y-3 bg-[#08152B] p-3.5 rounded-lg border border-white/5">
-              <div className="flex justify-between items-center text-[10px] text-gray-500 font-semibold uppercase tracking-wider font-mono">
+            <div className="space-y-3 bg-[radial-gradient(circle_at_top_left,rgba(109,40,217,0.08),transparent_34%),radial-gradient(circle_at_top_right,rgba(233,169,60,0.09),transparent_30%),#FBFAF9] p-3.5 rounded-lg border border-[#E6E9F0]">
+              <div className="flex justify-between items-center text-[10px] text-[#6B7488] font-semibold uppercase tracking-wider font-mono">
                 <span>Record Type / Name</span>
                 <span>TXT / @</span>
               </div>
-              <div className="flex items-center justify-between gap-2 bg-slate-950 p-2.5 rounded border border-white/5 font-mono text-xs text-violet-400 select-all overflow-x-auto">
+              <div className="flex items-center justify-between gap-2 bg-white p-2.5 rounded border border-[#E6E9F0] font-mono text-xs text-[#6D28D9] select-all overflow-x-auto">
                 <span className="whitespace-nowrap break-all">{domainToken}</span>
                 <button
                   type="button"
                   onClick={copyToClipboard}
-                  className="text-gray-400 hover:text-white shrink-0"
+                  className="text-[#475069] hover:text-[#6D28D9] shrink-0"
                 >
                   {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
               </div>
             </div>
 
-            <div className="p-3 bg-slate-900/40 border border-white/5 rounded-lg flex items-start gap-2.5">
-              <Info className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" />
-              <p className="text-[10px] text-gray-500 leading-normal font-sans">
+            <div className="p-3 bg-[#F5F7FA]/80 border border-[#E6E9F0] rounded-lg flex items-start gap-2.5">
+              <Info className="w-4 h-4 text-[#475069] shrink-0 mt-0.5" />
+              <p className="text-[10px] text-[#6B7488] leading-normal font-sans">
                 Our DNS resolver queries standard root servers. Propagation can take several minutes. Ensure record points strictly to the token value.
               </p>
             </div>
@@ -877,7 +909,7 @@ const Login = ({ initialStep = 'login' }) => {
             <button
               type="submit"
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
+              className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#6D28D9] hover:bg-[#7C3AED] text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
             >
               {loading ? (
                 <>
@@ -892,9 +924,9 @@ const Login = ({ initialStep = 'login' }) => {
               <button
                 type="button"
                 onClick={goBackToLogin}
-                className="text-xs text-gray-500 hover:text-white transition-colors"
+                className="text-xs text-[#6B7488] hover:text-[#6D28D9] transition-colors"
               >
-                ← Return to Sign In
+                Back to Sign In
               </button>
             </div>
           </form>
@@ -904,12 +936,12 @@ const Login = ({ initialStep = 'login' }) => {
         {step === 'otp' && (
           <form onSubmit={handleOtpSubmit} className="space-y-6 animate-fadeIn">
             <div className="space-y-3 text-center">
-              <div className="flex justify-center text-violet-400 mb-1">
+              <div className="flex justify-center text-[#6D28D9] mb-1">
                 <KeyRound className="w-8 h-8" />
               </div>
-              <h3 className="text-sm font-bold text-white font-display">MFA Multi-Factor Verification</h3>
-              <p className="text-[11px] text-gray-500 leading-relaxed px-4">
-                Workstation requires multi-factor clearance. Enter the 6-digit code from your authenticator app.
+              <h3 className="text-sm font-bold text-[#0E1726] font-display">MFA Multi-Factor Verification</h3>
+              <p className="text-[11px] text-[#6B7488] leading-relaxed px-4">
+                Enter the 6-digit code from the AuthClaw entry in your authenticator app. If you no longer have that entry, use Lost authenticator.
               </p>
             </div>
 
@@ -925,7 +957,7 @@ const Login = ({ initialStep = 'login' }) => {
                   value={digit}
                   onChange={(e) => handleOtpChange(i, e.target.value)}
                   onKeyDown={(e) => handleKeyDown(i, e)}
-                  className="w-12 h-12 bg-slate-950/60 border border-white/5 rounded-lg text-center text-lg font-bold text-white focus:outline-none focus:border-violet-500 transition-colors font-mono"
+                  className="w-12 h-12 bg-white border border-[#E6E9F0] rounded-lg text-center text-lg font-bold text-[#0E1726] shadow-sm focus:outline-none focus:border-[#A78BFA] focus:ring-2 focus:ring-[#6D28D9]/15 transition-colors font-mono"
                 />
               ))}
             </div>
@@ -935,7 +967,7 @@ const Login = ({ initialStep = 'login' }) => {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
+                className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#6D28D9] hover:bg-[#7C3AED] text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
               >
                 {loading ? (
                   <>
@@ -948,19 +980,19 @@ const Login = ({ initialStep = 'login' }) => {
                 )}
               </button>
 
-              <div className="flex justify-between items-center text-xs text-gray-500 px-1">
+              <div className="flex justify-between items-center text-xs text-[#6B7488] px-1">
                 <button
                   type="button"
                   onClick={goBackToLogin}
-                  className="hover:text-white transition-colors"
+                  className="hover:text-[#6D28D9] transition-colors"
                 >
-                  ← Change credentials
+                  Change credentials
                 </button>
                 
                 <button
                   type="button"
                   onClick={startMfaReset}
-                  className="font-semibold text-violet-400 hover:text-violet-300 transition-colors"
+                  className="font-semibold text-[#6D28D9] hover:text-[#6D28D9] transition-colors"
                 >
                   Lost authenticator?
                 </button>
@@ -973,19 +1005,19 @@ const Login = ({ initialStep = 'login' }) => {
         {step === 'password_reset_request' && (
           <form onSubmit={handlePasswordResetRequest} className="space-y-5 animate-fadeIn">
             <div className="space-y-2 text-center">
-              <div className="flex justify-center text-violet-400 mb-1">
+              <div className="flex justify-center text-[#6D28D9] mb-1">
                 <KeyRound className="w-8 h-8" />
               </div>
-              <h3 className="text-sm font-bold text-white font-display">Reset Password</h3>
-              <p className="text-[11px] text-gray-400 leading-relaxed px-2">
+              <h3 className="text-sm font-bold text-[#0E1726] font-display">Reset Password</h3>
+              <p className="text-[11px] text-[#475069] leading-relaxed px-2">
                 Enter your verified account email. AuthClaw will send a one-time password reset token.
               </p>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-400 mb-1">Account Email</label>
+              <label className="block text-xs font-semibold text-[#475069] mb-1">Account Email</label>
               <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#6B7488]">
                   <Mail className="w-4 h-4" />
                 </div>
                 <input
@@ -993,7 +1025,7 @@ const Login = ({ initialStep = 'login' }) => {
                   required
                   value={passwordResetEmail}
                   onChange={(e) => setPasswordResetEmail(e.target.value)}
-                  className="w-full bg-slate-950/60 border border-white/5 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/50 transition duration-200 placeholder-gray-600 font-medium"
+                  className="w-full bg-white border border-[#E6E9F0] rounded-lg pl-10 pr-4 py-2.5 text-sm text-[#0E1726] shadow-sm focus:outline-none focus:border-[#A78BFA] focus:ring-2 focus:ring-[#6D28D9]/15 transition duration-200 placeholder-[#6B7488] font-medium"
                 />
               </div>
             </div>
@@ -1001,7 +1033,7 @@ const Login = ({ initialStep = 'login' }) => {
             <button
               type="submit"
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
+              className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#6D28D9] hover:bg-[#7C3AED] text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
             >
               {loading ? (
                 <>
@@ -1012,13 +1044,20 @@ const Login = ({ initialStep = 'login' }) => {
               )}
             </button>
 
-            <div className="text-center">
+            <div className="flex items-center justify-center gap-4 text-xs">
               <button
                 type="button"
                 onClick={goBackToLogin}
-                className="text-xs text-gray-500 hover:text-white transition-colors"
+                className="text-[#6B7488] hover:text-[#6D28D9] transition-colors"
               >
                 Back to sign in
+              </button>
+              <button
+                type="button"
+                onClick={startMfaReset}
+                className="font-semibold text-[#6D28D9] hover:text-[#7C3AED] transition-colors"
+              >
+                Lost authenticator?
               </button>
             </div>
           </form>
@@ -1028,57 +1067,73 @@ const Login = ({ initialStep = 'login' }) => {
         {step === 'password_reset_confirm' && (
           <form onSubmit={handlePasswordResetConfirm} className="space-y-5 animate-fadeIn">
             <div className="space-y-2 text-center">
-              <div className="flex justify-center text-violet-400 mb-1">
+              <div className="flex justify-center text-[#6D28D9] mb-1">
                 <Mail className="w-8 h-8 animate-pulse" />
               </div>
-              <h3 className="text-sm font-bold text-white font-display">Create New Password</h3>
-              <p className="text-[11px] text-gray-400 leading-relaxed px-2">
-                Enter the reset token sent to <strong className="text-violet-400">{passwordResetEmail}</strong>, then create a new password.
+              <h3 className="text-sm font-bold text-[#0E1726] font-display">Create New Password</h3>
+              <p className="text-[11px] text-[#475069] leading-relaxed px-2">
+                Enter the reset token sent to <strong className="text-[#6D28D9]">{passwordResetEmail}</strong>, then create a new password.
               </p>
             </div>
 
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-1">Reset Token</label>
+                <label className="block text-xs font-semibold text-[#475069] mb-1">Reset Token</label>
                 <input
                   type="text"
                   required
                   placeholder="Paste reset token here..."
                   value={passwordResetToken}
                   onChange={(e) => setPasswordResetToken(e.target.value)}
-                  className="w-full bg-slate-950/60 border border-white/5 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/50 transition duration-200 text-center font-mono placeholder-gray-600"
+                  className="w-full bg-white border border-[#E6E9F0] rounded-lg px-4 py-2.5 text-sm text-[#0E1726] shadow-sm focus:outline-none focus:border-[#A78BFA] focus:ring-2 focus:ring-[#6D28D9]/15 transition duration-200 text-center font-mono placeholder-[#6B7488]"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-1">New Password</label>
+                <label className="block text-xs font-semibold text-[#475069] mb-1">New Password</label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#6B7488]">
                     <Lock className="w-4 h-4" />
                   </div>
                   <input
-                    type="password"
+                    type={showPasswordResetNew ? 'text' : 'password'}
                     required
                     value={passwordResetNew}
                     onChange={(e) => setPasswordResetNew(e.target.value)}
-                    className="w-full bg-slate-950/60 border border-white/5 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/50 transition duration-200 placeholder-gray-600 font-medium"
+                    className="w-full bg-white border border-[#E6E9F0] rounded-lg pl-10 pr-12 py-2.5 text-sm text-[#0E1726] shadow-sm focus:outline-none focus:border-[#A78BFA] focus:ring-2 focus:ring-[#6D28D9]/15 transition duration-200 placeholder-[#6B7488] font-medium"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPasswordResetNew((value) => !value)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[#6B7488] hover:text-[#6D28D9] transition-colors"
+                    aria-label={showPasswordResetNew ? 'Hide new password' : 'Show new password'}
+                  >
+                    {showPasswordResetNew ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-1">Confirm New Password</label>
+                <label className="block text-xs font-semibold text-[#475069] mb-1">Confirm New Password</label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#6B7488]">
                     <Lock className="w-4 h-4" />
                   </div>
                   <input
-                    type="password"
+                    type={showPasswordResetConfirm ? 'text' : 'password'}
                     required
                     value={passwordResetConfirm}
                     onChange={(e) => setPasswordResetConfirm(e.target.value)}
-                    className="w-full bg-slate-950/60 border border-white/5 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/50 transition duration-200 placeholder-gray-600 font-medium"
+                    className="w-full bg-white border border-[#E6E9F0] rounded-lg pl-10 pr-12 py-2.5 text-sm text-[#0E1726] shadow-sm focus:outline-none focus:border-[#A78BFA] focus:ring-2 focus:ring-[#6D28D9]/15 transition duration-200 placeholder-[#6B7488] font-medium"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPasswordResetConfirm((value) => !value)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[#6B7488] hover:text-[#6D28D9] transition-colors"
+                    aria-label={showPasswordResetConfirm ? 'Hide confirmation password' : 'Show confirmation password'}
+                  >
+                    {showPasswordResetConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
             </div>
@@ -1086,7 +1141,7 @@ const Login = ({ initialStep = 'login' }) => {
             <button
               type="submit"
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
+              className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#6D28D9] hover:bg-[#7C3AED] text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
             >
               {loading ? (
                 <>
@@ -1097,13 +1152,20 @@ const Login = ({ initialStep = 'login' }) => {
               )}
             </button>
 
-            <div className="text-center">
+            <div className="flex items-center justify-center gap-4 text-xs">
               <button
                 type="button"
                 onClick={goBackToLogin}
-                className="text-xs text-gray-500 hover:text-white transition-colors"
+                className="text-[#6B7488] hover:text-[#6D28D9] transition-colors"
               >
                 Back to sign in
+              </button>
+              <button
+                type="button"
+                onClick={startMfaReset}
+                className="font-semibold text-[#6D28D9] hover:text-[#7C3AED] transition-colors"
+              >
+                Lost authenticator?
               </button>
             </div>
           </form>
@@ -1113,20 +1175,20 @@ const Login = ({ initialStep = 'login' }) => {
         {step === 'mfa_reset_request' && (
           <form onSubmit={handleMfaResetRequest} className="space-y-5 animate-fadeIn">
             <div className="space-y-2 text-center">
-              <div className="flex justify-center text-violet-400 mb-1">
+              <div className="flex justify-center text-[#6D28D9] mb-1">
                 <KeyRound className="w-8 h-8" />
               </div>
-              <h3 className="text-sm font-bold text-white font-display">Reset Authenticator</h3>
-              <p className="text-[11px] text-gray-400 leading-relaxed px-2">
+              <h3 className="text-sm font-bold text-[#0E1726] font-display">Reset Authenticator</h3>
+              <p className="text-[11px] text-[#475069] leading-relaxed px-2">
                 Confirm your email and password. AuthClaw will send a one-time MFA reset token to your verified email address.
               </p>
             </div>
 
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-1">Account Email</label>
+                <label className="block text-xs font-semibold text-[#475069] mb-1">Account Email</label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#6B7488]">
                     <Mail className="w-4 h-4" />
                   </div>
                   <input
@@ -1134,24 +1196,32 @@ const Login = ({ initialStep = 'login' }) => {
                     required
                     value={mfaResetEmail}
                     onChange={(e) => setMfaResetEmail(e.target.value)}
-                    className="w-full bg-slate-950/60 border border-white/5 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/50 transition duration-200 placeholder-gray-600 font-medium"
+                    className="w-full bg-white border border-[#E6E9F0] rounded-lg pl-10 pr-4 py-2.5 text-sm text-[#0E1726] shadow-sm focus:outline-none focus:border-[#A78BFA] focus:ring-2 focus:ring-[#6D28D9]/15 transition duration-200 placeholder-[#6B7488] font-medium"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-1">Security Passcode</label>
+                <label className="block text-xs font-semibold text-[#475069] mb-1">Security Passcode</label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#6B7488]">
                     <Lock className="w-4 h-4" />
                   </div>
                   <input
-                    type="password"
+                    type={showMfaResetPassword ? 'text' : 'password'}
                     required
                     value={mfaResetPassword}
                     onChange={(e) => setMfaResetPassword(e.target.value)}
-                    className="w-full bg-slate-950/60 border border-white/5 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/50 transition duration-200 placeholder-gray-600 font-medium"
+                    className="w-full bg-white border border-[#E6E9F0] rounded-lg pl-10 pr-12 py-2.5 text-sm text-[#0E1726] shadow-sm focus:outline-none focus:border-[#A78BFA] focus:ring-2 focus:ring-[#6D28D9]/15 transition duration-200 placeholder-[#6B7488] font-medium"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowMfaResetPassword((value) => !value)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[#6B7488] hover:text-[#6D28D9] transition-colors"
+                    aria-label={showMfaResetPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showMfaResetPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
             </div>
@@ -1159,7 +1229,7 @@ const Login = ({ initialStep = 'login' }) => {
             <button
               type="submit"
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
+              className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#6D28D9] hover:bg-[#7C3AED] text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
             >
               {loading ? (
                 <>
@@ -1174,7 +1244,7 @@ const Login = ({ initialStep = 'login' }) => {
               <button
                 type="button"
                 onClick={goBackToLogin}
-                className="text-xs text-gray-500 hover:text-white transition-colors"
+                className="text-xs text-[#6B7488] hover:text-[#6D28D9] transition-colors"
               >
                 Back to sign in
               </button>
@@ -1186,31 +1256,31 @@ const Login = ({ initialStep = 'login' }) => {
         {step === 'mfa_reset_confirm' && (
           <form onSubmit={handleMfaResetConfirm} className="space-y-5 animate-fadeIn">
             <div className="space-y-2 text-center">
-              <div className="flex justify-center text-violet-400 mb-1">
+              <div className="flex justify-center text-[#6D28D9] mb-1">
                 <Mail className="w-8 h-8 animate-pulse" />
               </div>
-              <h3 className="text-sm font-bold text-white font-display">Confirm MFA Reset</h3>
-              <p className="text-[11px] text-gray-400 leading-relaxed px-2">
-                Enter the reset token sent to <strong className="text-violet-400">{mfaResetEmail}</strong>. A new authenticator setup key will be generated after confirmation.
+              <h3 className="text-sm font-bold text-[#0E1726] font-display">Confirm MFA Reset</h3>
+              <p className="text-[11px] text-[#475069] leading-relaxed px-2">
+                Enter the reset token sent to <strong className="text-[#6D28D9]">{mfaResetEmail}</strong>. A new authenticator setup key will be generated after confirmation.
               </p>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-400 mb-1">MFA Reset Token</label>
+              <label className="block text-xs font-semibold text-[#475069] mb-1">MFA Reset Token</label>
               <input
                 type="text"
                 required
                 placeholder="Paste reset token here..."
                 value={mfaResetToken}
                 onChange={(e) => setMfaResetToken(e.target.value)}
-                className="w-full bg-slate-950/60 border border-white/5 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/50 transition duration-200 text-center font-mono placeholder-gray-600"
+                className="w-full bg-white border border-[#E6E9F0] rounded-lg px-4 py-2.5 text-sm text-[#0E1726] shadow-sm focus:outline-none focus:border-[#A78BFA] focus:ring-2 focus:ring-[#6D28D9]/15 transition duration-200 text-center font-mono placeholder-[#6B7488]"
               />
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
+              className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#6D28D9] hover:bg-[#7C3AED] text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all disabled:opacity-50 font-display"
             >
               {loading ? (
                 <>
@@ -1225,7 +1295,7 @@ const Login = ({ initialStep = 'login' }) => {
               <button
                 type="button"
                 onClick={goBackToLogin}
-                className="text-xs text-gray-500 hover:text-white transition-colors"
+                className="text-xs text-[#6B7488] hover:text-[#6D28D9] transition-colors"
               >
                 Back to sign in
               </button>
@@ -1237,19 +1307,19 @@ const Login = ({ initialStep = 'login' }) => {
         {step === 'mfa_reset_enroll' && (
           <div className="space-y-5 animate-fadeIn">
             <div className="space-y-2 text-center">
-              <div className="flex justify-center text-violet-400 mb-1">
+              <div className="flex justify-center text-[#6D28D9] mb-1">
                 <ShieldAlert className="w-8 h-8" />
               </div>
-              <h3 className="text-sm font-bold text-white font-display">New MFA Setup Key</h3>
-              <p className="text-[11px] text-gray-400 leading-relaxed">
+              <h3 className="text-sm font-bold text-[#0E1726] font-display">New MFA Setup Key</h3>
+              <p className="text-[11px] text-[#475069] leading-relaxed">
                 Add this new setup key to your authenticator app. Your old MFA codes will no longer work.
               </p>
             </div>
 
-            <div className="space-y-3 bg-[#08152B] p-3.5 rounded-lg border border-white/5">
+            <div className="space-y-3 bg-[radial-gradient(circle_at_top_left,rgba(109,40,217,0.08),transparent_34%),radial-gradient(circle_at_top_right,rgba(233,169,60,0.09),transparent_30%),#FBFAF9] p-3.5 rounded-lg border border-[#E6E9F0]">
               <div>
-                <label className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Base32 Secret Key</label>
-                <div className="flex items-center justify-between gap-2 bg-slate-950 p-2.5 rounded border border-white/5 font-mono text-xs text-violet-400 select-all overflow-x-auto">
+                <label className="block text-[10px] uppercase font-bold text-[#6B7488] mb-1">Base32 Secret Key</label>
+                <div className="flex items-center justify-between gap-2 bg-white p-2.5 rounded border border-[#E6E9F0] font-mono text-xs text-[#6D28D9] select-all overflow-x-auto">
                   <span className="whitespace-nowrap break-all">{totpSecret}</span>
                   <button
                     type="button"
@@ -1257,7 +1327,7 @@ const Login = ({ initialStep = 'login' }) => {
                       navigator.clipboard.writeText(totpSecret);
                       addToast('Secret Key copied to clipboard!', 'success');
                     }}
-                    className="text-gray-400 hover:text-white shrink-0"
+                    className="text-[#475069] hover:text-[#6D28D9] shrink-0"
                   >
                     <Copy className="w-3.5 h-3.5" />
                   </button>
@@ -1265,8 +1335,8 @@ const Login = ({ initialStep = 'login' }) => {
               </div>
 
               <div>
-                <label className="block text-[10px] uppercase font-bold text-gray-500 mb-1">OTPAuth URI</label>
-                <div className="flex items-center justify-between gap-2 bg-slate-950 p-2.5 rounded border border-white/5 font-mono text-[10px] text-gray-400 select-all overflow-x-auto">
+                <label className="block text-[10px] uppercase font-bold text-[#6B7488] mb-1">OTPAuth URI</label>
+                <div className="flex items-center justify-between gap-2 bg-white p-2.5 rounded border border-[#E6E9F0] font-mono text-[10px] text-[#475069] select-all overflow-x-auto">
                   <span className="truncate max-w-[220px]">{otpauthUri}</span>
                   <button
                     type="button"
@@ -1274,7 +1344,7 @@ const Login = ({ initialStep = 'login' }) => {
                       navigator.clipboard.writeText(otpauthUri);
                       addToast('OTPAuth URI copied to clipboard!', 'success');
                     }}
-                    className="text-gray-400 hover:text-white shrink-0"
+                    className="text-[#475069] hover:text-[#6D28D9] shrink-0"
                   >
                     <Copy className="w-3.5 h-3.5" />
                   </button>
@@ -1282,9 +1352,9 @@ const Login = ({ initialStep = 'login' }) => {
               </div>
             </div>
 
-            <div className="p-3 bg-slate-900/40 border border-white/5 rounded-lg flex items-start gap-2.5">
-              <Info className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" />
-              <p className="text-[10px] text-gray-500 leading-normal font-sans">
+            <div className="p-3 bg-[#F5F7FA]/80 border border-[#E6E9F0] rounded-lg flex items-start gap-2.5">
+              <Info className="w-4 h-4 text-[#475069] shrink-0 mt-0.5" />
+              <p className="text-[10px] text-[#6B7488] leading-normal font-sans">
                 Save this key in your authenticator app now. AuthClaw will only verify the 6-digit code generated by that app.
               </p>
             </div>
@@ -1292,7 +1362,7 @@ const Login = ({ initialStep = 'login' }) => {
             <button
               type="button"
               onClick={finishMfaReset}
-              className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all font-display"
+              className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#6D28D9] hover:bg-[#7C3AED] text-white rounded-lg text-sm font-semibold hover:opacity-95 shadow-lg shadow-violet-500/10 transition-all font-display"
             >
               I added the key, return to sign in
             </button>
@@ -1300,7 +1370,7 @@ const Login = ({ initialStep = 'login' }) => {
         )}
 
         {/* Security Footer Notice */}
-        <div className="text-[10px] text-center text-gray-600 flex items-center justify-center gap-1.5 border-t border-white/5 pt-4">
+        <div className="text-[10px] text-center text-[#6B7488] flex items-center justify-center gap-1.5 border-t border-[#E6E9F0] pt-4">
           <Lock className="w-3.5 h-3.5" /> FIPS 140-2 Encrypted Session Established
         </div>
       </div>

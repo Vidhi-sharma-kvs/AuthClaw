@@ -143,10 +143,10 @@ const AuditExplorer = () => {
       {/* Title */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">
+          <h1 className="text-2xl font-bold text-[#0E1726]">
             Cryptographic Audit Explorer
           </h1>
-          <p className="text-gray-400 text-sm">Chain verification ledger protecting logs against deletion and modifications.</p>
+          <p className="text-[#475069] text-sm">Chain verification ledger protecting logs against deletion and modifications.</p>
         </div>
         <div className="flex items-center gap-3">
           <Button
@@ -190,12 +190,12 @@ const AuditExplorer = () => {
       {summary && summary.valid && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <GlassCard hover={false} className="p-5 space-y-2">
-            <span className="text-xs text-gray-500 font-bold uppercase tracking-wider block">Verified Chain Blocks</span>
-            <span className="text-2xl font-bold text-white block">{summary.records_checked}</span>
+            <span className="text-xs text-[#6B7488] font-bold uppercase tracking-wider block">Verified Chain Blocks</span>
+            <span className="text-2xl font-bold text-[#0E1726] block">{summary.records_checked}</span>
           </GlassCard>
           <GlassCard hover={false} className="p-5 space-y-2 md:col-span-2">
-            <span className="text-xs text-gray-500 font-bold uppercase tracking-wider block">Latest Hash (SHA-256)</span>
-            <span className="text-xs font-mono break-all text-gray-300 block bg-slate-950/60 p-2 border border-white/5 rounded mt-1">
+            <span className="text-xs text-[#6B7488] font-bold uppercase tracking-wider block">Latest Hash (SHA-256)</span>
+            <span className="text-xs font-mono break-all text-[#475069] block bg-[#F5F7FA] p-2 border border-[#E6E9F0] rounded mt-1">
               {summary.latest_hash || 'N/A'}
             </span>
           </GlassCard>
@@ -216,7 +216,7 @@ const AuditExplorer = () => {
           <select
             value={riskFilter}
             onChange={(e) => setRiskFilter(e.target.value)}
-            className="bg-slate-950 border border-white/5 rounded-lg py-2 px-3 text-xs text-white focus:outline-none focus:border-violet-500"
+            className="bg-[#F5F7FA] border border-[#E6E9F0] rounded-lg py-2 px-3 text-xs text-[#0E1726] focus:outline-none focus:border-[#6D28D9]"
           >
             <option value="ALL">All Risks</option>
             <option value="LOW">Low Risk</option>
@@ -229,7 +229,7 @@ const AuditExplorer = () => {
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="bg-slate-950 border border-white/5 rounded-lg py-2 px-3 text-xs text-white focus:outline-none focus:border-violet-500"
+            className="bg-[#F5F7FA] border border-[#E6E9F0] rounded-lg py-2 px-3 text-xs text-[#0E1726] focus:outline-none focus:border-[#6D28D9]"
           >
             <option value="ALL">All Statuses</option>
             <option value="COMPLETED">Completed</option>
@@ -261,22 +261,22 @@ const AuditExplorer = () => {
       {loading ? (
         <div className="space-y-4">
           {[...Array(4)].map((_, i) => (
-            <div key={i} className="h-14 bg-white/5 rounded-lg animate-pulse"></div>
+            <div key={i} className="h-14 bg-[#F5F7FA] rounded-lg animate-pulse"></div>
           ))}
         </div>
       ) : currentRecords.length === 0 ? (
-        <div className="flex flex-col items-center justify-center p-12 border border-dashed border-white/10 rounded-xl bg-slate-900/10">
-          <Lock className="w-8 h-8 text-gray-500 mb-3" />
-          <h3 className="text-sm font-bold text-gray-300">No matching cryptographic records</h3>
-          <p className="text-xs text-gray-500 mt-1">Try adjusting your filters or search queries.</p>
+        <div className="flex flex-col items-center justify-center p-12 border border-dashed border-[#E6E9F0] rounded-xl bg-[#F5F7FA]/70">
+          <Lock className="w-8 h-8 text-[#6B7488] mb-3" />
+          <h3 className="text-sm font-bold text-[#475069]">No matching cryptographic records</h3>
+          <p className="text-xs text-[#6B7488] mt-1">Try adjusting your filters or search queries.</p>
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="w-full overflow-hidden border border-white/5 rounded-xl bg-slate-950/20 backdrop-blur-md">
+          <div className="w-full overflow-hidden border border-[#E6E9F0] rounded-xl bg-white/70 backdrop-blur-md">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="border-b border-white/5 text-gray-400 uppercase tracking-wider bg-slate-900/50">
+                  <tr className="border-b border-[#E6E9F0] text-[#475069] uppercase tracking-wider bg-[#F5F7FA]">
                     <th className="p-4">BLOCK</th>
                     <th className="p-4">USER / TENANT</th>
                     <th className="p-4">REQUEST</th>
@@ -287,42 +287,42 @@ const AuditExplorer = () => {
                     <th className="p-4">TIMESTAMP</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5 text-gray-300">
+                <tbody className="divide-y divide-white/5 text-[#475069]">
                   {currentRecords.map((log) => (
                     <React.Fragment key={log.record_id}>
                       <tr 
                         onClick={() => setExpandedRowId(expandedRowId === log.record_id ? null : log.record_id)}
                         className="hover:bg-white/[0.02] cursor-pointer transition-colors"
                       >
-                        <td className="p-4 font-semibold text-white font-mono" title={log.hash_reference}># {log.record_id}</td>
-                        <td className="p-4 text-gray-300">
-                          <span className="block text-white font-semibold">{log.username || log.approver || 'System'}</span>
-                          <span className="block text-[10px] text-gray-500 font-mono">Tenant {log.tenant_id || 'N/A'}</span>
+                        <td className="p-4 font-semibold text-[#0E1726] font-mono" title={log.hash_reference}># {log.record_id}</td>
+                        <td className="p-4 text-[#475069]">
+                          <span className="block text-[#0E1726] font-semibold">{log.username || log.approver || 'System'}</span>
+                          <span className="block text-[10px] text-[#6B7488] font-mono">Tenant {log.tenant_id || 'N/A'}</span>
                         </td>
-                        <td className="p-4 text-gray-300 max-w-[200px] truncate" title={log.original_request}>
+                        <td className="p-4 text-[#475069] max-w-[200px] truncate" title={log.original_request}>
                           {log.original_request || 'N/A'}
                         </td>
-                        <td className="p-4 text-gray-400 capitalize">{log.provider || 'Gateway Route'}</td>
+                        <td className="p-4 text-[#475069] capitalize">{log.provider || 'Gateway Route'}</td>
                         <td className="p-4">
                           <StatusBadge status={log.security_decision || 'ALLOW'} />
                         </td>
-                        <td className="p-4 text-gray-300 max-w-[140px] truncate" title={log.policy_decision}>
+                        <td className="p-4 text-[#475069] max-w-[140px] truncate" title={log.policy_decision}>
                           {log.policy_decision || 'N/A'}
                         </td>
                         <td className="p-4 text-center">
                           <StatusBadge status={log.status === 'executed' ? 'COMPLETED' : (log.status || 'DIRECT')} />
                         </td>
-                        <td className="p-4 font-mono text-gray-400" title={log.timestamp}>
+                        <td className="p-4 font-mono text-[#475069]" title={log.timestamp}>
                           {log.timestamp ? log.timestamp.split('T')[0] + ' ' + (log.timestamp.split('T')[1]?.split('.')[0] || '') : 'N/A'}
                         </td>
                       </tr>
                       {expandedRowId === log.record_id && (
-                        <tr className="bg-slate-950/40">
-                          <td colSpan="8" className="p-6 text-gray-300 border-b border-white/5">
+                        <tr className="bg-[#F5F7FA]">
+                          <td colSpan="8" className="p-6 text-[#475069] border-b border-[#E6E9F0]">
                             <div className="space-y-4 text-xs font-sans">
-                              <div className="flex items-center justify-between border-b border-white/5 pb-2">
-                                <h4 className="text-sm font-bold text-white tracking-tight flex items-center gap-1.5">
-                                  <FileCheck2 className="w-4 h-4 text-violet-400" />
+                              <div className="flex items-center justify-between border-b border-[#E6E9F0] pb-2">
+                                <h4 className="text-sm font-bold text-[#0E1726] tracking-tight flex items-center gap-1.5">
+                                  <FileCheck2 className="w-4 h-4 text-[#6D28D9]" />
                                   Block #{log.record_id} Cryptographic &amp; Approval Metadata
                                 </h4>
                                 <StatusBadge status={log.approval_status ? log.approval_status : 'DIRECT_EXECUTION'} />
@@ -330,26 +330,26 @@ const AuditExplorer = () => {
 
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
-                                  <span className="text-[10px] text-gray-500 uppercase tracking-widest font-bold block">Approval Ticket ID</span>
-                                  <span className="font-mono text-white break-all block mt-1">
+                                  <span className="text-[10px] text-[#6B7488] uppercase tracking-widest font-bold block">Approval Ticket ID</span>
+                                  <span className="font-mono text-[#0E1726] break-all block mt-1">
                                     {log.approval_id || 'N/A (Direct Request / Administrative Action)'}
                                   </span>
                                 </div>
                                 <div>
-                                  <span className="text-[10px] text-gray-500 uppercase tracking-widest font-bold block">Approver Identity</span>
-                                  <span className="text-white font-semibold block mt-1">
+                                  <span className="text-[10px] text-[#6B7488] uppercase tracking-widest font-bold block">Approver Identity</span>
+                                  <span className="text-[#0E1726] font-semibold block mt-1">
                                     {log.approver || 'System'}
                                   </span>
                                 </div>
                                 <div className="md:col-span-2">
-                                  <span className="text-[10px] text-gray-500 uppercase tracking-widest font-bold block">Original Request Payload</span>
-                                  <p className="text-gray-200 bg-slate-900/60 p-3 rounded-lg border border-white/5 font-mono whitespace-pre-wrap mt-1.5 leading-relaxed">
+                                  <span className="text-[10px] text-[#6B7488] uppercase tracking-widest font-bold block">Original Request Payload</span>
+                                  <p className="text-[#0E1726] bg-[#F5F7FA] p-3 rounded-lg border border-[#E6E9F0] font-mono whitespace-pre-wrap mt-1.5 leading-relaxed">
                                     {log.user_query || 'N/A'}
                                   </p>
                                 </div>
                                 <div>
-                                  <span className="text-[10px] text-gray-500 uppercase tracking-widest font-bold block">Previous Block Hash Link</span>
-                                  <span className="font-mono text-gray-400 break-all block mt-1 cursor-pointer hover:text-white transition" title="Click to copy previous hash" onClick={(e) => {
+                                  <span className="text-[10px] text-[#6B7488] uppercase tracking-widest font-bold block">Previous Block Hash Link</span>
+                                  <span className="font-mono text-[#475069] break-all block mt-1 cursor-pointer hover:text-[#0E1726] transition" title="Click to copy previous hash" onClick={(e) => {
                                     e.stopPropagation();
                                     if (log.previous_hash) {
                                       navigator.clipboard.writeText(log.previous_hash);
@@ -360,8 +360,8 @@ const AuditExplorer = () => {
                                   </span>
                                 </div>
                                 <div>
-                                  <span className="text-[10px] text-gray-500 uppercase tracking-widest font-bold block">Block Integrity Hash</span>
-                                  <span className="font-mono text-violet-400 break-all block mt-1 cursor-pointer hover:text-violet-300 transition" title="Click to copy integrity hash" onClick={(e) => {
+                                  <span className="text-[10px] text-[#6B7488] uppercase tracking-widest font-bold block">Block Integrity Hash</span>
+                                  <span className="font-mono text-[#6D28D9] break-all block mt-1 cursor-pointer hover:text-[#6D28D9] transition" title="Click to copy integrity hash" onClick={(e) => {
                                     e.stopPropagation();
                                     if (log.integrity_hash) {
                                       navigator.clipboard.writeText(log.integrity_hash);
@@ -385,10 +385,10 @@ const AuditExplorer = () => {
 
           {/* Pagination Controls */}
           <div className="flex items-center justify-between pt-2 text-xs">
-            <span className="text-gray-500">
-              Showing <strong className="text-white">{indexOfFirstRecord + 1}</strong> to{' '}
-              <strong className="text-white">{Math.min(indexOfLastRecord, filteredChain.length)}</strong> of{' '}
-              <strong className="text-white">{filteredChain.length}</strong> records
+            <span className="text-[#6B7488]">
+              Showing <strong className="text-[#0E1726]">{indexOfFirstRecord + 1}</strong> to{' '}
+              <strong className="text-[#0E1726]">{Math.min(indexOfLastRecord, filteredChain.length)}</strong> of{' '}
+              <strong className="text-[#0E1726]">{filteredChain.length}</strong> records
             </span>
 
             <div className="flex items-center gap-2">
@@ -400,8 +400,8 @@ const AuditExplorer = () => {
               >
                 Previous
               </Button>
-              <span className="text-gray-400 px-2 font-mono">
-                Page <strong className="text-white">{currentPage}</strong> of {totalPages}
+              <span className="text-[#475069] px-2 font-mono">
+                Page <strong className="text-[#0E1726]">{currentPage}</strong> of {totalPages}
               </span>
               <Button
                 variant="secondary"

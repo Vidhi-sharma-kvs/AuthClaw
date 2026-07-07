@@ -28,6 +28,25 @@ import {
   deleteAllChatSessions 
 } from '../../services/chatService';
 
+const PROVIDER_UNAVAILABLE_COPY = 'The configured model provider is currently unavailable. AuthClaw completed the security, policy, and audit checks, but the upstream model call could not be completed. Check the Providers page, API credentials, and outbound network access, then try again.';
+
+const sanitizeProviderMessage = (content) => {
+  const text = String(content || '');
+  const providerErrorMarkers = [
+    '[Offline Fallback]',
+    'Provider unavailable:',
+    'HTTPSConnectionPool',
+    'generativelanguage.googleapis.com',
+    'Max retries exceeded',
+    'Failed to establish a new connection',
+    'key=',
+  ];
+
+  return providerErrorMarkers.some((marker) => text.includes(marker))
+    ? PROVIDER_UNAVAILABLE_COPY
+    : text;
+};
+
 const AgentChat = () => {
   const [sessionId, setSessionId] = useState('');
   const [sessionsList, setSessionsList] = useState([]);
@@ -89,7 +108,11 @@ const AgentChat = () => {
     try {
       const msgs = await getSessionMessages(id);
       if (msgs && msgs.length > 0) {
-        setMessages(msgs);
+        setMessages(msgs.map((msg) => (
+          msg.role === 'user'
+            ? msg
+            : { ...msg, content: sanitizeProviderMessage(msg.content) }
+        )));
       } else {
         setMessages([
           { role: 'assistant', content: 'Hello! I am your AuthClaw security-wrapped assistant. Type anything to test security compliance, risk assessments, or redactions.' }
@@ -180,7 +203,7 @@ const AgentChat = () => {
         ...prev,
         {
           role: 'assistant',
-          content: data.response || 'No response returned from the proxy.',
+          content: sanitizeProviderMessage(data.response || 'No response returned from the proxy.'),
           gatewayMeta,
           trace: data.trace
         }
@@ -225,7 +248,7 @@ const AgentChat = () => {
           ...prev,
           {
             role: 'error',
-            content: '⚠️ Model provider is currently unavailable. Please try again in a moment.'
+            content: PROVIDER_UNAVAILABLE_COPY
           }
         ]);
         return;
@@ -337,10 +360,13 @@ const AgentChat = () => {
   const renderDetails = (details) => {
     if (!details) return '';
     try {
-      const parsed = typeof details === 'string' ? JSON.parse(details) : details;
+      const safeDetails = typeof details === 'string'
+        ? sanitizeProviderMessage(details)
+        : sanitizeProviderMessage(JSON.stringify(details, null, 2));
+      const parsed = typeof safeDetails === 'string' ? JSON.parse(safeDetails) : safeDetails;
       return JSON.stringify(parsed, null, 2);
     } catch (e) {
-      return String(details);
+      return sanitizeProviderMessage(String(details));
     }
   };
 
@@ -521,7 +547,7 @@ const AgentChat = () => {
         <div key={index} className="flex justify-center">
           <div className="glass-card max-w-lg p-4 bg-rose-50 border border-rose-200 text-rose-700 text-sm flex gap-3">
             <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
-            <p>{msg.content}</p>
+            <p>{sanitizeProviderMessage(msg.content)}</p>
           </div>
         </div>
       );
@@ -594,11 +620,11 @@ const AgentChat = () => {
               </div>
             )}
 
-            <div className="mt-3 border border-[#E6E9F0] rounded-lg bg-[#0B1F3F] overflow-hidden">
-              <div className="px-3 py-2 border-b border-white/5 text-[10px] font-bold uppercase tracking-wider text-violet-300 font-display">
+            <div className="mt-3 border border-[#E6E9F0] rounded-lg bg-[#F5F7FA] overflow-hidden">
+              <div className="px-3 py-2 border-b border-[#E6E9F0] text-[10px] font-bold uppercase tracking-wider text-[#6D28D9] font-display">
                 Inspected Output
               </div>
-              <pre className="p-3 text-xs text-[#E7EDF9] whitespace-pre-wrap break-words max-h-64 overflow-y-auto font-mono">
+              <pre className="p-3 text-xs text-[#0E1726] whitespace-pre-wrap break-words max-h-64 overflow-y-auto font-mono">
                 {redactedPreview || 'No redacted text returned.'}
               </pre>
             </div>
@@ -648,7 +674,7 @@ const AgentChat = () => {
             ? 'bg-[#6D28D9] text-white rounded-tr-none'
             : 'glass-card text-slate-700 rounded-tl-none font-medium'
         }`}>
-          <p className="whitespace-pre-wrap">{msg.content}</p>
+          <p className="whitespace-pre-wrap">{isUser ? msg.content : sanitizeProviderMessage(msg.content)}</p>
           {!isUser && renderGatewayMeta(msg.gatewayMeta)}
           {!isUser && hasTrace && (
             <div className="mt-2.5 pt-2.5 border-t border-slate-200/50 flex justify-end">
@@ -864,9 +890,9 @@ const AgentChat = () => {
 
                   <div className="space-y-1.5">
                     {securityEvents.map((e, idx) => (
-                      <div key={idx} className="bg-[#0B1F3F] p-2.5 rounded border border-white/5 text-xs font-mono text-[#E7EDF9]">
-                        <div className="text-[10px] text-violet-300 font-bold mb-1">{e.event}</div>
-                        <pre className="text-[10px] text-[#8FA0C4] whitespace-pre-wrap break-all leading-normal">
+                      <div key={idx} className="bg-[#F5F7FA] p-2.5 rounded border border-[#E6E9F0] text-xs font-mono text-[#0E1726]">
+                        <div className="text-[10px] text-[#6D28D9] font-bold mb-1">{e.event}</div>
+                        <pre className="text-[10px] text-[#475069] whitespace-pre-wrap break-all leading-normal">
                           {renderDetails(e.details)}
                         </pre>
                       </div>
@@ -902,17 +928,17 @@ const AgentChat = () => {
 
                   <div className="space-y-1.5">
                     {policyEvents.map((e, idx) => (
-                      <div key={idx} className={`p-2.5 rounded border text-xs font-mono text-[#E7EDF9] ${
+                      <div key={idx} className={`p-2.5 rounded border text-xs font-mono text-[#0E1726] ${
                         e.event?.toLowerCase().includes('block') || e.event?.toLowerCase().includes('violation') || e.event?.toLowerCase().includes('leak')
-                          ? 'bg-red-950/60 border-red-500/20'
-                          : 'bg-[#0B1F3F]'
+                          ? 'bg-rose-50 border-red-500/20'
+                          : 'bg-[#F5F7FA]'
                       }`}>
                         <div className={`text-[10px] font-bold mb-1 ${
                           e.event?.toLowerCase().includes('block') || e.event?.toLowerCase().includes('violation') || e.event?.toLowerCase().includes('leak')
                             ? 'text-red-400'
-                            : 'text-violet-300'
+                            : 'text-[#6D28D9]'
                         }`}>{e.event}</div>
-                        <pre className="text-[10px] text-[#8FA0C4] whitespace-pre-wrap break-all leading-normal">
+                        <pre className="text-[10px] text-[#475069] whitespace-pre-wrap break-all leading-normal">
                           {renderDetails(e.details)}
                         </pre>
                       </div>
@@ -948,9 +974,9 @@ const AgentChat = () => {
 
                   <div className="space-y-1.5">
                     {registrarEvents.map((e, idx) => (
-                      <div key={idx} className="bg-[#0B1F3F] p-2.5 rounded border border-white/5 text-xs font-mono text-[#E7EDF9]">
-                        <div className="text-[10px] text-violet-300 font-bold mb-1">{e.event}</div>
-                        <pre className="text-[10px] text-[#8FA0C4] whitespace-pre-wrap break-all leading-normal">
+                      <div key={idx} className="bg-[#F5F7FA] p-2.5 rounded border border-[#E6E9F0] text-xs font-mono text-[#0E1726]">
+                        <div className="text-[10px] text-[#6D28D9] font-bold mb-1">{e.event}</div>
+                        <pre className="text-[10px] text-[#475069] whitespace-pre-wrap break-all leading-normal">
                           {renderDetails(e.details)}
                         </pre>
                       </div>

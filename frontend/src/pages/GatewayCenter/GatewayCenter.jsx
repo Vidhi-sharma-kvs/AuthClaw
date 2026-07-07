@@ -230,7 +230,7 @@ const GatewayCenter = () => {
       key: 'name',
       header: 'Route Name',
       sortable: true,
-      render: (r) => <span className="font-semibold text-white">{r.name}</span>
+      render: (r) => <span className="font-semibold text-[#0E1726]">{r.name}</span>
     },
     {
       key: 'provider',
@@ -238,7 +238,7 @@ const GatewayCenter = () => {
       sortable: true,
       render: (r) => (
         <span className="font-mono text-xs">
-          <span className="px-2.5 py-1 bg-violet-600/10 border border-violet-500/20 text-violet-400 rounded-md mr-2">{r.provider}</span>
+          <span className="px-2.5 py-1 bg-[#F1ECFE] border border-[#6D28D9]/20 text-[#6D28D9] rounded-md mr-2">{r.provider}</span>
           {r.model}
         </span>
       )
@@ -252,14 +252,14 @@ const GatewayCenter = () => {
     {
       key: 'tenant_assignment',
       header: 'Tenant Assignment',
-      render: (r) => <span className="text-gray-400">{r.tenant_assignment}</span>
+      render: (r) => <span className="text-[#475069]">{r.tenant_assignment}</span>
     },
     {
       key: 'redaction_enabled',
       header: 'Redactor',
       render: (r) => (
         <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-          r.redaction_enabled ? 'bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20' : 'bg-gray-800 text-gray-400'
+          r.redaction_enabled ? 'bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20' : 'bg-gray-800 text-[#475069]'
         }`}>
           {r.redaction_enabled ? 'Mask' : 'Off'}
         </span>
@@ -275,8 +275,8 @@ const GatewayCenter = () => {
               <ToggleRight className="w-5 h-5 text-emerald-500" /> Enabled
             </span>
           ) : (
-            <span className="flex items-center gap-1.5 text-gray-500 text-xs font-semibold">
-              <ToggleLeft className="w-5 h-5 text-gray-600" /> Disabled
+            <span className="flex items-center gap-1.5 text-[#6B7488] text-xs font-semibold">
+              <ToggleLeft className="w-5 h-5 text-[#6B7488]" /> Disabled
             </span>
           )}
         </button>
@@ -287,7 +287,7 @@ const GatewayCenter = () => {
       header: 'Actions',
       render: (r) => (
         <div className="flex justify-end gap-3" onClick={(e) => e.stopPropagation()}>
-          <button onClick={() => handleEditRoute(r)} className="text-gray-400 hover:text-white transition-colors" title="Edit Route">
+          <button onClick={() => handleEditRoute(r)} className="text-[#475069] hover:text-[#0E1726] transition-colors" title="Edit Route">
             <Edit3 className="w-4 h-4" />
           </button>
           <button onClick={() => handleDeleteRoute(r.id)} className="text-rose-400 hover:text-rose-600 transition-colors" title="Delete Route">
@@ -303,21 +303,21 @@ const GatewayCenter = () => {
       {/* Title */}
       <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-white via-gray-200 to-gray-400 bg-clip-text text-transparent">
+          <h1 className="text-2xl font-bold text-[#0E1726]">
             AI Router Settings
           </h1>
-          <p className="text-gray-400 text-xs mt-1">Configure multi-model endpoints, set rate-limiting priorities, map upstream models, and secure provider API credentials.</p>
+          <p className="text-[#475069] text-xs mt-1">Configure multi-model endpoints, set rate-limiting priorities, map upstream models, and secure provider API credentials.</p>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-white/5 space-x-2">
+      <div className="flex border-b border-[#E6E9F0] space-x-2">
         <button
           onClick={() => setActiveTab('secrets')}
           className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
             activeTab === 'secrets'
-              ? 'border-violet-500 text-white bg-white/5 rounded-t-lg'
-              : 'border-transparent text-gray-400 hover:text-white hover:bg-white/5 rounded-t-lg'
+              ? 'border-[#6D28D9] text-[#0E1726] bg-[#F5F7FA] rounded-t-lg'
+              : 'border-transparent text-[#475069] hover:text-[#0E1726] hover:bg-[#F5F7FA] rounded-t-lg'
           }`}
         >
           <Key className="w-4 h-4" />
@@ -327,8 +327,8 @@ const GatewayCenter = () => {
           onClick={() => setActiveTab('routes')}
           className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
             activeTab === 'routes'
-              ? 'border-violet-500 text-white bg-white/5 rounded-t-lg'
-              : 'border-transparent text-gray-400 hover:text-white hover:bg-white/5 rounded-t-lg'
+              ? 'border-[#6D28D9] text-[#0E1726] bg-[#F5F7FA] rounded-t-lg'
+              : 'border-transparent text-[#475069] hover:text-[#0E1726] hover:bg-[#F5F7FA] rounded-t-lg'
           }`}
         >
           <Server className="w-4 h-4" />
@@ -375,8 +375,8 @@ const GatewayCenter = () => {
         <div className="space-y-6">
           <div className="flex justify-between items-center">
             <div>
-              <h2 className="text-base font-bold text-white tracking-tight">Connected Model Providers</h2>
-              <p className="text-xs text-gray-500">Provide credentials for OpenAI, Anthropic, Gemini, or Azure OpenAI to route LLM requests.</p>
+              <h2 className="text-base font-bold text-[#0E1726] tracking-tight">Connected Model Providers</h2>
+              <p className="text-xs text-[#6B7488]">Provide credentials for OpenAI, Anthropic, Gemini, or Azure OpenAI to route LLM requests.</p>
             </div>
             <Button
               variant="primary"
@@ -410,19 +410,19 @@ const GatewayCenter = () => {
               return (
                 <GlassCard key={p.id} className="flex flex-col justify-between min-h-[250px] space-y-4">
                   <div className="flex justify-between items-start">
-                    <div className="p-3 bg-violet-600/10 rounded-lg text-violet-400">
+                    <div className="p-3 bg-[#F1ECFE] rounded-lg text-[#6D28D9]">
                       <Cpu className="w-6 h-6" />
                     </div>
                     <StatusBadge status={status.connected ? 'Connected' : 'Not Configured'} />
                   </div>
 
                   <div>
-                    <h4 className="text-sm font-bold text-white">{p.name}</h4>
-                    <p className="text-xs text-gray-500 leading-relaxed mt-1">{p.desc}</p>
+                    <h4 className="text-sm font-bold text-[#0E1726]">{p.name}</h4>
+                    <p className="text-xs text-[#6B7488] leading-relaxed mt-1">{p.desc}</p>
                   </div>
 
-                  <div className="flex justify-between items-center text-xs border-t border-white/5 pt-3">
-                    <span className="text-[10px] text-gray-500 font-mono">
+                  <div className="flex justify-between items-center text-xs border-t border-[#E6E9F0] pt-3">
+                    <span className="text-[10px] text-[#6B7488] font-mono">
                       {status.connected && status.updated_at ? `Linked: ${status.updated_at.split('T')[0]}` : 'Secrets encrypted at rest'}
                     </span>
 
@@ -444,7 +444,7 @@ const GatewayCenter = () => {
                             setLiveProviderTest(false);
                             setProviderModalOpen(true);
                           }}
-                          className="text-violet-300 hover:text-violet-200 font-semibold flex items-center gap-1 transition-colors"
+                          className="text-[#6D28D9] hover:text-violet-200 font-semibold flex items-center gap-1 transition-colors"
                         >
                           <RefreshCw className="w-3.5 h-3.5" /> Rotate
                         </button>
@@ -466,18 +466,18 @@ const GatewayCenter = () => {
                           setLiveProviderTest(false);
                           setProviderModalOpen(true);
                         }} 
-                        className="text-violet-400 hover:text-violet-300 font-semibold flex items-center gap-1 transition-colors text-xs"
+                        className="text-[#6D28D9] hover:text-[#6D28D9] font-semibold flex items-center gap-1 transition-colors text-xs"
                       >
                         <Lock className="w-3.5 h-3.5" /> Connect Key
                       </button>
                     )}
                   </div>
                   {status.connected && (
-                    <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-500 pt-2 border-t border-white/5">
-                      <div>Storage: <span className="text-gray-300">{status.storage || 'database_fernet'}</span></div>
-                      <div>Key: <span className="text-gray-300">{status.key_prefix || 'masked'}</span></div>
+                    <div className="grid grid-cols-2 gap-2 text-[10px] text-[#6B7488] pt-2 border-t border-[#E6E9F0]">
+                      <div>Storage: <span className="text-[#475069]">{status.storage || 'database_fernet'}</span></div>
+                      <div>Key: <span className="text-[#475069]">{status.key_prefix || 'masked'}</span></div>
                       <div>Health: <span className={status.health_status === 'healthy' || status.health_status === 'validated' ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>{status.health_status || 'unknown'}</span></div>
-                      <div>Rotated: <span className="text-gray-300">{status.rotated_at ? status.rotated_at.split('T')[0] : 'N/A'}</span></div>
+                      <div>Rotated: <span className="text-[#475069]">{status.rotated_at ? status.rotated_at.split('T')[0] : 'N/A'}</span></div>
                     </div>
                   )}
                 </GlassCard>
@@ -491,24 +491,24 @@ const GatewayCenter = () => {
       <Modal isOpen={routeModalOpen} onClose={() => setRouteModalOpen(false)} title={editingRoute ? 'Edit Gateway Route' : 'Add Gateway Route'}>
         <form onSubmit={handleRouteSubmit} className="space-y-4 text-sm">
           <div>
-            <label className="block text-xs font-semibold text-gray-400 mb-1.5">Route Name</label>
+            <label className="block text-xs font-semibold text-[#475069] mb-1.5">Route Name</label>
             <input
               type="text"
               required
               placeholder="e.g. Default Production Route"
               value={routeForm.name}
               onChange={(e) => setRouteForm({ ...routeForm, name: e.target.value })}
-              className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors"
+              className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] transition-colors"
             />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-400 mb-1.5">Provider</label>
+              <label className="block text-xs font-semibold text-[#475069] mb-1.5">Provider</label>
               <select
                 value={routeForm.provider}
                 onChange={(e) => setRouteForm({ ...routeForm, provider: e.target.value })}
-                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors font-bold text-xs"
+                className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] transition-colors font-bold text-xs"
               >
                 <option value="OpenAI">OpenAI</option>
                 <option value="Anthropic">Anthropic</option>
@@ -517,47 +517,47 @@ const GatewayCenter = () => {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-semibold text-gray-400 mb-1.5">Model</label>
+              <label className="block text-xs font-semibold text-[#475069] mb-1.5">Model</label>
               <input
                 type="text"
                 required
                 placeholder="e.g. gpt-4o"
                 value={routeForm.model}
                 onChange={(e) => setRouteForm({ ...routeForm, model: e.target.value })}
-                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors"
+                className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] transition-colors"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-400 mb-1.5">Endpoint URL</label>
+            <label className="block text-xs font-semibold text-[#475069] mb-1.5">Endpoint URL</label>
             <input
               type="text"
               required
               placeholder="e.g. https://api.openai.com/v1"
               value={routeForm.endpoint}
               onChange={(e) => setRouteForm({ ...routeForm, endpoint: e.target.value })}
-              className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors font-mono"
+              className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] transition-colors font-mono"
             />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-400 mb-1.5">Rate Limit (RPM)</label>
+              <label className="block text-xs font-semibold text-[#475069] mb-1.5">Rate Limit (RPM)</label>
               <input
                 type="number"
                 required
                 value={routeForm.rate_limit}
                 onChange={(e) => setRouteForm({ ...routeForm, rate_limit: parseInt(e.target.value) || 0 })}
-                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors font-mono"
+                className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] transition-colors font-mono"
               />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-gray-400 mb-1.5">Tenant Assignment</label>
+              <label className="block text-xs font-semibold text-[#475069] mb-1.5">Tenant Assignment</label>
               <select
                 value={routeForm.tenant_assignment}
                 onChange={(e) => setRouteForm({ ...routeForm, tenant_assignment: e.target.value })}
-                className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors text-xs"
+                className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] transition-colors text-xs"
               >
                 <option value="Current Tenant">Current Tenant</option>
               </select>
@@ -565,27 +565,27 @@ const GatewayCenter = () => {
           </div>
 
           <div className="flex items-center gap-6 pt-2">
-            <label className="flex items-center gap-2 text-white font-medium cursor-pointer">
+            <label className="flex items-center gap-2 text-[#0E1726] font-medium cursor-pointer">
               <input
                 type="checkbox"
                 checked={routeForm.redaction_enabled}
                 onChange={(e) => setRouteForm({ ...routeForm, redaction_enabled: e.target.checked })}
-                className="w-4 h-4 accent-violet-600 rounded border-white/10"
+                className="w-4 h-4 accent-violet-600 rounded border-[#E6E9F0]"
               />
               Redaction Enabled
             </label>
-            <label className="flex items-center gap-2 text-white font-medium cursor-pointer">
+            <label className="flex items-center gap-2 text-[#0E1726] font-medium cursor-pointer">
               <input
                 type="checkbox"
                 checked={routeForm.enabled}
                 onChange={(e) => setRouteForm({ ...routeForm, enabled: e.target.checked })}
-                className="w-4 h-4 accent-violet-600 rounded border-white/10"
+                className="w-4 h-4 accent-violet-600 rounded border-[#E6E9F0]"
               />
               Route Active
             </label>
           </div>
 
-          <div className="flex justify-end gap-3 pt-4 border-t border-white/5">
+          <div className="flex justify-end gap-3 pt-4 border-t border-[#E6E9F0]">
             <Button
               variant="ghost"
               size="sm"
@@ -609,7 +609,7 @@ const GatewayCenter = () => {
       <Modal isOpen={providerModalOpen} onClose={() => setProviderModalOpen(false)} title={`${providerModalMode === 'rotate' ? 'Rotate' : 'Connect'} ${selectedProvider.replace('_', ' ').toUpperCase()} Secrets`}>
         <form onSubmit={handleConnectProviderSubmit} className="space-y-4 text-sm">
           <div>
-            <label className="block text-xs font-semibold text-gray-400 mb-1">Provider Node</label>
+            <label className="block text-xs font-semibold text-[#475069] mb-1">Provider Node</label>
             <select
               value={selectedProvider}
               onChange={(e) => {
@@ -618,7 +618,7 @@ const GatewayCenter = () => {
                 setAzureEndpoint('');
                 setAzureVersion('');
               }}
-              className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors uppercase font-bold text-xs tracking-wider"
+              className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] transition-colors uppercase font-bold text-xs tracking-wider"
             >
               <option value="openai">OpenAI</option>
               <option value="gemini">Google Gemini</option>
@@ -628,62 +628,62 @@ const GatewayCenter = () => {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-400 mb-1.5">Provider API Key</label>
+            <label className="block text-xs font-semibold text-[#475069] mb-1.5">Provider API Key</label>
             <input
               type="password"
               required
               placeholder="e.g. sk-... or AIzaSy..."
               value={apiKeyInput}
               onChange={(e) => setApiKeyInput(e.target.value)}
-              className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors font-mono"
+              className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] transition-colors font-mono"
             />
           </div>
 
           {selectedProvider === 'azure_openai' && (
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-1.5">Azure Endpoint Base URL</label>
+                <label className="block text-xs font-semibold text-[#475069] mb-1.5">Azure Endpoint Base URL</label>
                 <input
                   type="text"
                   required
                   placeholder="https://my-resource.openai.azure.com"
                   value={azureEndpoint}
                   onChange={(e) => setAzureEndpoint(e.target.value)}
-                  className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors font-mono"
+                  className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] transition-colors font-mono"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-gray-400 mb-1.5">Azure Resource Version</label>
+                <label className="block text-xs font-semibold text-[#475069] mb-1.5">Azure Resource Version</label>
                 <input
                   type="text"
                   required
                   placeholder="2024-02-15-preview"
                   value={azureVersion}
                   onChange={(e) => setAzureVersion(e.target.value)}
-                  className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-violet-500 transition-colors font-mono"
+                  className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] transition-colors font-mono"
                 />
               </div>
             </div>
           )}
 
-          <div className="p-3 bg-violet-950/20 border border-violet-500/10 rounded-lg flex items-start gap-2.5">
-            <Lock className="w-4 h-4 text-violet-400 shrink-0 mt-0.5" />
-            <p className="text-[10px] text-gray-400 leading-normal">
+          <div className="p-3 bg-violet-950/20 border border-[#6D28D9]/10 rounded-lg flex items-start gap-2.5">
+            <Lock className="w-4 h-4 text-[#6D28D9] shrink-0 mt-0.5" />
+            <p className="text-[10px] text-[#475069] leading-normal">
               <strong>Production Secret Shield:</strong> Your provider key is stored behind AuthClaw secret management. In AWS mode, the raw key lives in AWS Secrets Manager; otherwise it is encrypted locally for development. Raw keys are never returned after saving.
             </p>
           </div>
 
-          <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+          <label className="flex items-center gap-2 text-xs text-[#475069] cursor-pointer">
             <input
               type="checkbox"
               checked={liveProviderTest}
               onChange={(e) => setLiveProviderTest(e.target.checked)}
-              className="w-4 h-4 accent-violet-600 rounded border-white/10"
+              className="w-4 h-4 accent-violet-600 rounded border-[#E6E9F0]"
             />
             Run live provider connection test before saving
           </label>
 
-          <div className="flex justify-end gap-3 pt-4 border-t border-white/5">
+          <div className="flex justify-end gap-3 pt-4 border-t border-[#E6E9F0]">
             <Button
               variant="ghost"
               size="sm"

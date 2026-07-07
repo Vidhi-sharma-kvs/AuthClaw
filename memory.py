@@ -4,6 +4,45 @@ from sqlalchemy import text
 from services.tenant_context import get_current_tenant_id
 
 
+PROVIDER_UNAVAILABLE_COPY = (
+    "The configured model provider is currently unavailable. AuthClaw completed "
+    "the security, policy, and audit checks, but the upstream model call could "
+    "not be completed. Check the Providers page, API credentials, and outbound "
+    "network access, then try again."
+)
+
+
+def sanitize_provider_message(content):
+    text_content = str(content or "")
+    provider_error_markers = (
+        "[Offline Fallback]",
+        "Provider unavailable:",
+        "HTTPSConnectionPool",
+        "generativelanguage.googleapis.com",
+        "Max retries exceeded",
+        "Failed to establish a new connection",
+        "key=",
+    )
+    if any(marker in text_content for marker in provider_error_markers):
+        return PROVIDER_UNAVAILABLE_COPY
+    return content
+
+
+def sanitize_trace(trace):
+    if not isinstance(trace, list):
+        return trace
+    sanitized = []
+    for item in trace:
+        if isinstance(item, dict):
+            clean_item = dict(item)
+            if "details" in clean_item:
+                clean_item["details"] = sanitize_provider_message(clean_item["details"])
+            sanitized.append(clean_item)
+        else:
+            sanitized.append(item)
+    return sanitized
+
+
 def ensure_session_exists(session_id: str, tenant_id=None):
     """
     Ensures that a chat session exists in the database.
@@ -99,13 +138,13 @@ def get_history(session_id):
                     except Exception:
                         msg["content"] = content
                 else:
-                    msg["content"] = content
+                    msg["content"] = sanitize_provider_message(content)
                     
                 if trace:
                     try:
-                        msg["trace"] = json.loads(trace)
+                        msg["trace"] = sanitize_trace(json.loads(trace))
                     except Exception:
-                        msg["trace"] = trace
+                        msg["trace"] = sanitize_provider_message(trace)
                     
                 history.append(msg)
             return history

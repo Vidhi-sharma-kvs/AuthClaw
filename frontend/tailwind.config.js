@@ -7,14 +7,14 @@ export default {
   theme: {
     extend: {
       colors: {
-        darkBg: "#08152B",
-        cardBg: "rgba(11, 31, 63, 0.4)",
-        borderBg: "rgba(255, 255, 255, 0.05)",
+        darkBg: "#FBFAF9",
+        cardBg: "rgba(255, 255, 255, 0.85)",
+        borderBg: "#E6E9F0",
         navy: {
-          950: "#08152B",
-          900: "#0B1F3F",
-          800: "#12294B",
-          700: "#1B3663",
+          950: "#0E1726",
+          900: "#475069",
+          800: "#6B7488",
+          700: "#7C3AED",
         },
         brandViolet: {
           DEFAULT: "#6D28D9",

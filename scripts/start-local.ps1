@@ -24,14 +24,33 @@ $root = Split-Path -Parent $PSScriptRoot
 $frontend = Join-Path $root "frontend"
 $goGateway = Join-Path $root "gateway-go"
 $logs = Join-Path $root "logs"
-$backendPython = Join-Path $root "venv_new\Scripts\python.exe"
+$candidateBackendPythons = @(
+    (Join-Path $root "venv_fixed\Scripts\python.exe"),
+    (Join-Path $root "venv_new\Scripts\python.exe"),
+    (Join-Path $root "venv\Scripts\python.exe"),
+    (Join-Path $root "venv_default\Scripts\python.exe"),
+    (Join-Path $root "venv_test\Scripts\python.exe")
+)
+
+$backendPython = ""
+foreach ($candidatePython in $candidateBackendPythons) {
+    if (Test-Path $candidatePython) {
+        $check = & $candidatePython -c "import fastapi, uvicorn" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $backendPython = $candidatePython
+            break
+        }
+        Write-Host "Skipping unusable backend Python: $candidatePython"
+        Write-Host "  $check"
+    }
+}
 
 if (!(Test-Path $logs)) {
     New-Item -ItemType Directory -Path $logs | Out-Null
 }
 
-if (!(Test-Path $backendPython)) {
-    throw "venv_new was not found. Create it first with: py -m venv venv_new; .\venv_new\Scripts\python.exe -m pip install -r requirements.txt"
+if (!$backendPython) {
+    throw "No usable backend Python environment was found. Create one with: <python> -m venv venv_fixed; .\venv_fixed\Scripts\python.exe -m pip install -r requirements.txt"
 }
 
 if (!(Test-Path (Join-Path $frontend "node_modules"))) {

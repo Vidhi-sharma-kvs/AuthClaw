@@ -9,7 +9,8 @@ def _offline_provider_fallback(error_message: str) -> str:
     return (
         "[Offline Fallback] The configured model provider is currently unavailable. "
         "AuthClaw completed the gateway security, policy, and audit checks, but the "
-        f"upstream LLM call could not be completed: {error_message}"
+        "upstream LLM call could not be completed. Check the Providers page, API "
+        "credentials, and outbound network access, then try again."
     )
 
 

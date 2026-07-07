@@ -28,9 +28,9 @@ const ProtectedRoute = ({ children }) => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-gray-400">
+      <div className="min-h-screen flex items-center justify-center bg-[#F5F7FA] text-[#475069]">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-2 border-t-transparent border-violet-500 rounded-full animate-spin" />
+          <div className="w-8 h-8 border-2 border-t-transparent border-[#6D28D9] rounded-full animate-spin" />
           <span className="text-xs font-semibold tracking-wider">Verifying Workstation Cleared State...</span>
         </div>
       </div>
@@ -56,7 +56,7 @@ const ProtectedRoute = ({ children }) => {
 
     return (
       <div className="flex-1 min-h-[70vh] flex items-center justify-center p-6">
-        <div className="glass-card max-w-md p-8 text-center border border-rose-500/20 bg-rose-950/5/40 space-y-6">
+        <div className="glass-card max-w-md p-8 text-center border border-rose-500/20 bg-rose-50 space-y-6">
           <div className="flex justify-center">
             <div className="p-4 bg-rose-500/10 rounded-2xl border border-rose-500/20 text-rose-400">
               <ShieldAlert className="w-10 h-10 animate-pulse" />
@@ -64,16 +64,16 @@ const ProtectedRoute = ({ children }) => {
           </div>
           
           <div className="space-y-2">
-            <h2 className="text-lg font-bold text-white">Security Clearance Violation</h2>
-            <p className="text-xs text-gray-400 leading-relaxed">
-              Your assigned role (<strong className="text-rose-400">{user?.role}</strong>) does not possess sufficient privileges to inspect the route <strong className="text-white font-mono">{currentPath}</strong>.
+            <h2 className="text-lg font-bold text-[#0E1726]">Security Clearance Violation</h2>
+            <p className="text-xs text-[#475069] leading-relaxed">
+              Your assigned role (<strong className="text-rose-400">{user?.role}</strong>) does not possess sufficient privileges to inspect the route <strong className="text-[#0E1726] font-mono">{currentPath}</strong>.
             </p>
           </div>
 
-          <div className="border-t border-white/5 pt-5 flex justify-center">
+          <div className="border-t border-[#E6E9F0] pt-5 flex justify-center">
             <Link 
               to={homePath} 
-              className="flex items-center gap-2 px-4 py-2 bg-slate-900 border border-white/10 hover:border-violet-500 text-white rounded-lg text-xs font-semibold transition-all"
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-[#E6E9F0] hover:border-[#6D28D9] text-[#0E1726] rounded-lg text-xs font-semibold transition-all"
             >
               <ArrowLeft className="w-3.5 h-3.5" /> {homeLabel}
             </Link>

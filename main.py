@@ -523,6 +523,12 @@ def get_gateway_service() -> GatewayService:
     return GatewayService(graph=graph, resolve_tenant=resolve_tenant, decode_jwt=decode_jwt)
 
 
+PROVIDER_UNAVAILABLE_MESSAGE = (
+    "The configured model provider is currently unavailable. Check provider "
+    "credentials and outbound network access, then try again."
+)
+
+
 @app.post("/gateway/chat")
 def gateway_chat(
     request: ChatRequest,
@@ -551,7 +557,7 @@ def gateway_chat(
             content={
                 "status": "provider_unavailable",
                 "error": "provider_unavailable",
-                "message": str(e),
+                "message": PROVIDER_UNAVAILABLE_MESSAGE,
                 "request_id": e.request_id,
                 "trace": e.trace,
             }
@@ -586,7 +592,7 @@ def chat(
             content={
                 "status": "provider_unavailable",
                 "error": "provider_unavailable",
-                "message": str(e),
+                "message": PROVIDER_UNAVAILABLE_MESSAGE,
                 "request_id": e.request_id,
                 "trace": e.trace,
             }
@@ -912,10 +918,35 @@ async def approve_request(approval_id: str, request: Request):
         totp_secret = None
         if tenant_id:
             with engine.connect() as conn:
-                totp_secret = conn.execute(
-                    text("SELECT totp_secret FROM tenants WHERE id = :id"),
-                    {"id": tenant_id}
-                ).scalar()
+                user_id = user_payload.get("user_id")
+                username = user_payload.get("sub") or user_payload.get("email")
+                if user_id:
+                    totp_secret = conn.execute(
+                        text("""
+                            SELECT totp_secret
+                            FROM tenant_users
+                            WHERE id = :user_id
+                              AND tenant_id = :tenant_id
+                            LIMIT 1
+                        """),
+                        {"user_id": user_id, "tenant_id": tenant_id},
+                    ).scalar()
+                if not totp_secret and username:
+                    totp_secret = conn.execute(
+                        text("""
+                            SELECT totp_secret
+                            FROM tenant_users
+                            WHERE lower(email) = lower(:email)
+                              AND tenant_id = :tenant_id
+                            LIMIT 1
+                        """),
+                        {"email": username, "tenant_id": tenant_id},
+                    ).scalar()
+                if not totp_secret:
+                    totp_secret = conn.execute(
+                        text("SELECT totp_secret FROM tenants WHERE id = :id"),
+                        {"id": tenant_id}
+                    ).scalar()
 
         if not totp_secret:
             log_approval_event(
@@ -1136,7 +1167,7 @@ async def execute_request(approval_id: str, request: Request):
             content={
                 "status": "provider_unavailable",
                 "error": "provider_unavailable",
-                "message": str(e),
+                "message": PROVIDER_UNAVAILABLE_MESSAGE,
                 "request_id": e.request_id,
                 "trace": e.trace,
             }
@@ -1406,7 +1437,7 @@ def chat_completions(
             content={
                 "error": {
                     "type": "provider_unavailable",
-                    "message": f"Failed to communicate with LLM provider: {str(e)}",
+                    "message": PROVIDER_UNAVAILABLE_MESSAGE,
                     "request_id": e.request_id,
                     "trace": e.trace,
                 },
@@ -4101,6 +4132,8 @@ class MFAResetRequest(BaseModel):
 
 class MFAResetConfirmRequest(BaseModel):
     token: str
+    username: Optional[str] = None
+    password: Optional[str] = None
 
 class PasswordResetRequest(BaseModel):
     username: str
@@ -4165,7 +4198,6 @@ def store_auth_session(session_id: str, session: dict) -> None:
     from database import engine
     from sqlalchemy import text
 
-    expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=AUTH_SESSION_TTL_SECONDS)
     with engine.connect() as conn:
         conn.execute(
             text("""
@@ -4175,7 +4207,7 @@ def store_auth_session(session_id: str, session: dict) -> None:
                 )
                 VALUES (
                     :session_id, :username, :role, :permissions, :tenant_id, :user_id,
-                    :email_verified, :domain_verified, :step, :expires_at
+                    :email_verified, :domain_verified, :step, NOW() + (:ttl_seconds * INTERVAL '1 second')
                 )
                 ON CONFLICT (session_id) DO UPDATE SET
                     username = EXCLUDED.username,
@@ -4198,7 +4230,7 @@ def store_auth_session(session_id: str, session: dict) -> None:
                 "email_verified": session["email_verified"],
                 "domain_verified": session["domain_verified"],
                 "step": session["step"],
-                "expires_at": expires_at,
+                "ttl_seconds": AUTH_SESSION_TTL_SECONDS,
             },
         )
         conn.commit()
@@ -5108,21 +5140,70 @@ def auth_mfa_reset_request(req: MFAResetRequest):
         "domain_verified": True,
         "step": "mfa_reset"
     })
-    send_mfa_reset_email(user[2], reset_token, user[9] or "your organization")
-
     response = {
         "status": "success",
         "message": "MFA reset token sent to your verified email address."
     }
-    if skip_email_delivery_for_testing():
+    email_delivery_status = "sent"
+    email_delivery_error = None
+    try:
+        send_mfa_reset_email(user[2], reset_token, user[9] or "your organization")
+    except HTTPException as exc:
+        if not soft_fail_email_delivery_for_local():
+            raise
+        email_delivery_status = "failed_local_soft_bypass"
+        email_delivery_error = exc.detail
+        logger.warning("MFA reset email delivery failed in local development: %s", exc.detail)
+
+    response["email_delivery"] = email_delivery_status
+    if skip_email_delivery_for_testing() or email_delivery_status == "failed_local_soft_bypass":
         response["reset_token"] = reset_token
+        response["message"] = "MFA reset token generated. Email delivery is unavailable locally, so use the token shown here."
+        if email_delivery_error:
+            response["email_error"] = email_delivery_error
     return response
 
 @app.post("/auth/mfa/reset-confirm")
 def auth_mfa_reset_confirm(req: MFAResetConfirmRequest):
     session = load_auth_session(req.token)
     if not session or session["step"] != "mfa_reset":
-        raise HTTPException(status_code=400, detail="Invalid or expired MFA reset token.")
+        if not soft_fail_email_delivery_for_local() or not req.username or not req.password:
+            raise HTTPException(status_code=400, detail="Invalid or expired MFA reset token.")
+
+        from database import engine
+        from sqlalchemy import text
+        with auth_lookup_context(), engine.connect() as conn:
+            user = conn.execute(
+                text("""
+                    SELECT u.id, u.tenant_id, u.email, u.password_hash, u.role,
+                           u.permissions, u.email_verified, u.status, t.domain_verified
+                    FROM tenant_users u
+                    JOIN tenants t ON t.id = u.tenant_id
+                    WHERE lower(u.email) = lower(:email)
+                    LIMIT 1
+                """),
+                {"email": req.username},
+            ).fetchone()
+
+        if (
+            not user
+            or not verify_password(req.password, user[3])
+            or user[7] != "active"
+            or not bool(user[6])
+            or not bool(user[8])
+        ):
+            raise HTTPException(status_code=400, detail="Invalid or expired MFA reset token.")
+
+        session = {
+            "username": user[2],
+            "role": user[4],
+            "permissions": user[5],
+            "tenant_id": user[1],
+            "user_id": user[0],
+            "email_verified": True,
+            "domain_verified": True,
+            "step": "mfa_reset",
+        }
 
     new_secret = generate_totp_secret()
     username = session["username"]
@@ -5152,6 +5233,19 @@ def auth_mfa_reset_confirm(req: MFAResetConfirmRequest):
         ).fetchone()
         if not updated:
             raise HTTPException(status_code=404, detail="User account not found for MFA reset.")
+        conn.execute(
+            text("""
+                UPDATE tenants
+                SET totp_secret = :secret
+                WHERE id = :tenant_id
+                  AND lower(email) = lower(:email)
+            """),
+            {
+                "secret": new_secret,
+                "tenant_id": tenant_id,
+                "email": username,
+            },
+        )
         conn.commit()
 
     delete_auth_session(req.token)

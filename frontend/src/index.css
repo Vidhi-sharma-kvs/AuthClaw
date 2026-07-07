@@ -3,10 +3,10 @@
 @config "../tailwind.config.js";
 
 :root {
-  --navy-950: #08152B;
-  --navy-900: #0B1F3F;
-  --navy-800: #12294B;
-  --navy-700: #1B3663;
+  --navy-950: #0E1726;
+  --navy-900: #475069;
+  --navy-800: #6B7488;
+  --navy-700: #7C3AED;
   --ink: #0E1726;
   --slate: #475069;
   --mute: #6B7488;

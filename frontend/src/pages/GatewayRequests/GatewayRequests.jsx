@@ -85,18 +85,18 @@ const GatewayRequests = () => {
       key: 'request_id',
       header: 'Request ID',
       sortable: true,
-      render: (req) => <span className="font-mono text-violet-300 font-bold">{req.request_id}</span>
+      render: (req) => <span className="font-mono text-[#6D28D9] font-bold">{req.request_id}</span>
     },
     {
       key: 'created_at',
       header: 'Created',
       sortable: true,
-      render: (req) => <span className="text-gray-400 text-xs">{formatDate(req.created_at || req.timestamp)}</span>
+      render: (req) => <span className="text-[#475069] text-xs">{formatDate(req.created_at || req.timestamp)}</span>
     },
     {
       key: 'tenant_id',
       header: 'Tenant ID',
-      render: (req) => <span className="font-mono text-gray-400">{req.tenant_id || 'N/A'}</span>
+      render: (req) => <span className="font-mono text-[#475069]">{req.tenant_id || 'N/A'}</span>
     },
     {
       key: 'provider',
@@ -104,7 +104,7 @@ const GatewayRequests = () => {
       sortable: true,
       render: (req) => (
         <span className="capitalize inline-flex items-center gap-1.5">
-          <Router className="w-3.5 h-3.5 text-violet-400" />
+          <Router className="w-3.5 h-3.5 text-[#6D28D9]" />
           {req.provider || 'N/A'}
         </span>
       )
@@ -113,7 +113,7 @@ const GatewayRequests = () => {
       key: 'model',
       header: 'Model',
       sortable: true,
-      render: (req) => <span className="font-mono text-gray-400">{req.model || 'N/A'}</span>
+      render: (req) => <span className="font-mono text-[#475069]">{req.model || 'N/A'}</span>
     },
     {
       key: 'decision',
@@ -128,7 +128,7 @@ const GatewayRequests = () => {
       key: 'duration_ms',
       header: 'Duration',
       sortable: true,
-      render: (req) => <span className="text-gray-400 font-mono">{req.duration_ms ?? req.latency ?? 0} ms</span>
+      render: (req) => <span className="text-[#475069] font-mono">{req.duration_ms ?? req.latency ?? 0} ms</span>
     },
     {
       key: 'actions',
@@ -136,7 +136,7 @@ const GatewayRequests = () => {
       render: (req) => (
         <Link
           to={`/requests/${req.request_id}`}
-          className="inline-flex items-center gap-1 text-violet-400 hover:text-violet-300 font-semibold"
+          className="inline-flex items-center gap-1 text-[#6D28D9] hover:text-[#6D28D9] font-semibold"
         >
           Details <ArrowRight className="w-3.5 h-3.5" />
         </Link>
@@ -149,10 +149,10 @@ const GatewayRequests = () => {
       {/* Title */}
       <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-white via-gray-200 to-gray-400 bg-clip-text text-transparent">
+          <h1 className="text-2xl font-bold text-[#0E1726]">
             Gateway Requests
           </h1>
-          <p className="text-xs text-gray-400 mt-1">
+          <p className="text-xs text-[#475069] mt-1">
             Runtime request lifecycle records from the AuthClaw Gateway.
           </p>
         </div>
@@ -170,18 +170,18 @@ const GatewayRequests = () => {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <GlassCard hover={false} className="p-4 flex items-center justify-between">
           <div>
-            <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Total</p>
-            <p className="text-2xl font-bold text-white mt-1">{totals.all}</p>
+            <p className="text-[#6B7488] text-[10px] font-bold uppercase tracking-wider">Total</p>
+            <p className="text-2xl font-bold text-[#0E1726] mt-1">{totals.all}</p>
           </div>
-          <div className="p-2 bg-violet-600/10 rounded-lg text-violet-400 border border-violet-500/10">
+          <div className="p-2 bg-[#F1ECFE] rounded-lg text-[#6D28D9] border border-[#6D28D9]/10">
             <Database className="w-4 h-4" />
           </div>
         </GlassCard>
 
         <GlassCard hover={false} className="p-4 flex items-center justify-between">
           <div>
-            <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Allowed</p>
-            <p className="text-2xl font-bold text-white mt-1">{totals.allowed}</p>
+            <p className="text-[#6B7488] text-[10px] font-bold uppercase tracking-wider">Allowed</p>
+            <p className="text-2xl font-bold text-[#0E1726] mt-1">{totals.allowed}</p>
           </div>
           <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-400 border border-emerald-500/10">
             <Activity className="w-4 h-4" />
@@ -190,8 +190,8 @@ const GatewayRequests = () => {
 
         <GlassCard hover={false} className="p-4 flex items-center justify-between">
           <div>
-            <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Blocked</p>
-            <p className="text-2xl font-bold text-white mt-1">{totals.blocked}</p>
+            <p className="text-[#6B7488] text-[10px] font-bold uppercase tracking-wider">Blocked</p>
+            <p className="text-2xl font-bold text-[#0E1726] mt-1">{totals.blocked}</p>
           </div>
           <div className="p-2 bg-rose-500/10 rounded-lg text-rose-400 border border-rose-500/10">
             <ShieldAlert className="w-4 h-4" />
@@ -200,8 +200,8 @@ const GatewayRequests = () => {
 
         <GlassCard hover={false} className="p-4 flex items-center justify-between">
           <div>
-            <p className="text-gray-500 text-[10px] font-bold uppercase tracking-wider">Pending</p>
-            <p className="text-2xl font-bold text-white mt-1">{totals.pending}</p>
+            <p className="text-[#6B7488] text-[10px] font-bold uppercase tracking-wider">Pending</p>
+            <p className="text-2xl font-bold text-[#0E1726] mt-1">{totals.pending}</p>
           </div>
           <div className="p-2 bg-amber-500/10 rounded-lg text-amber-400 border border-amber-500/10">
             <Clock className="w-4 h-4" />
@@ -221,11 +221,11 @@ const GatewayRequests = () => {
         <div className="flex flex-wrap gap-4 items-center w-full md:w-auto">
           {/* Provider Filter */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500 font-bold uppercase">Provider:</span>
+            <span className="text-xs text-[#6B7488] font-bold uppercase">Provider:</span>
             <select
               value={filterProvider}
               onChange={(e) => { setFilterProvider(e.target.value); setCurrentPage(1); }}
-              className="bg-slate-950 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-violet-500"
+              className="bg-[#F5F7FA] border border-[#E6E9F0] rounded-lg px-3 py-1.5 text-xs text-[#0E1726] focus:outline-none focus:border-[#6D28D9]"
             >
               <option value="ALL">All Providers</option>
               <option value="OPENAI">OpenAI</option>
@@ -237,11 +237,11 @@ const GatewayRequests = () => {
 
           {/* Decision Filter */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500 font-bold uppercase">Decision:</span>
+            <span className="text-xs text-[#6B7488] font-bold uppercase">Decision:</span>
             <select
               value={filterDecision}
               onChange={(e) => { setFilterDecision(e.target.value); setCurrentPage(1); }}
-              className="bg-slate-950 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-violet-500"
+              className="bg-[#F5F7FA] border border-[#E6E9F0] rounded-lg px-3 py-1.5 text-xs text-[#0E1726] focus:outline-none focus:border-[#6D28D9]"
             >
               <option value="ALL">All Decisions</option>
               <option value="ALLOW">ALLOW</option>
@@ -262,10 +262,10 @@ const GatewayRequests = () => {
       {/* Pagination Controls */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between pt-2">
-          <p className="text-xs text-gray-500">
-            Showing <span className="text-white font-bold">{indexOfFirstItem + 1}</span> to{' '}
-            <span className="text-white font-bold">{Math.min(indexOfLastItem, filteredRequests.length)}</span> of{' '}
-            <span className="text-white font-bold">{filteredRequests.length}</span> requests
+          <p className="text-xs text-[#6B7488]">
+            Showing <span className="text-[#0E1726] font-bold">{indexOfFirstItem + 1}</span> to{' '}
+            <span className="text-[#0E1726] font-bold">{Math.min(indexOfLastItem, filteredRequests.length)}</span> of{' '}
+            <span className="text-[#0E1726] font-bold">{filteredRequests.length}</span> requests
           </p>
           <div className="flex gap-2">
             <Button

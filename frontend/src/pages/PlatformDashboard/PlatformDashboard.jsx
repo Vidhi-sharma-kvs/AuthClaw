@@ -39,13 +39,13 @@ const PlatformDashboard = () => {
   if (loading) {
     return (
       <div className="flex flex-col gap-6 animate-pulse">
-        <div className="h-24 bg-white/5 rounded-lg" />
+        <div className="h-24 bg-[#F5F7FA] rounded-lg" />
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
           {[...Array(6)].map((_, index) => (
-            <div key={index} className="h-24 bg-white/5 rounded-lg" />
+            <div key={index} className="h-24 bg-[#F5F7FA] rounded-lg" />
           ))}
         </div>
-        <div className="h-80 bg-white/5 rounded-lg" />
+        <div className="h-80 bg-[#F5F7FA] rounded-lg" />
       </div>
     );
   }
@@ -57,40 +57,40 @@ const PlatformDashboard = () => {
       sortable: true,
       render: (tenant) => (
         <div>
-          <div className="font-semibold text-white">{tenant.name}</div>
-          <div className="text-[10px] text-gray-500 font-mono">Tenant #{tenant.id}</div>
+          <div className="font-semibold text-[#0E1726]">{tenant.name}</div>
+          <div className="text-[10px] text-[#6B7488] font-mono">Tenant #{tenant.id}</div>
         </div>
       )
     },
     {
       key: 'email',
       header: 'Admin Email',
-      render: (tenant) => <span className="text-gray-300 text-xs">{tenant.email || 'N/A'}</span>
+      render: (tenant) => <span className="text-[#475069] text-xs">{tenant.email || 'N/A'}</span>
     },
     {
       key: 'domain',
       header: 'Domain',
-      render: (tenant) => <span className="text-gray-400 font-mono text-xs">{tenant.domain || 'N/A'}</span>
+      render: (tenant) => <span className="text-[#475069] font-mono text-xs">{tenant.domain || 'N/A'}</span>
     },
     {
       key: 'users_count',
       header: 'Users',
-      render: (tenant) => <span className="font-mono text-gray-200">{tenant.users_count}</span>
+      render: (tenant) => <span className="font-mono text-[#0E1726]">{tenant.users_count}</span>
     },
     {
       key: 'api_keys_count',
       header: 'API Keys',
-      render: (tenant) => <span className="font-mono text-gray-200">{tenant.api_keys_count}</span>
+      render: (tenant) => <span className="font-mono text-[#0E1726]">{tenant.api_keys_count}</span>
     },
     {
       key: 'provider_credentials_count',
       header: 'Providers',
-      render: (tenant) => <span className="font-mono text-gray-200">{tenant.provider_credentials_count}</span>
+      render: (tenant) => <span className="font-mono text-[#0E1726]">{tenant.provider_credentials_count}</span>
     },
     {
       key: 'gateway_requests_count',
       header: 'Requests',
-      render: (tenant) => <span className="font-mono text-gray-200">{tenant.gateway_requests_count}</span>
+      render: (tenant) => <span className="font-mono text-[#0E1726]">{tenant.gateway_requests_count}</span>
     },
     {
       key: 'status',
@@ -108,16 +108,16 @@ const PlatformDashboard = () => {
     <div className="space-y-6 font-sans">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-[10px] uppercase tracking-[0.24em] text-violet-300 font-bold font-display">Platform Owner URL</p>
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent font-display mt-1">
+          <p className="text-[10px] uppercase tracking-[0.24em] text-[#6D28D9] font-bold font-display">Platform Owner URL</p>
+          <h1 className="text-2xl font-bold text-[#0E1726] font-display mt-1">
             AuthClaw Platform Administration
           </h1>
-          <p className="text-xs text-gray-400 mt-1">
+          <p className="text-xs text-[#475069] mt-1">
             Owner-only view across tenants, users, gateway traffic, and global platform health.
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <span className="px-3 py-2 rounded-lg border border-white/5 bg-slate-950/60 text-xs font-mono text-violet-300">
+          <span className="px-3 py-2 rounded-lg border border-[#E6E9F0] bg-[#F5F7FA] text-xs font-mono text-[#6D28D9]">
             /platform/dashboard
           </span>
           <Button
@@ -138,61 +138,61 @@ const PlatformDashboard = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <GlassCard hover={false} className="p-4 flex flex-col justify-between h-24">
-          <div className="flex items-center justify-between text-gray-500">
+          <div className="flex items-center justify-between text-[#6B7488]">
             <span className="text-[10px] font-bold uppercase tracking-wider font-display">Tenants</span>
-            <Building2 className="w-4 h-4 text-violet-400" />
+            <Building2 className="w-4 h-4 text-[#6D28D9]" />
           </div>
-          <p className="text-2xl font-bold text-white mt-2 font-mono">{summary?.total_tenants}</p>
+          <p className="text-2xl font-bold text-[#0E1726] mt-2 font-mono">{summary?.total_tenants}</p>
         </GlassCard>
 
         <GlassCard hover={false} className="p-4 flex flex-col justify-between h-24">
-          <div className="flex items-center justify-between text-gray-500">
+          <div className="flex items-center justify-between text-[#6B7488]">
             <span className="text-[10px] font-bold uppercase tracking-wider font-display">Active Tenants</span>
             <CheckCircle className="w-4 h-4 text-emerald-400" />
           </div>
-          <p className="text-2xl font-bold text-white mt-2 font-mono">{summary?.active_tenants}</p>
+          <p className="text-2xl font-bold text-[#0E1726] mt-2 font-mono">{summary?.active_tenants}</p>
         </GlassCard>
 
         <GlassCard hover={false} className="p-4 flex flex-col justify-between h-24">
-          <div className="flex items-center justify-between text-gray-500">
+          <div className="flex items-center justify-between text-[#6B7488]">
             <span className="text-[10px] font-bold uppercase tracking-wider font-display">Users</span>
             <Users className="w-4 h-4 text-blue-400" />
           </div>
-          <p className="text-2xl font-bold text-white mt-2 font-mono">{summary?.total_users}</p>
+          <p className="text-2xl font-bold text-[#0E1726] mt-2 font-mono">{summary?.total_users}</p>
         </GlassCard>
 
         <GlassCard hover={false} className="p-4 flex flex-col justify-between h-24">
-          <div className="flex items-center justify-between text-gray-500">
+          <div className="flex items-center justify-between text-[#6B7488]">
             <span className="text-[10px] font-bold uppercase tracking-wider font-display">Platform Admins</span>
             <ShieldAlert className="w-4 h-4 text-amber-400" />
           </div>
-          <p className="text-2xl font-bold text-white mt-2 font-mono">{summary?.platform_admins}</p>
+          <p className="text-2xl font-bold text-[#0E1726] mt-2 font-mono">{summary?.platform_admins}</p>
         </GlassCard>
 
         <GlassCard hover={false} className="p-4 flex flex-col justify-between h-24">
-          <div className="flex items-center justify-between text-gray-500">
+          <div className="flex items-center justify-between text-[#6B7488]">
             <span className="text-[10px] font-bold uppercase tracking-wider font-display">Gateway Requests</span>
             <Activity className="w-4 h-4 text-fuchsia-400" />
           </div>
-          <p className="text-2xl font-bold text-white mt-2 font-mono">{summary?.total_gateway_requests}</p>
+          <p className="text-2xl font-bold text-[#0E1726] mt-2 font-mono">{summary?.total_gateway_requests}</p>
         </GlassCard>
 
         <GlassCard hover={false} className="p-4 flex flex-col justify-between h-24">
-          <div className="flex items-center justify-between text-gray-500">
+          <div className="flex items-center justify-between text-[#6B7488]">
             <span className="text-[10px] font-bold uppercase tracking-wider font-display">Blocked</span>
             <ShieldAlert className="w-4 h-4 text-rose-400" />
           </div>
-          <p className="text-2xl font-bold text-white mt-2 font-mono">{summary?.blocked_gateway_requests}</p>
+          <p className="text-2xl font-bold text-[#0E1726] mt-2 font-mono">{summary?.blocked_gateway_requests}</p>
         </GlassCard>
       </div>
 
       <GlassCard hover={false} className="p-0 overflow-hidden">
-        <div className="flex items-center justify-between p-5 border-b border-white/5 bg-slate-950/20">
+        <div className="flex items-center justify-between p-5 border-b border-[#E6E9F0] bg-white/70">
           <div>
-            <h2 className="text-base font-bold text-white font-display">Tenant Directory</h2>
-            <p className="text-xs text-gray-400 mt-1">All customer organizations registered in AuthClaw.</p>
+            <h2 className="text-base font-bold text-[#0E1726] font-display">Tenant Directory</h2>
+            <p className="text-xs text-[#475069] mt-1">All customer organizations registered in AuthClaw.</p>
           </div>
-          <Database className="w-5 h-5 text-violet-400 animate-pulse" />
+          <Database className="w-5 h-5 text-[#6D28D9] animate-pulse" />
         </div>
 
         <DataTable

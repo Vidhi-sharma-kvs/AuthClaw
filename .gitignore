@@ -16,6 +16,7 @@ __pycache__/
 
 venv/
 venv_default/
+venv_fixed/
 venv_new/
 venv_test/
 
