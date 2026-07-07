@@ -10,6 +10,7 @@ import ApprovalQueue from '../pages/ApprovalQueue/ApprovalQueue';
 import AuditExplorer from '../pages/AuditExplorer/AuditExplorer';
 
 import GatewayCenter from '../pages/GatewayCenter/GatewayCenter';
+import Connectors from '../pages/Connectors/Connectors';
 import GatewayRequests from '../pages/GatewayRequests/GatewayRequests';
 import GatewayRequestDetail from '../pages/GatewayRequests/GatewayRequestDetail';
 import Guardrails from '../pages/Guardrails/Guardrails';
@@ -17,6 +18,7 @@ import APIKeys from '../pages/APIKeys/APIKeys';
 import Settings from '../pages/Settings/Settings';
 import Login from '../pages/Login/Login';
 import PublicPage from '../pages/Public/PublicPage';
+import TrustCenter from '../pages/Public/TrustCenter';
 
 const RoleHomeRedirect = () => {
   const { user } = useAuth();
@@ -43,6 +45,7 @@ const AppRouter = () => {
       {publicRoutes.map((route) => (
         <Route key={route.path} path={route.path} element={<PublicPage page={route.page} />} />
       ))}
+      <Route path="/trust" element={<TrustCenter />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Login initialStep="register" />} />
       <Route
@@ -62,6 +65,7 @@ const AppRouter = () => {
         <Route path="/approvals" element={<ApprovalQueue />} />
         <Route path="/audit" element={<AuditExplorer />} />
         <Route path="/providers" element={<GatewayCenter />} />
+        <Route path="/connectors" element={<Connectors />} />
         <Route path="/api-keys" element={<APIKeys />} />
 
         <Route path="/gateway" element={<Navigate to="/providers" replace />} />

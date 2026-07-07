@@ -1,26 +1,21 @@
 # AuthClaw Python SDK
 
-This directory is reserved for the Python client SDK package.
-
-Until the SDK is packaged, customer applications can call the gateway directly:
+This directory contains a lightweight Python client wrapper for backend services.
 
 ```python
-import requests
+from authclaw_client import AuthClawClient
 
-response = requests.post(
-    "https://YOUR_AUTHCLAW_HOST/api/gateway/chat",
-    headers={
-        "Authorization": "Bearer YOUR_AUTHCLAW_API_KEY",
-        "Content-Type": "application/json",
-    },
-    json={
-        "session_id": "customer-session-001",
-        "message": "Hello through AuthClaw governance.",
-    },
-    timeout=60,
+client = AuthClawClient("https://YOUR_AUTHCLAW_HOST/api", "YOUR_AUTHCLAW_API_KEY")
+
+response = client.gateway_chat(
+    "Hello through AuthClaw governance.",
+    session_id="customer-session-001",
 )
 
-print(response.json())
+for event in client.stream_chat_completion([
+    {"role": "user", "content": "Summarize this through AuthClaw."}
+]):
+    print(event)
 ```
 
 Never expose AuthClaw API keys in browser code. Send gateway requests from your

@@ -559,10 +559,10 @@ const AgentChat = () => {
       const findings = result.findings || result.triggered_policies || [];
       return (
         <div key={index} className="flex gap-4 justify-start">
-          <div className="w-8 h-8 rounded-lg bg-[#6D28D9]/10 border border-[#6D28D9]/20 flex items-center justify-center text-[#6D28D9] shrink-0 shadow-sm">
+          <div className="auth-message-icon">
             <FileText className="w-4 h-4" />
           </div>
-          <div className="glass-card text-slate-700 rounded-xl rounded-tl-none p-4 max-w-2xl text-sm leading-relaxed shadow-sm">
+          <div className="auth-message-assistant p-4 max-w-2xl text-sm leading-relaxed">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <p className="font-bold text-slate-900 truncate font-display">{result.filename || 'Document inspected'}</p>
@@ -665,14 +665,14 @@ const AgentChat = () => {
     return (
       <div key={index} className={`flex gap-4 ${isUser ? 'justify-end' : 'justify-start'}`}>
         {!isUser && (
-          <div className="w-8 h-8 rounded-lg bg-[#6D28D9]/10 border border-[#6D28D9]/20 flex items-center justify-center text-[#6D28D9] shrink-0 shadow-sm">
+          <div className="auth-message-icon">
             <Bot className="w-4 h-4" />
           </div>
         )}
-        <div className={`p-4 rounded-xl max-w-xl text-sm leading-relaxed shadow-sm flex flex-col ${
+        <div className={`p-4 max-w-xl text-sm leading-relaxed flex flex-col ${
           isUser
-            ? 'bg-[#6D28D9] text-white rounded-tr-none'
-            : 'glass-card text-slate-700 rounded-tl-none font-medium'
+            ? 'auth-message-user'
+            : 'auth-message-assistant font-medium'
         }`}>
           <p className="whitespace-pre-wrap">{isUser ? msg.content : sanitizeProviderMessage(msg.content)}</p>
           {!isUser && renderGatewayMeta(msg.gatewayMeta)}
@@ -688,7 +688,7 @@ const AgentChat = () => {
           )}
         </div>
         {isUser && (
-          <div className="w-8 h-8 rounded-lg bg-[#6D28D9]/10 border border-[#6D28D9]/20 flex items-center justify-center text-[#6D28D9] shrink-0 shadow-sm">
+          <div className="auth-message-icon">
             <User className="w-4 h-4" />
           </div>
         )}
@@ -713,20 +713,20 @@ const AgentChat = () => {
   const guardEvents = activeTrace?.filter(e => e.agent?.toLowerCase().includes('guard')) || [];
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] rounded-xl border border-[#E6E9F0] bg-white/70 overflow-hidden relative font-sans shadow-sm">
+    <div className="auth-console-shell flex h-[calc(100vh-8rem)] relative font-sans">
       {/* Sidebar for Sessions */}
-      <div className="w-64 border-r border-[#E6E9F0] bg-slate-50/50 flex flex-col shrink-0">
+      <div className="auth-console-sidebar w-72 flex flex-col shrink-0">
         <div className="p-4 border-b border-[#E6E9F0] space-y-2">
           <button
             onClick={handleNewSession}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#6D28D9] hover:bg-[#7C3AED] text-white rounded-lg text-xs font-semibold hover:opacity-90 transition shadow-md shadow-violet-600/10 font-display"
+            className="auth-btn-primary w-full flex items-center justify-center gap-2 px-4 py-2.5 text-xs transition font-display"
           >
             <Plus className="w-4 h-4" />
             New Session
           </button>
           <button
             onClick={handleDeleteAllSessions}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-rose-50 border border-rose-200 text-rose-600 rounded-lg text-[10px] font-semibold hover:bg-rose-100/50 transition font-display"
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-white border border-rose-200 text-rose-600 rounded-lg text-[10px] font-semibold hover:bg-rose-50 transition font-display"
           >
             <Trash2 className="w-3.5 h-3.5" />
             Clear History
@@ -734,14 +734,14 @@ const AgentChat = () => {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block mb-2 font-display">Gateway Sessions</span>
+          <span className="text-[10px] text-[#6B7488] font-bold uppercase tracking-wider block mb-2 font-display">Gateway Sessions</span>
           {sessionsList.map((id) => (
             <div
               key={id}
-              className={`group flex items-center justify-between px-3 py-2 rounded-lg border transition ${
+              className={`group auth-session-item flex items-center justify-between px-3 py-2 transition ${
                 id === sessionId
-                  ? 'bg-[#6D28D9]/10 border-[#6D28D9]/20 text-[#6D28D9] font-bold shadow-sm'
-                  : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800 border-transparent'
+                  ? 'auth-session-item-active font-bold'
+                  : ''
               }`}
             >
               <button
@@ -763,18 +763,18 @@ const AgentChat = () => {
       </div>
 
       {/* Main Chat Interface */}
-      <div className="flex-1 flex flex-col bg-slate-50/20 min-w-0">
+      <div className="auth-console-main flex-1 flex flex-col min-w-0">
         {/* Chat Header */}
-        <div className="h-14 border-b border-[#E6E9F0] bg-white/70 px-6 flex items-center justify-between">
+        <div className="auth-console-header px-6 flex items-center justify-between">
           <span className="text-sm font-bold text-[#0E1726] flex items-center gap-2 font-display">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
             Gateway Chat Console
           </span>
           <div className="flex items-center gap-3">
-            <span className="px-3 py-1 rounded bg-[#6D28D9]/10 border border-[#6D28D9]/20 text-[10px] font-bold text-[#6D28D9] uppercase tracking-wider font-mono">
+            <span className="auth-chip px-3 py-1 text-[10px] uppercase tracking-wider font-mono">
               Gateway Pipeline
             </span>
-            <span className="text-[11px] font-mono text-slate-400">ID: {sessionId}</span>
+            <span className="text-[11px] font-mono text-[#6B7488]">ID: {sessionId}</span>
           </div>
         </div>
 
@@ -784,10 +784,10 @@ const AgentChat = () => {
 
           {loading && (
             <div className="flex gap-4 justify-start">
-              <div className="w-8 h-8 rounded-lg bg-[#6D28D9]/10 border border-[#6D28D9]/20 flex items-center justify-center text-[#6D28D9] shrink-0 animate-spin">
+              <div className="auth-message-icon animate-spin">
                 <Loader className="w-4 h-4" />
               </div>
-              <div className="p-4 glass-card text-slate-600 rounded-xl rounded-tl-none flex items-center gap-2 text-xs">
+              <div className="auth-message-assistant p-4 flex items-center gap-2 text-xs">
                 <span>Running Security Agent, Policy Agent, and Audit Agent checks...</span>
               </div>
             </div>
@@ -811,7 +811,7 @@ const AgentChat = () => {
               onClick={() => fileInputRef.current?.click()}
               disabled={loading}
               title="Upload document for gateway redaction"
-              className="px-4 py-3 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg text-slate-600 font-semibold transition disabled:opacity-50 flex items-center justify-center"
+              className="auth-btn-soft px-4 py-3 font-semibold transition disabled:opacity-50 flex items-center justify-center"
             >
               <FileText className="w-4 h-4" />
             </button>
@@ -826,7 +826,7 @@ const AgentChat = () => {
             <button
               type="submit"
               disabled={loading || !input.trim()}
-              className="px-5 py-3 bg-[#6D28D9] hover:bg-[#7C3AED] rounded-lg text-white font-semibold transition disabled:opacity-50 flex items-center justify-center"
+              className="auth-btn-primary px-5 py-3 transition disabled:opacity-50 flex items-center justify-center"
             >
               <Send className="w-4 h-4" />
             </button>

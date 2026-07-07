@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import Sidebar from '../Sidebar/Sidebar';
-import { ExternalLink, Menu } from 'lucide-react';
+import { ExternalLink, Menu, ShieldCheck } from 'lucide-react';
 
 const pageTitleMap = {
   '/app': 'Console Home',
@@ -14,6 +14,7 @@ const pageTitleMap = {
   '/approvals': 'Approval Center',
   '/audit': 'Audit Logs',
   '/providers': 'Providers',
+  '/connectors': 'Connectors',
   '/api-keys': 'API Keys',
   '/settings': 'Settings',
 };
@@ -51,6 +52,13 @@ const Layout = () => {
           </div>
           
           <div className="flex items-center gap-4">
+            <Link
+              to="/trust"
+              className="hidden sm:inline-flex items-center gap-2 rounded-lg border border-[#E6E9F0] bg-white px-3 py-2 text-xs font-semibold text-[#475069] hover:border-[#A78BFA] hover:text-[#6D28D9] transition-colors"
+            >
+              Trust Center
+              <ShieldCheck className="w-3.5 h-3.5" />
+            </Link>
             <Link
               to="/"
               className="hidden sm:inline-flex items-center gap-2 rounded-lg border border-[#E6E9F0] bg-white px-3 py-2 text-xs font-semibold text-[#475069] hover:border-[#A78BFA] hover:text-[#6D28D9] transition-colors"

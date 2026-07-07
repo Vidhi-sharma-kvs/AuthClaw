@@ -1,14 +1,141 @@
 import os
 import json
 import logging
+import time
+import urllib.error
+import urllib.request
 from typing import Dict, Any
 
 logger = logging.getLogger("authclaw.policy")
 
 POLICY_FILE_PATH = os.getenv("POLICY_FILE_PATH", "policies.yaml")
+OPA_POLICY_URL = os.getenv("AUTHCLAW_OPA_POLICY_URL", "http://localhost:8181/v1/data/authclaw/policy")
+OPA_TIMEOUT_SECONDS = float(os.getenv("AUTHCLAW_OPA_TIMEOUT_SECONDS", "0.25"))
+OPA_CIRCUIT_BREAK_SECONDS = float(os.getenv("AUTHCLAW_OPA_CIRCUIT_BREAK_SECONDS", "30"))
 
 # Cache variable
 _cached_policy = None
+_opa_disabled_until = 0.0
+
+
+def _truthy(value: str, default: bool = True) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def opa_enabled() -> bool:
+    return _truthy(os.getenv("AUTHCLAW_OPA_ENABLED"), True)
+
+
+def compile_policy_to_rego(policy: Dict[str, Any]) -> str:
+    """
+    Generates a small Rego module equivalent to the current YAML keyword rules.
+    AuthClaw keeps Python/YAML enforcement as the source-compatible fallback;
+    this helper gives deployments a deterministic Rego artifact to load into OPA.
+    """
+    blocked = sorted({str(item).lower() for item in policy.get("blocked_keywords", [])})
+    high_risk = sorted({str(item).lower() for item in policy.get("high_risk_keywords", [])})
+    return "\n".join(
+        [
+            "package authclaw.policy",
+            "",
+            "default allow := true",
+            "default decision := \"ALLOW\"",
+            "",
+            f"blocked_keywords := {json.dumps(blocked)}",
+            f"high_risk_keywords := {json.dumps(high_risk)}",
+            "",
+            "normalized_text := lower(input.text)",
+            "",
+            "block if {",
+            "  some keyword in blocked_keywords",
+            "  contains(normalized_text, keyword)",
+            "}",
+            "",
+            "requires_approval if {",
+            "  some keyword in high_risk_keywords",
+            "  contains(normalized_text, keyword)",
+            "}",
+            "",
+            "allow := false if block",
+            "decision := \"BLOCK\" if block",
+            "decision := \"REQUIRE_APPROVAL\" if {",
+            "  not block",
+            "  requires_approval",
+            "}",
+        ]
+    )
+
+
+def _normalize_opa_result(result: Any) -> Dict[str, Any]:
+    if isinstance(result, dict) and "result" in result:
+        result = result["result"]
+    if not isinstance(result, dict):
+        return {}
+
+    decision = str(result.get("decision") or "").upper()
+    allowed_value = result.get("allow", result.get("allowed"))
+    if allowed_value is None:
+        allowed = decision not in {"BLOCK", "DENY", "REQUIRE_APPROVAL"}
+    else:
+        allowed = bool(allowed_value)
+
+    if result.get("block") is True:
+        decision = "BLOCK"
+        allowed = False
+    elif result.get("requires_approval") is True and decision == "":
+        decision = "REQUIRE_APPROVAL"
+        allowed = False
+    elif decision == "":
+        decision = "ALLOW" if allowed else "BLOCK"
+
+    findings = result.get("findings") or result.get("matched_policies") or []
+    if isinstance(findings, dict):
+        findings = [findings]
+
+    return {
+        "allowed": allowed,
+        "decision": decision,
+        "reason": result.get("reason") or result.get("explanation") or "OPA policy decision",
+        "category": result.get("category") or "opa",
+        "findings": findings if isinstance(findings, list) else [],
+        "risk_level": result.get("risk_level"),
+    }
+
+
+def evaluate_opa_policy(text: str, tenant_id=None, context: Dict[str, Any] = None) -> Dict[str, Any]:
+    """
+    Best-effort OPA evaluator. Returns an empty dict when OPA is disabled,
+    down, or returns a shape AuthClaw cannot safely interpret.
+    """
+    global _opa_disabled_until
+    if not opa_enabled() or time.time() < _opa_disabled_until:
+        return {}
+
+    payload = {
+        "input": {
+            "text": text or "",
+            "tenant_id": tenant_id,
+            "context": context or {},
+        }
+    }
+    request = urllib.request.Request(
+        OPA_POLICY_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=OPA_TIMEOUT_SECONDS) as response:
+            if response.status < 200 or response.status >= 300:
+                return {}
+            body = json.loads(response.read().decode("utf-8") or "{}")
+            return _normalize_opa_result(body)
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+        _opa_disabled_until = time.time() + OPA_CIRCUIT_BREAK_SECONDS
+        logger.info("OPA unavailable; falling back to local policy engine: %s", type(exc).__name__)
+        return {}
 
 def get_policy() -> Dict[str, Any]:
     """
@@ -57,6 +184,9 @@ def is_blocked(text: str) -> bool:
     """
     Checks if a given text contains any blocked keywords defined in the policy.
     """
+    opa_result = evaluate_opa_policy(text)
+    if opa_result:
+        return opa_result.get("decision") == "BLOCK" or not opa_result.get("allowed", True)
     policy = get_policy()
     text_lower = text.lower()
     for word in policy["blocked_keywords"]:
@@ -68,6 +198,9 @@ def is_high_risk(text: str) -> bool:
     """
     Checks if a given text contains any high risk keywords defined in the policy.
     """
+    opa_result = evaluate_opa_policy(text)
+    if opa_result:
+        return opa_result.get("decision") == "REQUIRE_APPROVAL" or opa_result.get("risk_level") == "HIGH"
     policy = get_policy()
     text_lower = text.lower()
     for word in policy["high_risk_keywords"]:
@@ -111,6 +244,10 @@ def validate_policy(text: str, tenant_id=None) -> bool:
     """
     from services.policy_engine import ACTION_BLOCK, ACTION_REQUIRE_APPROVAL, PolicyEngine
 
+    opa_result = evaluate_opa_policy(text, tenant_id=tenant_id)
+    if opa_result:
+        return bool(opa_result.get("allowed", True))
+
     result = PolicyEngine().evaluate(text, tenant_id=tenant_id)
     return result.action not in {ACTION_BLOCK, ACTION_REQUIRE_APPROVAL}
 
@@ -120,6 +257,18 @@ def check_policy_violations(text: str, tenant_id=None) -> tuple:
     If allowed is False, triggered_blocks will contain metadata about the blocking policy.
     """
     from services.policy_engine import ACTION_BLOCK, ACTION_REQUIRE_APPROVAL, PolicyEngine
+
+    opa_result = evaluate_opa_policy(text, tenant_id=tenant_id)
+    if opa_result:
+        if not opa_result.get("allowed", True):
+            findings = opa_result.get("findings") or [{
+                "policy_name": "OPA Policy",
+                "category": opa_result.get("category", "opa"),
+                "action": opa_result.get("decision", "BLOCK"),
+                "reason": opa_result.get("reason", "OPA policy decision"),
+            }]
+            return False, findings
+        return True, []
 
     result = PolicyEngine().evaluate(text, tenant_id=tenant_id)
     blocking_findings = [
@@ -137,6 +286,10 @@ def enforce_policy(text: str) -> tuple:
     """
     import re
     from services.policy_engine import ACTION_BLOCK, PolicyEngine
+
+    opa_result = evaluate_opa_policy(text)
+    if opa_result and not opa_result.get("allowed", True):
+        return True, opa_result.get("reason", "OPA policy decision"), opa_result.get("category", "opa")
 
     result = PolicyEngine().evaluate(text)
     if result.action == ACTION_BLOCK:

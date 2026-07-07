@@ -12,12 +12,15 @@ import (
 	"net/http/httputil"
 	"strings"
 	"time"
+
+	auditlog "authclaw/gateway-go/internal/audit"
 )
 
 type Server struct {
 	cfg    Config
 	proxy  *httputil.ReverseProxy
 	client *http.Client
+	audit  *auditlog.Producer
 }
 
 func NewServer(cfg Config) *Server {
@@ -60,6 +63,7 @@ func NewServer(cfg Config) *Server {
 	return &Server{
 		cfg:   cfg,
 		proxy: proxy,
+		audit: auditlog.NewProducer(cfg.KafkaBrokers, cfg.KafkaRESTURL, cfg.AuditTopic),
 		client: &http.Client{
 			Timeout: 5 * time.Second,
 		},
@@ -224,6 +228,14 @@ func (s *Server) evaluatePolicy(req *http.Request) (policyDecision, error) {
 
 	ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
 	defer cancel()
+	if s.cfg.OPAURL != nil {
+		decision, err := s.evaluateOPA(ctx, payload, requestID)
+		if err == nil && decision.Decision != "" {
+			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			return decision, nil
+		}
+		log.Printf("opa_policy_fallback request_id=%s error=%v", requestID, err)
+	}
 	policyURL := s.cfg.BackendURL.String() + "/internal/policy/evaluate"
 	policyReq, err := http.NewRequestWithContext(ctx, http.MethodPost, policyURL, bytes.NewReader(payloadBytes))
 	if err != nil {
@@ -263,6 +275,65 @@ func (s *Server) evaluatePolicy(req *http.Request) (policyDecision, error) {
 	return decision, nil
 }
 
+func (s *Server) evaluateOPA(ctx context.Context, payload map[string]any, requestID string) (policyDecision, error) {
+	opaPayload := map[string]any{
+		"input": map[string]any{
+			"text":       extractPolicyText(payload["body"]),
+			"context":    payload,
+			"request_id": requestID,
+		},
+	}
+	opaBytes, err := json.Marshal(opaPayload)
+	if err != nil {
+		return policyDecision{}, err
+	}
+	opaReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.OPAURL.String(), bytes.NewReader(opaBytes))
+	if err != nil {
+		return policyDecision{}, err
+	}
+	opaReq.Header.Set("Content-Type", "application/json")
+	resp, err := s.client.Do(opaReq)
+	if err != nil {
+		return policyDecision{}, err
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return policyDecision{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return policyDecision{}, errors.New("opa policy evaluation failed")
+	}
+
+	var wrapper struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(responseBody, &wrapper); err != nil {
+		return policyDecision{}, err
+	}
+	if wrapper.Result == nil {
+		return policyDecision{}, errors.New("opa returned empty result")
+	}
+	decision := policyDecision{
+		Decision:         stringValue(wrapper.Result["decision"], "ALLOW"),
+		Allowed:          boolValue(wrapper.Result["allow"], true),
+		Reason:           stringValue(wrapper.Result["reason"], "OPA policy decision"),
+		RequestID:        requestID,
+		EvaluationTimeMS: 0,
+		PolicyVersions: []map[string]any{
+			{"engine": "opa", "status": "evaluated"},
+		},
+	}
+	if findings, ok := wrapper.Result["findings"].([]any); ok {
+		for _, item := range findings {
+			if finding, ok := item.(map[string]any); ok {
+				decision.MatchedPolicies = append(decision.MatchedPolicies, finding)
+			}
+		}
+	}
+	return decision, nil
+}
+
 func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		origin := req.Header.Get("Origin")
@@ -282,6 +353,23 @@ func (s *Server) logRequest(next http.Handler) http.Handler {
 		start := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(recorder, req)
+		requestID := req.Header.Get("X-AuthClaw-Gateway-Request-ID")
+		if requestID == "" {
+			requestID = req.Header.Get("X-AuthClaw-Policy-Request-ID")
+		}
+		if s.audit != nil {
+			s.audit.Publish(auditlog.Event{
+				"event_type":   "gateway_request",
+				"request_id":   requestID,
+				"method":       req.Method,
+				"path":         req.URL.Path,
+				"backend_path": backendPath(req.URL.Path),
+				"status":       recorder.statusCode,
+				"runtime":      isGatewayRuntime(req.URL.Path),
+				"duration_ms":  time.Since(start).Milliseconds(),
+				"created_at":   time.Now().UTC().Format(time.RFC3339Nano),
+			})
+		}
 		log.Printf(
 			"gateway_request method=%s path=%s backend_path=%s status=%d duration_ms=%d runtime=%t",
 			req.Method,
@@ -361,6 +449,43 @@ func copyHeader(dst http.Header, src http.Header, name string) {
 	if value := src.Get(name); value != "" {
 		dst.Set(name, value)
 	}
+}
+
+func extractPolicyText(body any) string {
+	switch value := body.(type) {
+	case string:
+		return value
+	case map[string]any:
+		if message, ok := value["message"].(string); ok {
+			return message
+		}
+		if messages, ok := value["messages"].([]any); ok && len(messages) > 0 {
+			if last, ok := messages[len(messages)-1].(map[string]any); ok {
+				if content, ok := last["content"].(string); ok {
+					return content
+				}
+			}
+		}
+		bytes, _ := json.Marshal(value)
+		return string(bytes)
+	default:
+		bytes, _ := json.Marshal(value)
+		return string(bytes)
+	}
+}
+
+func stringValue(value any, fallback string) string {
+	if text, ok := value.(string); ok && text != "" {
+		return text
+	}
+	return fallback
+}
+
+func boolValue(value any, fallback bool) bool {
+	if boolean, ok := value.(bool); ok {
+		return boolean
+	}
+	return fallback
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload map[string]any) {

@@ -41,6 +41,11 @@ const Settings = () => {
     'Auditor': 'audit_read',
     'Viewer': 'read_only'
   };
+  const existingUserEmails = users.map((user) => String(user.username || '').toLowerCase());
+  const normalizedUserEmail = userForm.username.trim().toLowerCase();
+  const validWorkEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedUserEmail);
+  const selectedUserExists = existingUserEmails.includes(normalizedUserEmail);
+  const canSubmitUserRole = validWorkEmail && selectedUserExists;
 
   const fetchData = async () => {
     try {
@@ -64,8 +69,16 @@ const Settings = () => {
   // RBAC User handlers
   const handleUserSubmit = async (e) => {
     e.preventDefault();
+    if (!validWorkEmail) {
+      addToast('Enter a valid tenant user work email, for example user@company.com.', 'error');
+      return;
+    }
+    if (!selectedUserExists) {
+      addToast('Choose an existing tenant user from this tenant before assigning a role.', 'error');
+      return;
+    }
     try {
-      await apiClient.post('/access-control/users', userForm);
+      await apiClient.post('/access-control/users', { ...userForm, username: normalizedUserEmail });
       addToast('User role mappings configured.', 'success');
       setUserModalOpen(false);
       setUserForm({ username: '', role: 'Developer', permissions: 'read_write_gateway' });
@@ -271,15 +284,31 @@ const Settings = () => {
             <input
               type="email"
               required
+              list="tenant-user-email-options"
               placeholder="e.g. user@company.com"
               value={userForm.username}
               onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
               className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] transition-colors"
             />
+            <datalist id="tenant-user-email-options">
+              {users.map((user) => (
+                <option key={user.id || user.username} value={user.username} />
+              ))}
+            </datalist>
             <p className="text-[10px] text-[#6B7488] mt-1.5 flex items-center gap-1.5 font-sans">
               <Mail className="w-3 h-3 text-[#6D28D9]" />
-              The user must already exist in this tenant. Invite/onboard them first, then assign the role here.
+              Type or choose an existing tenant user email. New users must register before a role can be assigned here.
             </p>
+            {userForm.username.trim() && !validWorkEmail && (
+              <p className="text-[10px] text-rose-600 mt-1">
+                Enter a complete work email with a domain, such as user@company.com.
+              </p>
+            )}
+            {validWorkEmail && !selectedUserExists && (
+              <p className="text-[10px] text-amber-700 mt-1">
+                This user is not in the tenant yet. Onboard them first, then assign a role.
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -324,6 +353,7 @@ const Settings = () => {
               variant="primary"
               size="sm"
               type="submit"
+              disabled={!canSubmitUserRole}
             >
               Assign Role Map
             </Button>

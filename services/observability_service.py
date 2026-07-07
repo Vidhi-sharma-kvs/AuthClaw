@@ -1,9 +1,13 @@
 from datetime import datetime, timezone
+import json
+import os
 from typing import Any, Dict, List
+import urllib.parse
+import urllib.request
 
 from database import engine
 from sqlalchemy import text
-from verify_audit import verify_audit_chain
+from verify_audit import clickhouse_pipeline_enabled, verify_audit_chain
 
 
 def _iso(value: Any) -> str:
@@ -23,9 +27,10 @@ def _float(value: Any) -> float:
 class ObservabilityService:
     def governance_analytics(self, tenant_id: int) -> Dict[str, Any]:
         tenant_id_text = str(tenant_id)
+        clickhouse_status = self._clickhouse_status()
 
         with engine.connect() as conn:
-            gateway = self._gateway_summary(conn, tenant_id_text)
+            gateway = self._clickhouse_gateway_summary(tenant_id_text) or self._gateway_summary(conn, tenant_id_text)
             providers = self._provider_usage(conn, tenant_id_text)
             blocked = self._blocked_requests(conn, tenant_id_text)
             redactions = self._redaction_summary(conn, tenant_id, tenant_id_text)
@@ -57,12 +62,79 @@ class ObservabilityService:
             "approvals": approvals,
             "audit": audit,
             "recent_requests": recent_requests,
-            "clickhouse_pipeline": {
-                "enabled": False,
-                "status": "planned",
-                "message": "Optional ClickHouse analytics pipeline is not enabled for this deployment.",
-            },
+            "clickhouse_pipeline": clickhouse_status,
         }
+
+    def _clickhouse_status(self) -> Dict[str, Any]:
+        enabled = clickhouse_pipeline_enabled()
+        if not enabled:
+            return {
+                "enabled": False,
+                "status": "disabled",
+                "message": "ClickHouse analytics mirror is disabled by configuration.",
+            }
+        try:
+            self._clickhouse_query_json("SELECT 1 AS ok FORMAT JSONEachRow", timeout=0.5)
+            return {
+                "enabled": True,
+                "status": "connected",
+                "message": "ClickHouse analytics mirror is enabled and reachable.",
+            }
+        except Exception:
+            return {
+                "enabled": True,
+                "status": "fallback",
+                "message": "ClickHouse analytics mirror is enabled; PostgreSQL RLS-backed analytics are serving as fallback.",
+            }
+
+    def _clickhouse_query_json(self, query: str, *, timeout: float = 1.5) -> List[Dict[str, Any]]:
+        base_url = os.getenv("CLICKHOUSE_HTTP_URL", "http://127.0.0.1:8123").rstrip("/")
+        url = f"{base_url}/?query={urllib.parse.quote(query)}"
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            if response.status < 200 or response.status >= 300:
+                raise RuntimeError(f"ClickHouse returned {response.status}")
+            rows = []
+            for line in response.read().decode("utf-8").splitlines():
+                if line.strip():
+                    rows.append(json.loads(line))
+            return rows
+
+    def _clickhouse_gateway_summary(self, tenant_id_text: str) -> Dict[str, Any]:
+        if not clickhouse_pipeline_enabled():
+            return None
+        database = os.getenv("CLICKHOUSE_DATABASE", "authclaw")
+        view = os.getenv("CLICKHOUSE_GATEWAY_METRICS_VIEW", "gateway_metrics_view")
+        tenant = tenant_id_text.replace("'", "''")
+        query = f"""
+            SELECT
+                count() AS total_requests,
+                countIf(allowed = 1 OR upper(coalesce(decision, '')) = 'ALLOW') AS allowed_requests,
+                countIf(allowed = 0 OR upper(coalesce(decision, status, '')) = 'BLOCK') AS blocked_requests,
+                countIf(upper(coalesce(decision, status, '')) IN ('REQUIRE_APPROVAL', 'PENDING_APPROVAL')) AS pending_requests,
+                avg(coalesce(duration_ms, 0)) AS avg_duration_ms,
+                sum(coalesce(tokens_in, 0)) AS tokens_in,
+                sum(coalesce(tokens_out, 0)) AS tokens_out
+            FROM {database}.{view}
+            WHERE toString(tenant_id) = '{tenant}'
+            FORMAT JSONEachRow
+        """
+        try:
+            rows = self._clickhouse_query_json(query)
+            if not rows:
+                return None
+            row = rows[0]
+            return {
+                "total_requests": _int(row.get("total_requests")),
+                "allowed_requests": _int(row.get("allowed_requests")),
+                "blocked_requests": _int(row.get("blocked_requests")),
+                "pending_requests": _int(row.get("pending_requests")),
+                "avg_duration_ms": _float(row.get("avg_duration_ms")),
+                "tokens_in": _int(row.get("tokens_in")),
+                "tokens_out": _int(row.get("tokens_out")),
+                "tokens_total": _int(row.get("tokens_in")) + _int(row.get("tokens_out")),
+            }
+        except Exception:
+            return None
 
     def _gateway_summary(self, conn, tenant_id_text: str) -> Dict[str, Any]:
         row = conn.execute(

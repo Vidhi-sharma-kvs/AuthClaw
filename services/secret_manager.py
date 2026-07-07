@@ -177,12 +177,17 @@ class SecretManager:
         return hmac.new(salt.encode("utf-8"), f"{purpose}:{value}".encode("utf-8"), hashlib.sha256).hexdigest()[:20]
 
     def encrypt_for_database(self, value: str) -> str:
+        envelope = self._encrypt_with_envelope(value)
+        if envelope:
+            return envelope
         key = base64.urlsafe_b64decode(self.encryption_key().encode("utf-8"))
         nonce = os.urandom(12)
         ciphertext = AESGCM(key).encrypt(nonce, value.encode("utf-8"), None)
         return "v2:aes256gcm:" + base64.urlsafe_b64encode(nonce + ciphertext).decode("utf-8")
 
     def decrypt_from_database(self, encrypted_value: str) -> str:
+        if encrypted_value.startswith("v3:envelope:"):
+            return self._decrypt_with_envelope(encrypted_value)
         if encrypted_value.startswith("v2:aes256gcm:"):
             payload = base64.urlsafe_b64decode(encrypted_value.split(":", 2)[2].encode("utf-8"))
             nonce, ciphertext = payload[:12], payload[12:]
@@ -296,6 +301,103 @@ class SecretManager:
 
     def _version(self, value: str) -> str:
         return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+    def _envelope_provider(self) -> str:
+        return (os.getenv("AUTHCLAW_ENVELOPE_PROVIDER") or os.getenv("AUTHCLAW_KMS_PROVIDER") or "").strip().lower()
+
+    def _encrypt_with_envelope(self, value: str) -> Optional[str]:
+        provider = self._envelope_provider()
+        if provider in {"", "local", "local_env", "disabled", "none"}:
+            return None
+        try:
+            data_key, encrypted_data_key, key_id = self._generate_envelope_data_key(provider)
+            nonce = os.urandom(12)
+            ciphertext = AESGCM(data_key).encrypt(nonce, value.encode("utf-8"), None)
+            payload = {
+                "provider": provider,
+                "key_id": key_id,
+                "encrypted_data_key": base64.urlsafe_b64encode(encrypted_data_key).decode("utf-8"),
+                "ciphertext": base64.urlsafe_b64encode(nonce + ciphertext).decode("utf-8"),
+                "alg": "AES-256-GCM",
+            }
+            return "v3:envelope:" + base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
+        except Exception:
+            if _is_production() and os.getenv("AUTHCLAW_REQUIRE_REMOTE_KMS", "").lower() in {"1", "true", "yes", "on"}:
+                raise
+            return None
+
+    def _decrypt_with_envelope(self, encrypted_value: str) -> str:
+        encoded = encrypted_value.split(":", 2)[2]
+        payload = json.loads(base64.urlsafe_b64decode(encoded.encode("utf-8")).decode("utf-8"))
+        provider = str(payload.get("provider") or self._envelope_provider()).lower()
+        encrypted_data_key = base64.urlsafe_b64decode(payload["encrypted_data_key"].encode("utf-8"))
+        data_key = self._decrypt_envelope_data_key(provider, encrypted_data_key, payload.get("key_id"))
+        ciphertext_payload = base64.urlsafe_b64decode(payload["ciphertext"].encode("utf-8"))
+        nonce, ciphertext = ciphertext_payload[:12], ciphertext_payload[12:]
+        return AESGCM(data_key).decrypt(nonce, ciphertext, None).decode("utf-8")
+
+    def _generate_envelope_data_key(self, provider: str):
+        if provider in {"aws", "aws_kms", "kms"}:
+            return self._aws_kms_generate_data_key()
+        if provider in {"vault", "hashicorp_vault"}:
+            return self._vault_generate_data_key()
+        raise SecretManagerError(f"Unsupported envelope provider '{provider}'.")
+
+    def _decrypt_envelope_data_key(self, provider: str, encrypted_data_key: bytes, key_id: Optional[str]) -> bytes:
+        if provider in {"aws", "aws_kms", "kms"}:
+            return self._aws_kms_decrypt_data_key(encrypted_data_key)
+        if provider in {"vault", "hashicorp_vault"}:
+            return self._vault_decrypt_data_key(encrypted_data_key, key_id)
+        raise SecretManagerError(f"Unsupported envelope provider '{provider}'.")
+
+    def _kms_client(self):
+        try:
+            import boto3
+        except ImportError as exc:
+            raise SecretManagerError("boto3 is required when AWS KMS envelope encryption is enabled.") from exc
+        if not self.region_name:
+            raise SecretManagerError("AWS_REGION or AWS_DEFAULT_REGION is required for AWS KMS.")
+        return boto3.client("kms", region_name=self.region_name)
+
+    def _aws_kms_key_id(self) -> str:
+        key_id = os.getenv("AUTHCLAW_AWS_KMS_KEY_ID") or os.getenv("AWS_KMS_KEY_ID")
+        if not key_id:
+            raise SecretManagerError("AUTHCLAW_AWS_KMS_KEY_ID or AWS_KMS_KEY_ID is required for AWS KMS envelope encryption.")
+        return key_id
+
+    def _aws_kms_generate_data_key(self):
+        key_id = self._aws_kms_key_id()
+        response = self._kms_client().generate_data_key(KeyId=key_id, KeySpec="AES_256")
+        return response["Plaintext"], response["CiphertextBlob"], key_id
+
+    def _aws_kms_decrypt_data_key(self, encrypted_data_key: bytes) -> bytes:
+        response = self._kms_client().decrypt(CiphertextBlob=encrypted_data_key)
+        return response["Plaintext"]
+
+    def _vault_transit_key(self) -> str:
+        return os.getenv("VAULT_TRANSIT_KEY", "authclaw-tenant-key")
+
+    def _vault_generate_data_key(self):
+        key_name = self._vault_transit_key()
+        response = self._vault_request(
+            "POST",
+            f"transit/datakey/plaintext/{key_name}",
+            payload={"bits": 256},
+        )
+        data = (response or {}).get("data") or {}
+        plaintext = base64.b64decode(data["plaintext"])
+        ciphertext = data["ciphertext"].encode("utf-8")
+        return plaintext, ciphertext, key_name
+
+    def _vault_decrypt_data_key(self, encrypted_data_key: bytes, key_id: Optional[str]) -> bytes:
+        key_name = key_id or self._vault_transit_key()
+        response = self._vault_request(
+            "POST",
+            f"transit/decrypt/{key_name}",
+            payload={"ciphertext": encrypted_data_key.decode("utf-8")},
+        )
+        data = (response or {}).get("data") or {}
+        return base64.b64decode(data["plaintext"])
 
     def _client(self):
         try:

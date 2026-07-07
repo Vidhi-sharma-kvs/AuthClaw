@@ -103,21 +103,50 @@ const GatewayCenter = () => {
   }, []);
 
   // Routes handlers
+  const validateRouteForm = () => {
+    const name = routeForm.name.trim();
+    const provider = routeForm.provider.trim();
+    const model = routeForm.model.trim();
+    const endpoint = routeForm.endpoint.trim();
+    const rateLimit = Number(routeForm.rate_limit);
+
+    if (!name) return 'Route name is required.';
+    if (!provider) return 'Provider is required.';
+    if (!model) return 'Model is required.';
+    if (!/^https?:\/\/\S+$/i.test(endpoint)) return 'Endpoint URL must start with http:// or https://.';
+    if (!Number.isFinite(rateLimit) || rateLimit < 1) return 'Rate limit must be at least 1 request per minute.';
+    return null;
+  };
+
   const handleRouteSubmit = async (e) => {
     e.preventDefault();
+    const validationError = validateRouteForm();
+    if (validationError) {
+      addToast(validationError, 'error');
+      return;
+    }
+    const normalizedRouteForm = {
+      ...routeForm,
+      name: routeForm.name.trim(),
+      provider: routeForm.provider.trim(),
+      endpoint: routeForm.endpoint.trim(),
+      model: routeForm.model.trim(),
+      rate_limit: Number(routeForm.rate_limit),
+      tenant_assignment: routeForm.tenant_assignment || 'Current Tenant'
+    };
     try {
       if (editingRoute) {
-        await apiClient.put(`/routes/${editingRoute.id}`, routeForm);
+        await apiClient.put(`/routes/${editingRoute.id}`, normalizedRouteForm);
         addToast('Gateway route updated.', 'success');
       } else {
-        await apiClient.post('/routes', routeForm);
+        await apiClient.post('/routes', normalizedRouteForm);
         addToast('New gateway route created.', 'success');
       }
       setRouteModalOpen(false);
       setEditingRoute(null);
       fetchData();
     } catch (error) {
-      addToast('Failed to save gateway route.', 'error');
+      addToast(error.response?.data?.detail || 'Failed to save gateway route.', 'error');
     }
   };
 

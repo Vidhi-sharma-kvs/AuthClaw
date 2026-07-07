@@ -1,0 +1,28 @@
+aws_region         = "us-east-1"
+project_name       = "authclaw"
+environment        = "production"
+availability_zones = ["us-east-1a", "us-east-1b"]
+
+# Keep this open only for a public demo. Restrict it to office/VPN CIDRs for real customers.
+allowed_http_cidr_blocks = ["0.0.0.0/0"]
+enable_nat_gateway       = true
+
+# Leave empty for HTTP-only direct ALB testing. Set ACM ARN for HTTPS production.
+certificate_arn = ""
+
+api_image      = "123456789012.dkr.ecr.us-east-1.amazonaws.com/authclaw-api:latest"
+gateway_image  = "123456789012.dkr.ecr.us-east-1.amazonaws.com/authclaw-gateway:latest"
+frontend_image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/authclaw-frontend:latest"
+
+allowed_origins = "http://authclaw-production-alb.example.com"
+
+smtp_host     = "smtp.sendgrid.net"
+smtp_from     = "verified-sender@example.com"
+smtp_username = "apikey"
+smtp_password = "CHANGE_ME_SENDGRID_API_KEY"
+
+db_instance_class          = "db.t3.small"
+db_allocated_storage       = 20
+db_backup_retention_days   = 7
+log_retention_days         = 30
+desired_count              = 1

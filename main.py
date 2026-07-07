@@ -28,7 +28,7 @@ from memory import get_history, add_message
 from database.migrations import run_startup_migrations
 from startup.validation import validate_environment
 from startup.initialization import initialize_provider
-from policy import get_policy, load_policy
+from policy import compile_policy_to_rego, evaluate_opa_policy, get_policy, load_policy
 from services.gateway_service import (
     GatewayProviderConfigurationError,
     GatewayProviderUnavailableError,
@@ -90,6 +90,115 @@ app.add_middleware(
 )
 
 # API_KEY removed for production security hardening
+
+_rate_limit_memory = {}
+
+
+def _feature_enabled(name: str, default: bool = False) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _gateway_runtime_path(path: str) -> bool:
+    normalized = path[4:] if path.startswith("/api/") else path
+    return normalized in {"/gateway/chat", "/chat", "/v1/chat/completions"} or normalized.startswith("/gateway/documents/")
+
+
+def _tenant_tier_limit(tenant_id: int) -> int:
+    default_limits = {
+        "free": 30,
+        "starter": 60,
+        "pro": 300,
+        "enterprise": 1200,
+    }
+    tier = os.getenv("AUTHCLAW_DEFAULT_TENANT_TIER", "enterprise").strip().lower()
+    try:
+        from database import engine
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT COALESCE(subscription_tier, plan, tier, '') FROM tenants WHERE id = :tenant_id"),
+                {"tenant_id": tenant_id},
+            ).fetchone()
+            if row and row[0]:
+                tier = str(row[0]).lower()
+    except Exception:
+        pass
+    env_limit = os.getenv(f"AUTHCLAW_RATE_LIMIT_{tier.upper()}_RPM")
+    if env_limit:
+        try:
+            return max(1, int(env_limit))
+        except ValueError:
+            pass
+    return default_limits.get(tier, default_limits["enterprise"])
+
+
+def _consume_rate_limit_token(tenant_id: int, limit: int) -> Tuple[bool, int]:
+    window = int(time.time() // 60)
+    redis_url = os.getenv("REDIS_URL")
+    key = f"authclaw:rate:{tenant_id}:{window}"
+    if redis_url:
+        try:
+            import redis
+
+            client = redis.Redis.from_url(redis_url)
+            count = int(client.incr(key))
+            if count == 1:
+                client.expire(key, 90)
+            return count <= limit, max(0, limit - count)
+        except Exception:
+            pass
+
+    state_key = (tenant_id, window)
+    count = _rate_limit_memory.get(state_key, 0) + 1
+    _rate_limit_memory[state_key] = count
+    for stale_key in list(_rate_limit_memory.keys()):
+        if stale_key[1] < window - 1:
+            _rate_limit_memory.pop(stale_key, None)
+    return count <= limit, max(0, limit - count)
+
+
+@app.middleware("http")
+async def enterprise_gateway_middleware(request: Request, call_next):
+    if _gateway_runtime_path(request.url.path):
+        if _feature_enabled("AUTHCLAW_REQUIRE_GO_GATEWAY", False) and request.headers.get("X-AuthClaw-Gateway") != "go":
+            return JSONResponse(
+                status_code=status.HTTP_426_UPGRADE_REQUIRED,
+                content={
+                    "error": "go_gateway_required",
+                    "message": "Route gateway traffic through the AuthClaw Go gateway.",
+                },
+            )
+
+        if _feature_enabled("AUTHCLAW_RATE_LIMIT_ENABLED", False):
+            try:
+                api_key_val = request.headers.get("X-API-Key")
+                authorization = request.headers.get("Authorization")
+                if authorization and authorization.startswith("Bearer "):
+                    api_key_val = authorization[7:]
+                tenant_id = resolve_tenant(api_key_val, authorization)
+                limit = _tenant_tier_limit(tenant_id)
+                allowed, remaining = _consume_rate_limit_token(tenant_id, limit)
+                if not allowed:
+                    return JSONResponse(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        content={
+                            "error": "rate_limit_exceeded",
+                            "limit_rpm": limit,
+                            "tenant_id": tenant_id,
+                        },
+                        headers={"X-RateLimit-Limit": str(limit), "X-RateLimit-Remaining": "0"},
+                    )
+                response = await call_next(request)
+                response.headers["X-RateLimit-Limit"] = str(limit)
+                response.headers["X-RateLimit-Remaining"] = str(remaining)
+                return response
+            except HTTPException as exc:
+                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+            except Exception as exc:
+                logger.warning("Rate limiter bypassed because fallback-safe middleware failed: %s", exc)
+    return await call_next(request)
 
 
 import os
@@ -1862,6 +1971,14 @@ class TenantRequest(BaseModel):
     status: str
 
 
+def is_valid_work_email(value: str) -> bool:
+    email = (value or "").strip()
+    if any(char.isspace() for char in email) or email.count("@") != 1:
+        return False
+    local, domain = email.split("@", 1)
+    return bool(local and domain and "." in domain and not domain.startswith(".") and not domain.endswith("."))
+
+
 
 class PolicyRequest(BaseModel):
     name: str
@@ -2143,13 +2260,31 @@ def create_route(route: RouteRequest, authorization: Optional[str] = Header(None
     from sqlalchemy import text
     from verify_audit import create_audit_block
     tenant_id = resolve_tenant_from_authorization(authorization)
-    with tenant_context(session["tenant_id"], session_id, required=True), engine.connect() as conn:
+    route_payload = route.dict()
+    route_payload["name"] = route.name.strip()
+    route_payload["provider"] = route.provider.strip()
+    route_payload["endpoint"] = route.endpoint.strip()
+    route_payload["model"] = route.model.strip()
+    route_payload["tenant_assignment"] = route.tenant_assignment.strip() or "Current Tenant"
+
+    if not route_payload["name"]:
+        raise HTTPException(status_code=400, detail="Route name is required.")
+    if not route_payload["provider"]:
+        raise HTTPException(status_code=400, detail="Provider is required.")
+    if not route_payload["model"]:
+        raise HTTPException(status_code=400, detail="Model is required.")
+    if not route_payload["endpoint"].startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Endpoint URL must start with http:// or https://.")
+    if route.rate_limit < 1:
+        raise HTTPException(status_code=400, detail="Rate limit must be at least 1 request per minute.")
+
+    with tenant_context(tenant_id, required=True), engine.connect() as conn:
         conn.execute(
             text("""
             INSERT INTO gateway_routes (tenant_id, name, provider, endpoint, model, rate_limit, redaction_enabled, enabled, tenant_assignment)
             VALUES (:tenant_id, :name, :provider, :endpoint, :model, :rate_limit, :redaction_enabled, :enabled, :tenant_assignment)
             """),
-            {**route.dict(), "tenant_id": tenant_id}
+            {**route_payload, "tenant_id": tenant_id}
         )
         conn.commit()
     create_audit_block(
@@ -2947,30 +3082,54 @@ def evaluate_gateway_policy(
         actor = policy_actor_from_authorization(authorization)
     request_id = payload.request_id or x_authclaw_gateway_request_id or f"policy-{uuid.uuid4()}"
     text_value = extract_policy_text_from_gateway_payload(payload)
-    result = PolicyEngine().evaluate(text_value, tenant_id=tenant_id, username=actor)
+    opa_result = evaluate_opa_policy(
+        text_value,
+        tenant_id=tenant_id,
+        context={"path": payload.path, "method": payload.method, "request_id": request_id, "actor": actor},
+    )
+    if opa_result:
+        matched_policies = opa_result.get("findings") or [
+            {
+                "policy_name": "OPA Policy",
+                "category": opa_result.get("category", "opa"),
+                "action": opa_result.get("decision", "ALLOW"),
+                "confidence": "enterprise-rego",
+            }
+        ]
+        decision = opa_result.get("decision", "ALLOW")
+        allowed = bool(opa_result.get("allowed", True))
+        reason = opa_result.get("reason", "OPA policy decision")
+        risk_level = opa_result.get("risk_level") or ("HIGH" if decision in {"BLOCK", "REQUIRE_APPROVAL"} else "LOW")
+        policy_versions = [{"engine": "opa", "status": "evaluated"}]
+    else:
+        result = PolicyEngine().evaluate(text_value, tenant_id=tenant_id, username=actor)
+        matched_policies = [
+            {
+                "policy_id": finding.get("policy_id"),
+                "policy_name": finding.get("policy_name"),
+                "category": finding.get("category"),
+                "action": finding.get("action"),
+                "confidence": finding.get("confidence"),
+            }
+            for finding in result.findings
+        ]
+        decision = "BLOCK" if result.action == ACTION_BLOCK else result.action
+        allowed = result.action != ACTION_BLOCK
+        reason = result.reason
+        risk_level = result.risk_level
+        policy_versions = result.policy_versions
     duration_ms = int((time.time() - started_at) * 1000)
-    matched_policies = [
-        {
-            "policy_id": finding.get("policy_id"),
-            "policy_name": finding.get("policy_name"),
-            "category": finding.get("category"),
-            "action": finding.get("action"),
-            "confidence": finding.get("confidence"),
-        }
-        for finding in result.findings
-    ]
-    decision = "BLOCK" if result.action == ACTION_BLOCK else result.action
     response_payload = {
         "status": "evaluated",
         "decision": decision,
-        "allowed": result.action != ACTION_BLOCK,
+        "allowed": allowed,
         "enforcement": "fail_closed",
         "matched_policies": matched_policies,
-        "policy_versions": result.policy_versions,
+        "policy_versions": policy_versions,
         "evaluation_time_ms": duration_ms,
-        "explanation": result.reason,
-        "reason": result.reason,
-        "risk_level": result.risk_level,
+        "explanation": reason,
+        "reason": reason,
+        "risk_level": risk_level,
         "request_id": request_id,
         "tenant_id": tenant_id,
     }
@@ -2991,10 +3150,10 @@ def evaluate_gateway_policy(
                 "request_id": request_id,
                 "route_path": payload.path,
                 "decision": decision,
-                "reason": result.reason,
+                "reason": reason,
                 "evaluation_time_ms": duration_ms,
                 "matched_policies": json.dumps(matched_policies, default=str),
-                "policy_versions": json.dumps(result.policy_versions, default=str),
+                "policy_versions": json.dumps(policy_versions, default=str),
             },
         )
         conn.commit()
@@ -3872,8 +4031,9 @@ def create_user_role(role_req: UserRoleRequest, payload: dict = Depends(require_
     }
     if role_req.role not in allowed_roles:
         raise HTTPException(status_code=400, detail="Unsupported tenant role.")
-    if "@" not in role_req.username:
-        raise HTTPException(status_code=400, detail="Tenant users must be identified by work email.")
+    normalized_email = role_req.username.strip().lower()
+    if not is_valid_work_email(normalized_email):
+        raise HTTPException(status_code=400, detail="Enter a valid tenant user work email, for example user@company.com.")
     with engine.connect() as conn:
         row = conn.execute(
             text("""
@@ -3884,21 +4044,21 @@ def create_user_role(role_req: UserRoleRequest, payload: dict = Depends(require_
             """),
             {
                 "tenant_id": tenant_id,
-                "email": role_req.username,
+                "email": normalized_email,
                 "role": role_req.role,
                 "permissions": role_req.permissions,
             },
         ).fetchone()
         if not row:
-            raise HTTPException(status_code=404, detail="Tenant user not found.")
+            raise HTTPException(status_code=404, detail="Tenant user not found. Choose an existing tenant user from this tenant before assigning a role.")
         conn.commit()
     create_audit_block(
-        query=f"Modify Access Control: {role_req.username}",
-        response=f"Username {role_req.username} role updated/set to {role_req.role}.",
+        query=f"Modify Access Control: {normalized_email}",
+        response=f"Username {normalized_email} role updated/set to {role_req.role}.",
         allowed=True,
         risk_level="MEDIUM",
         approval_status="N/A",
-        username=role_req.username,
+        username=normalized_email,
         tenant_id=tenant_id
     )
     return {"status": "success", "message": "User access mapping updated."}
@@ -4043,8 +4203,11 @@ def export_audit_csv_endpoint(
 ):
     tenant_id = resolve_tenant(x_api_key, authorization)
     from document_processing.exports import generate_audit_csv
+    from verify_audit import sign_export_payload
     csv_data = generate_audit_csv(tenant_id=tenant_id)
-    return Response(content=csv_data, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=audit_ledger.csv"})
+    headers = {"Content-Disposition": "attachment; filename=audit_ledger.csv"}
+    headers.update(sign_export_payload(csv_data, tenant_id=tenant_id, export_type="audit-csv"))
+    return Response(content=csv_data, media_type="text/csv", headers=headers)
 
 @app.get("/audit/export/pdf")
 def export_audit_pdf_endpoint(
@@ -4053,8 +4216,11 @@ def export_audit_pdf_endpoint(
 ):
     tenant_id = resolve_tenant(x_api_key, authorization)
     from document_processing.exports import generate_audit_pdf
+    from verify_audit import sign_export_payload
     pdf_data = generate_audit_pdf(tenant_id=tenant_id)
-    return Response(content=pdf_data, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=audit_ledger.pdf"})
+    headers = {"Content-Disposition": "attachment; filename=audit_ledger.pdf"}
+    headers.update(sign_export_payload(pdf_data, tenant_id=tenant_id, export_type="audit-pdf"))
+    return Response(content=pdf_data, media_type="application/pdf", headers=headers)
 
 
 @app.get("/compliance/framework-scores")

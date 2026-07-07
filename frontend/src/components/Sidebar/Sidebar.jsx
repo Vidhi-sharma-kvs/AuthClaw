@@ -8,6 +8,7 @@ import {
   Activity,
   BarChart3,
   Building2,
+  PlugZap,
   Server,
   ShieldAlert,
   Settings as SettingsIcon,
@@ -22,6 +23,7 @@ const ROUTE_PERMISSIONS = {
   '/observability': ['Super Admin', 'Security Admin', 'Compliance Officer', 'Developer', 'Auditor', 'Viewer'],
   '/chat': ['Super Admin', 'Security Admin', 'Compliance Officer', 'Developer'],
   '/providers': ['Super Admin', 'Security Admin', 'Developer'],
+  '/connectors': ['Super Admin', 'Security Admin', 'Developer'],
   '/api-keys': ['Super Admin', 'Security Admin', 'Developer'],
   '/policies': ['Super Admin', 'Security Admin', 'Compliance Officer', 'Developer'],
   '/requests': ['Super Admin', 'Security Admin', 'Compliance Officer', 'Developer', 'Auditor'],
@@ -45,6 +47,7 @@ const Sidebar = ({ isOpen, toggleSidebar }) => {
     { name: 'Approval Center', path: '/approvals', icon: CheckSquare },
     { name: 'Audit Logs', path: '/audit', icon: ShieldCheck },
     { name: 'Providers', path: '/providers', icon: Server },
+    { name: 'Connectors', path: '/connectors', icon: PlugZap },
     { name: 'API Keys', path: '/api-keys', icon: FileText },
     { name: 'Settings', path: '/settings', icon: SettingsIcon },
   ];

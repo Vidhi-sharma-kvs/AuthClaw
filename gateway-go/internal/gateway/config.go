@@ -12,7 +12,11 @@ import (
 type Config struct {
 	ListenAddr     string
 	BackendURL     *url.URL
+	OPAURL         *url.URL
 	AllowedOrigins []string
+	KafkaBrokers   []string
+	KafkaRESTURL   string
+	AuditTopic     string
 	ReadTimeout    time.Duration
 	WriteTimeout   time.Duration
 	SecretManager  secrets.Manager
@@ -31,12 +35,24 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	var opaURL *url.URL
+	opaRaw := env("AUTHCLAW_OPA_URL", "")
+	if opaRaw != "" {
+		opaURL, err = url.Parse(opaRaw)
+		if err != nil {
+			return Config{}, err
+		}
+	}
 
 	origins := splitCSV(env("AUTHCLAW_ALLOWED_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173"))
 	return Config{
 		ListenAddr:     env("AUTHCLAW_GATEWAY_ADDR", "127.0.0.1:9000"),
 		BackendURL:     backendURL,
+		OPAURL:         opaURL,
 		AllowedOrigins: origins,
+		KafkaBrokers:   splitCSV(env("KAFKA_BROKERS", "")),
+		KafkaRESTURL:   env("KAFKA_REST_URL", ""),
+		AuditTopic:     env("AUTHCLAW_AUDIT_TOPIC", "authclaw-audit-events"),
 		ReadTimeout:    30 * time.Second,
 		WriteTimeout:   120 * time.Second,
 		SecretManager:  secretManager,

@@ -1,7 +1,68 @@
 import json
+import contextvars
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from typing import Dict
 from database import engine
 from sqlalchemy import text
 from services.tenant_context import get_current_tenant_id
+
+_worker_scope = contextvars.ContextVar("authclaw_worker_scope", default=None)
+MAX_WORKER_SCOPE_TTL_SECONDS = 30 * 60
+
+
+@dataclass(frozen=True)
+class RuntimeWorkerScope:
+    provider: str
+    subject: str
+    token_ref: str
+    expires_at: datetime
+    claims: Dict[str, str] = field(default_factory=dict)
+
+    def active(self) -> bool:
+        return datetime.now(timezone.utc) < self.expires_at
+
+
+def create_worker_scope(provider: str, subject: str, token_ref: str, ttl_seconds: int = MAX_WORKER_SCOPE_TTL_SECONDS, claims: Dict[str, str] = None) -> RuntimeWorkerScope:
+    """
+    Creates a bounded runtime scope for cloud/SCM worker actions. Tokens are
+    referenced by name rather than stored in chat memory.
+    """
+    ttl = min(max(1, int(ttl_seconds or MAX_WORKER_SCOPE_TTL_SECONDS)), MAX_WORKER_SCOPE_TTL_SECONDS)
+    return RuntimeWorkerScope(
+        provider=provider,
+        subject=subject,
+        token_ref=token_ref,
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=ttl),
+        claims=claims or {},
+    )
+
+
+def set_worker_scope(scope: RuntimeWorkerScope):
+    if not scope.active():
+        raise ValueError("Worker scope is expired.")
+    return _worker_scope.set(scope)
+
+
+def clear_worker_scope(token) -> None:
+    if token:
+        _worker_scope.reset(token)
+
+
+def current_worker_scope() -> RuntimeWorkerScope:
+    scope = _worker_scope.get()
+    if scope and scope.active():
+        return scope
+    return None
+
+
+def require_worker_scope(provider: str = None) -> RuntimeWorkerScope:
+    scope = current_worker_scope()
+    if not scope:
+        raise PermissionError("Worker action requires an active scoped runtime token.")
+    if provider and scope.provider != provider:
+        raise PermissionError(f"Worker scope provider mismatch: expected {provider}.")
+    return scope
 
 
 PROVIDER_UNAVAILABLE_COPY = (

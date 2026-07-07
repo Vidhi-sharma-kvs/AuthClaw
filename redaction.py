@@ -379,3 +379,77 @@ def redact_sensitive_data(text: str) -> str:
     """
     redacted_text, _ = redact_sensitive_data_rich(text)
     return redacted_text
+
+
+def _stream_holdback_size() -> int:
+    raw_value = os.getenv("AUTHCLAW_STREAM_REDACTION_HOLDBACK_CHARS", "256")
+    try:
+        return max(64, min(4096, int(raw_value)))
+    except ValueError:
+        return 256
+
+
+def _redact_stream_buffer(buffer: str, username: str, tenant_id=None):
+    redacted, findings = redact_sensitive_data_rich(buffer, username=username, tenant_id=tenant_id)
+    return redacted or "", findings or []
+
+
+def stream_redact_sensitive_tokens(token_stream, username: str = "admin_user", tenant_id=None, holdback_chars: int = None):
+    """
+    Redacts provider output as chunks arrive.
+
+    The holdback window keeps a small suffix in memory so identifiers split
+    across token boundaries can still be detected, while most text is yielded
+    immediately. This preserves the existing full-text redactor as the source of
+    truth and adds a streaming interface without changing current callers.
+    """
+    pending = ""
+    all_findings = []
+    holdback = holdback_chars or _stream_holdback_size()
+
+    for token in token_stream:
+        if token is None:
+            continue
+        pending += str(token)
+        if len(pending) <= holdback:
+            continue
+
+        safe_prefix = pending[:-holdback]
+        pending = pending[-holdback:]
+        redacted_prefix, findings = _redact_stream_buffer(safe_prefix, username, tenant_id)
+        all_findings.extend(findings)
+        if redacted_prefix:
+            yield redacted_prefix
+
+    if pending:
+        redacted_tail, findings = _redact_stream_buffer(pending, username, tenant_id)
+        all_findings.extend(findings)
+        if redacted_tail:
+            yield redacted_tail
+
+
+async def async_stream_redact_sensitive_tokens(token_stream, username: str = "admin_user", tenant_id=None, holdback_chars: int = None):
+    """
+    Async counterpart for providers or HTTP handlers that expose async token
+    generators. It intentionally mirrors stream_redact_sensitive_tokens.
+    """
+    pending = ""
+    holdback = holdback_chars or _stream_holdback_size()
+
+    async for token in token_stream:
+        if token is None:
+            continue
+        pending += str(token)
+        if len(pending) <= holdback:
+            continue
+
+        safe_prefix = pending[:-holdback]
+        pending = pending[-holdback:]
+        redacted_prefix, _ = _redact_stream_buffer(safe_prefix, username, tenant_id)
+        if redacted_prefix:
+            yield redacted_prefix
+
+    if pending:
+        redacted_tail, _ = _redact_stream_buffer(pending, username, tenant_id)
+        if redacted_tail:
+            yield redacted_tail

@@ -1,6 +1,13 @@
 import hashlib
 import json
 import contextvars
+import hmac
+import logging
+import os
+import queue
+import threading
+import urllib.parse
+import urllib.request
 from datetime import datetime
 from sqlalchemy import text
 from database import engine
@@ -8,6 +15,103 @@ from database import engine
 GENESIS_HASH = "0" * 64
 _agent_event_request_id = contextvars.ContextVar("agent_event_request_id", default=None)
 _agent_event_sequence = contextvars.ContextVar("agent_event_sequence", default=0)
+logger = logging.getLogger("authclaw.audit")
+_clickhouse_queue = None
+_clickhouse_worker_started = False
+
+
+def _env_truthy(name: str, default: bool = True) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def clickhouse_pipeline_enabled() -> bool:
+    return _env_truthy("AUTHCLAW_CLICKHOUSE_ENABLED", True)
+
+
+def _clickhouse_http_url(query: str) -> str:
+    base_url = os.getenv("CLICKHOUSE_HTTP_URL", "http://127.0.0.1:8123").rstrip("/")
+    params = {
+        "query": query,
+        "date_time_input_format": "best_effort",
+        "input_format_skip_unknown_fields": "1",
+    }
+    return f"{base_url}/?{urllib.parse.urlencode(params)}"
+
+
+def _ensure_clickhouse_worker() -> None:
+    global _clickhouse_queue, _clickhouse_worker_started
+    if not clickhouse_pipeline_enabled() or _clickhouse_worker_started:
+        return
+    _clickhouse_queue = queue.Queue(maxsize=int(os.getenv("AUTHCLAW_CLICKHOUSE_QUEUE_SIZE", "1000")))
+    worker = threading.Thread(target=_clickhouse_worker, name="authclaw-clickhouse-audit-mirror", daemon=True)
+    worker.start()
+    _clickhouse_worker_started = True
+
+
+def _clickhouse_worker() -> None:
+    while True:
+        event = _clickhouse_queue.get()
+        try:
+            _write_clickhouse_event(event)
+        except Exception as exc:
+            logger.debug("ClickHouse audit mirror skipped event: %s", exc)
+        finally:
+            _clickhouse_queue.task_done()
+
+
+def _write_clickhouse_event(event: dict) -> None:
+    database = os.getenv("CLICKHOUSE_DATABASE", "authclaw")
+    table = os.getenv("CLICKHOUSE_AUDIT_TABLE", "audit_events")
+    query = f"INSERT INTO {database}.{table} FORMAT JSONEachRow"
+    payload = json.dumps(event, default=str).encode("utf-8") + b"\n"
+    request = urllib.request.Request(
+        _clickhouse_http_url(query),
+        data=payload,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    timeout = float(os.getenv("CLICKHOUSE_TIMEOUT_SECONDS", "1.5"))
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        if response.status < 200 or response.status >= 300:
+            raise RuntimeError(f"ClickHouse returned {response.status}")
+
+
+def mirror_audit_event_to_clickhouse(event: dict) -> None:
+    """
+    Non-blocking mirror for immutable audit events. Missing ClickHouse never
+    prevents the PostgreSQL audit chain from being written.
+    """
+    if not clickhouse_pipeline_enabled():
+        return
+    try:
+        _ensure_clickhouse_worker()
+        _clickhouse_queue.put_nowait(event)
+    except Exception:
+        return
+
+
+def sign_export_payload(payload: bytes, tenant_id: int = None, export_type: str = "audit") -> dict:
+    """
+    Produces tamper-evident export headers using a tenant-scoped HMAC key. This
+    is additive to the existing CSV/PDF bytes and avoids changing export bodies.
+    """
+    secret = (
+        os.getenv(f"AUTHCLAW_TENANT_{tenant_id}_EXPORT_SIGNING_KEY") if tenant_id is not None else None
+    ) or os.getenv("AUTHCLAW_EXPORT_SIGNING_KEY") or os.getenv("AUTHCLAW_ENCRYPTION_KEY") or os.getenv("JWT_SECRET") or "authclaw-local-export-signing-key"
+    body_hash = hashlib.sha256(payload or b"").hexdigest()
+    signature = hmac.new(
+        secret.encode("utf-8"),
+        f"{tenant_id}:{export_type}:{body_hash}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return {
+        "X-AuthClaw-Export-Hash": f"sha256={body_hash}",
+        "X-AuthClaw-Export-Signature": f"sha256={signature}",
+        "X-AuthClaw-Export-Tenant": str(tenant_id or ""),
+    }
 
 
 def set_agent_event_context(request_id: str):
@@ -235,6 +339,23 @@ def record_gateway_request(
                 }
             )
             conn.commit()
+
+            mirror_audit_event_to_clickhouse({
+                "event_type": "gateway_request",
+                "request_id": request_id,
+                "tenant_id": tenant_id,
+                "route_id": route_id or "1",
+                "provider": provider,
+                "model": model,
+                "risk_level": risk_level,
+                "allowed": allowed,
+                "status": status,
+                "decision": decision,
+                "duration_ms": duration_ms if duration_ms is not None else latency,
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "created_at": datetime.now().isoformat(),
+            })
     except Exception as e:
         print(f"Error logging gateway request metrics: {e}", flush=True)
 
@@ -393,6 +514,23 @@ def create_audit_block(
                 "previous_hash": previous_hash
             }
         )
+        mirror_audit_event_to_clickhouse({
+            "event_type": "audit_block",
+            "record_id": inserted_id,
+            "tenant_id": tenant_id,
+            "session_id": session_id,
+            "approval_id": approval_id,
+            "username": username,
+            "risk_level": risk_level,
+            "allowed": allowed,
+            "approval_status": approval_status,
+            "policy_name": policy_name,
+            "policy_type": policy_type,
+            "matched_pattern": matched_pattern,
+            "integrity_hash": current_hash,
+            "previous_hash": previous_hash,
+            "created_at": db_created_at.isoformat() if hasattr(db_created_at, "isoformat") else str(db_created_at),
+        })
         return inserted_id
 
 def log_agent_event(

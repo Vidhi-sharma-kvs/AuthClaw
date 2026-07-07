@@ -1,12 +1,295 @@
 import os
 import json
 import logging
+import re
+import base64
+import time
 from typing import Dict, List, Any
 
 logger = logging.getLogger("authclaw.document_processing.connectors")
 
+_AWS_ROLE_ARN_PATTERN = re.compile(r"^arn:aws:iam::\d{12}:role\/[A-Za-z0-9+=,.@_\/-]+$")
+_UUID_PATTERN = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+_google_access_token_cache = {"token": None, "expires_at": 0}
+_ms_graph_token_cache = {"token": None, "expires_at": 0}
+
+
+class ConnectorValidationError(RuntimeError):
+    """Raised only when strict connector validation is enabled."""
+
+
 def is_real_connectors_enabled() -> bool:
     return os.getenv("ENABLE_REAL_CONNECTORS", "false").lower() == "true"
+
+
+def _strict_connector_validation() -> bool:
+    return os.getenv("AUTHCLAW_CONNECTOR_STRICT_VALIDATION", "false").lower() == "true"
+
+
+def _connector_validation_failed(source: str, message: str) -> Dict[str, Any]:
+    result = {"source": source, "valid": False, "message": message}
+    if _strict_connector_validation():
+        raise ConnectorValidationError(message)
+    logger.warning("%s connector validation failed: %s", source, message)
+    return result
+
+
+def _valid_connector(source: str, message: str, **details: Any) -> Dict[str, Any]:
+    return {"source": source, "valid": True, "message": message, **details}
+
+
+def _load_service_account_json() -> Dict[str, Any]:
+    raw_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if raw_json:
+        return json.loads(raw_json)
+
+    path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    if path and os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    return {}
+
+
+def _base64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _aws_session():
+    import boto3
+
+    role_arn = os.getenv("AUTHCLAW_AWS_ROLE_ARN") or os.getenv("AWS_ROLE_ARN")
+    if not role_arn:
+        return boto3.session.Session()
+
+    session_name = os.getenv("AUTHCLAW_AWS_ROLE_SESSION_NAME", "authclaw-document-connector")
+    sts = boto3.client("sts")
+    assumed = sts.assume_role(RoleArn=role_arn, RoleSessionName=session_name)
+    credentials = assumed["Credentials"]
+    return boto3.session.Session(
+        aws_access_key_id=credentials["AccessKeyId"],
+        aws_secret_access_key=credentials["SecretAccessKey"],
+        aws_session_token=credentials["SessionToken"],
+    )
+
+
+def _google_service_account_access_token() -> str:
+    now = int(time.time())
+    cached_token = _google_access_token_cache.get("token")
+    if cached_token and _google_access_token_cache.get("expires_at", 0) > now + 60:
+        return cached_token
+
+    service_account = _load_service_account_json()
+    if not service_account:
+        return None
+
+    import requests
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    header = {"alg": "RS256", "typ": "JWT"}
+    claims = {
+        "iss": service_account["client_email"],
+        "scope": os.getenv("GOOGLE_DRIVE_SCOPES", "https://www.googleapis.com/auth/drive.readonly"),
+        "aud": "https://oauth2.googleapis.com/token",
+        "iat": now,
+        "exp": now + 3600,
+    }
+    signing_input = ".".join([
+        _base64url(json.dumps(header, separators=(",", ":")).encode("utf-8")),
+        _base64url(json.dumps(claims, separators=(",", ":")).encode("utf-8")),
+    ]).encode("ascii")
+    private_key = serialization.load_pem_private_key(service_account["private_key"].encode("utf-8"), password=None)
+    signature = private_key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+    assertion = signing_input.decode("ascii") + "." + _base64url(signature)
+
+    response = requests.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            "assertion": assertion,
+        },
+        timeout=15,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    token = payload["access_token"]
+    _google_access_token_cache["token"] = token
+    _google_access_token_cache["expires_at"] = now + int(payload.get("expires_in", 3600))
+    return token
+
+
+def _google_drive_headers() -> Dict[str, str]:
+    token = _google_service_account_access_token()
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def _ms_graph_access_token() -> str:
+    token = os.getenv("MICROSOFT_GRAPH_TOKEN")
+    if token:
+        return token
+
+    now = int(time.time())
+    cached_token = _ms_graph_token_cache.get("token")
+    if cached_token and _ms_graph_token_cache.get("expires_at", 0) > now + 60:
+        return cached_token
+
+    import requests
+
+    tenant_id = os.getenv("MS_GRAPH_TENANT_ID")
+    response = requests.post(
+        f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
+        data={
+            "client_id": os.getenv("MS_GRAPH_CLIENT_ID"),
+            "client_secret": os.getenv("MS_GRAPH_CLIENT_SECRET"),
+            "scope": os.getenv("MS_GRAPH_SCOPES", "https://graph.microsoft.com/.default"),
+            "grant_type": "client_credentials",
+        },
+        timeout=15,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    token = payload["access_token"]
+    _ms_graph_token_cache["token"] = token
+    _ms_graph_token_cache["expires_at"] = now + int(payload.get("expires_in", 3600))
+    return token
+
+
+def validate_aws_connector_config() -> Dict[str, Any]:
+    """
+    Validates AWS connector configuration before production S3 scans run.
+    Supports IAM role auth, explicit access keys, or the default boto3 provider chain.
+    """
+    if not is_real_connectors_enabled():
+        return _valid_connector("aws", "Real connectors are disabled; mock mode is active.", mode="mock")
+
+    role_arn = os.getenv("AUTHCLAW_AWS_ROLE_ARN") or os.getenv("AWS_ROLE_ARN")
+    if role_arn and not _AWS_ROLE_ARN_PATTERN.match(role_arn):
+        return _connector_validation_failed("aws", "AWS role ARN is malformed.")
+
+    has_static_keys = bool(os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY"))
+    if role_arn:
+        return _valid_connector("aws", "AWS IAM role configuration is present.", mode="iam_role", role_arn=role_arn)
+    if has_static_keys:
+        return _valid_connector("aws", "AWS access key configuration is present.", mode="access_key")
+
+    try:
+        import boto3
+        session = boto3.session.Session()
+        credentials = session.get_credentials()
+        if credentials:
+            return _valid_connector("aws", "AWS default credential chain resolved credentials.", mode="default_chain")
+    except ImportError:
+        return _connector_validation_failed("aws", "boto3 is not installed.")
+    except Exception as exc:
+        return _connector_validation_failed("aws", f"AWS credential provider chain failed: {exc}")
+
+    return _connector_validation_failed(
+        "aws",
+        "Set AUTHCLAW_AWS_ROLE_ARN/AWS_ROLE_ARN or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.",
+    )
+
+
+def validate_gcp_connector_config() -> Dict[str, Any]:
+    """
+    Validates Google Drive connector configuration.
+    Service-account JSON is preferred; GOOGLE_API_KEY remains supported for legacy reads.
+    """
+    if not is_real_connectors_enabled():
+        return _valid_connector("gcp", "Real connectors are disabled; mock mode is active.", mode="mock")
+
+    service_account = {}
+    try:
+        service_account = _load_service_account_json()
+    except Exception as exc:
+        return _connector_validation_failed("gcp", f"Google service account JSON could not be parsed: {exc}")
+
+    if service_account:
+        missing = [field for field in ("project_id", "client_email", "private_key") if not service_account.get(field)]
+        if missing:
+            return _connector_validation_failed("gcp", f"Google service account JSON is missing: {', '.join(missing)}.")
+        if "@" not in service_account.get("client_email", ""):
+            return _connector_validation_failed("gcp", "Google service account client_email is invalid.")
+        return _valid_connector(
+            "gcp",
+            "Google service account configuration is present.",
+            mode="service_account",
+            project_id=service_account.get("project_id"),
+            client_email=service_account.get("client_email"),
+        )
+
+    if os.getenv("GOOGLE_API_KEY"):
+        return _valid_connector("gcp", "Google API key configuration is present.", mode="api_key_legacy")
+
+    return _connector_validation_failed(
+        "gcp",
+        "Set GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_APPLICATION_CREDENTIALS, or GOOGLE_API_KEY.",
+    )
+
+
+def validate_ms_graph_connector_config() -> Dict[str, Any]:
+    """
+    Validates OneDrive/SharePoint Microsoft Graph connector configuration.
+    Supports a bearer token or application credentials.
+    """
+    if not is_real_connectors_enabled():
+        return _valid_connector("microsoft_graph", "Real connectors are disabled; mock mode is active.", mode="mock")
+
+    token = os.getenv("MICROSOFT_GRAPH_TOKEN")
+    if token:
+        if len(token.strip()) < 20:
+            return _connector_validation_failed("microsoft_graph", "MICROSOFT_GRAPH_TOKEN is too short.")
+        return _valid_connector("microsoft_graph", "Microsoft Graph bearer token is present.", mode="bearer_token")
+
+    tenant_id = os.getenv("MS_GRAPH_TENANT_ID")
+    client_id = os.getenv("MS_GRAPH_CLIENT_ID")
+    client_secret = os.getenv("MS_GRAPH_CLIENT_SECRET")
+    missing = [
+        name
+        for name, value in {
+            "MS_GRAPH_TENANT_ID": tenant_id,
+            "MS_GRAPH_CLIENT_ID": client_id,
+            "MS_GRAPH_CLIENT_SECRET": client_secret,
+        }.items()
+        if not value
+    ]
+    if missing:
+        return _connector_validation_failed("microsoft_graph", f"Missing Microsoft Graph config: {', '.join(missing)}.")
+    if not (_UUID_PATTERN.match(tenant_id) or tenant_id.lower() in {"common", "organizations", "consumers"}):
+        return _connector_validation_failed("microsoft_graph", "MS_GRAPH_TENANT_ID must be a tenant UUID or supported alias.")
+    if not _UUID_PATTERN.match(client_id):
+        return _connector_validation_failed("microsoft_graph", "MS_GRAPH_CLIENT_ID must be a UUID.")
+    if len(client_secret.strip()) < 8:
+        return _connector_validation_failed("microsoft_graph", "MS_GRAPH_CLIENT_SECRET is too short.")
+    return _valid_connector("microsoft_graph", "Microsoft Graph application credentials are present.", mode="client_credentials")
+
+
+def validate_connector_config(source: str) -> Dict[str, Any]:
+    normalized = source.lower()
+    if normalized == "s3":
+        return validate_aws_connector_config()
+    if normalized == "gdrive":
+        return validate_gcp_connector_config()
+    if normalized in {"onedrive", "sharepoint"}:
+        return validate_ms_graph_connector_config()
+    if normalized == "dropbox":
+        token = os.getenv("DROPBOX_ACCESS_TOKEN")
+        if not is_real_connectors_enabled():
+            return _valid_connector("dropbox", "Real connectors are disabled; mock mode is active.", mode="mock")
+        if token and len(token.strip()) >= 20:
+            return _valid_connector("dropbox", "Dropbox access token is present.", mode="bearer_token")
+        return _connector_validation_failed("dropbox", "DROPBOX_ACCESS_TOKEN is missing or too short.")
+    return _connector_validation_failed(source, f"Unknown connector source: {source}.")
+
+
+def connector_validation_report() -> Dict[str, Dict[str, Any]]:
+    return {
+        "s3": validate_connector_config("s3"),
+        "gdrive": validate_connector_config("gdrive"),
+        "onedrive": validate_connector_config("onedrive"),
+        "sharepoint": validate_connector_config("sharepoint"),
+        "dropbox": validate_connector_config("dropbox"),
+    }
+
 
 def discover_s3_buckets() -> List[str]:
     """
@@ -14,10 +297,10 @@ def discover_s3_buckets() -> List[str]:
     Falls back to mock list if empty or errors out.
     """
     buckets = []
-    if is_real_connectors_enabled():
+    if is_real_connectors_enabled() and validate_aws_connector_config().get("valid"):
         try:
             import boto3
-            s3 = boto3.client("s3")
+            s3 = _aws_session().client("s3")
             response = s3.list_buckets()
             buckets = [b["Name"] for b in response.get("Buckets", [])]
         except Exception as e:
@@ -32,10 +315,10 @@ def fetch_s3_document(bucket_name: str, object_key: str) -> bytes:
     Fetches a document from an AWS S3 bucket.
     Falls back to mock payload if ENABLE_REAL_CONNECTORS is false or boto3 is not installed.
     """
-    if is_real_connectors_enabled():
+    if is_real_connectors_enabled() and validate_aws_connector_config().get("valid"):
         try:
             import boto3
-            s3 = boto3.client("s3")
+            s3 = _aws_session().client("s3")
             response = s3.get_object(Bucket=bucket_name, Key=object_key)
             return response["Body"].read()
         except ImportError:
@@ -59,12 +342,16 @@ def fetch_gdrive_document(file_id: str) -> bytes:
     """
     Fetches a document from Google Drive.
     """
-    if is_real_connectors_enabled():
+    if is_real_connectors_enabled() and validate_gcp_connector_config().get("valid"):
         try:
             import requests
             api_key = os.getenv("GOOGLE_API_KEY")
-            url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={api_key}"
-            res = requests.get(url, timeout=15)
+            if api_key:
+                url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={api_key}"
+                res = requests.get(url, timeout=15)
+            else:
+                url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
+                res = requests.get(url, headers=_google_drive_headers(), timeout=15)
             if res.status_code == 200:
                 return res.content
         except Exception as e:
@@ -85,10 +372,10 @@ def fetch_onedrive_document(item_id: str) -> bytes:
     """
     Fetches a document from Microsoft OneDrive.
     """
-    if is_real_connectors_enabled():
+    if is_real_connectors_enabled() and validate_ms_graph_connector_config().get("valid"):
         try:
             import requests
-            token = os.getenv("MICROSOFT_GRAPH_TOKEN")
+            token = _ms_graph_access_token()
             headers = {"Authorization": f"Bearer {token}"}
             url = f"https://graph.microsoft.com/v1.0/me/drive/items/{item_id}/content"
             res = requests.get(url, headers=headers, timeout=15)
@@ -113,10 +400,10 @@ def fetch_sharepoint_document(site_id: str, item_id: str) -> bytes:
     """
     Fetches a document from SharePoint Online.
     """
-    if is_real_connectors_enabled():
+    if is_real_connectors_enabled() and validate_ms_graph_connector_config().get("valid"):
         try:
             import requests
-            token = os.getenv("MICROSOFT_GRAPH_TOKEN")
+            token = _ms_graph_access_token()
             headers = {"Authorization": f"Bearer {token}"}
             url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{item_id}/content"
             res = requests.get(url, headers=headers, timeout=15)
@@ -141,7 +428,7 @@ def fetch_dropbox_document(file_path: str) -> bytes:
     """
     Fetches a document from Dropbox.
     """
-    if is_real_connectors_enabled():
+    if is_real_connectors_enabled() and validate_connector_config("dropbox").get("valid"):
         try:
             import requests
             token = os.getenv("DROPBOX_ACCESS_TOKEN")
@@ -174,8 +461,10 @@ def list_cloud_source_files(source: str) -> List[Dict[str, Any]]:
     if is_real_connectors_enabled():
         try:
             if source == "s3":
+                if not validate_aws_connector_config().get("valid"):
+                    raise ConnectorValidationError("AWS S3 connector config is invalid.")
                 import boto3
-                s3 = boto3.client("s3")
+                s3 = _aws_session().client("s3")
                 buckets = discover_s3_buckets()
                 file_list = []
                 for b in buckets:
@@ -196,14 +485,20 @@ def list_cloud_source_files(source: str) -> List[Dict[str, Any]]:
                     return file_list
 
             elif source == "gdrive":
+                if not validate_gcp_connector_config().get("valid"):
+                    raise ConnectorValidationError("Google Drive connector config is invalid.")
                 import requests
                 api_key = os.getenv("GOOGLE_API_KEY")
                 folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
                 query = "mimeType != 'application/vnd.google-apps.folder'"
                 if folder_id:
                     query = f"'{folder_id}' in parents and {query}"
-                url = f"https://www.googleapis.com/drive/v3/files?q={query}&key={api_key}"
-                res = requests.get(url, timeout=15)
+                if api_key:
+                    url = f"https://www.googleapis.com/drive/v3/files?q={query}&key={api_key}"
+                    res = requests.get(url, timeout=15)
+                else:
+                    url = "https://www.googleapis.com/drive/v3/files"
+                    res = requests.get(url, headers=_google_drive_headers(), params={"q": query}, timeout=15)
                 if res.status_code == 200:
                     files = res.json().get("files", [])
                     return [{
@@ -214,8 +509,10 @@ def list_cloud_source_files(source: str) -> List[Dict[str, Any]]:
                     } for f in files]
 
             elif source == "onedrive":
+                if not validate_ms_graph_connector_config().get("valid"):
+                    raise ConnectorValidationError("OneDrive connector config is invalid.")
                 import requests
-                token = os.getenv("MICROSOFT_GRAPH_TOKEN")
+                token = _ms_graph_access_token()
                 folder_id = os.getenv("ONEDRIVE_FOLDER_ID", "root")
                 headers = {"Authorization": f"Bearer {token}"}
                 url = f"https://graph.microsoft.com/v1.0/me/drive/items/{folder_id}/children"
@@ -230,8 +527,10 @@ def list_cloud_source_files(source: str) -> List[Dict[str, Any]]:
                     } for item in items if "file" in item]
 
             elif source == "sharepoint":
+                if not validate_ms_graph_connector_config().get("valid"):
+                    raise ConnectorValidationError("SharePoint connector config is invalid.")
                 import requests
-                token = os.getenv("MICROSOFT_GRAPH_TOKEN")
+                token = _ms_graph_access_token()
                 site_id = os.getenv("SHAREPOINT_SITE_ID")
                 folder_id = os.getenv("SHAREPOINT_FOLDER_ID", "root")
                 if site_id:
@@ -248,6 +547,8 @@ def list_cloud_source_files(source: str) -> List[Dict[str, Any]]:
                         } for item in items if "file" in item]
 
             elif source == "dropbox":
+                if not validate_connector_config("dropbox").get("valid"):
+                    raise ConnectorValidationError("Dropbox connector config is invalid.")
                 import requests
                 token = os.getenv("DROPBOX_ACCESS_TOKEN")
                 folder_path = os.getenv("DROPBOX_FOLDER_PATH", "")
@@ -301,11 +602,11 @@ def scan_s3_bucket_security(bucket_name: str) -> List[Dict[str, Any]]:
     Checks: Block Public Access, SSE Default Encryption, Versioning, Access Logging, Public Policy.
     """
     findings = []
-    if is_real_connectors_enabled():
+    if is_real_connectors_enabled() and validate_aws_connector_config().get("valid"):
         try:
             import boto3
             from botocore.exceptions import ClientError
-            s3 = boto3.client("s3")
+            s3 = _aws_session().client("s3")
             
             # 1. Block Public Access Check
             try:
