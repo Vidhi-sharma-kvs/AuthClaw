@@ -1,7 +1,7 @@
 param(
     [int]$BackendPort = 8000,
     [int]$GatewayPort = 9000,
-    [int]$FrontendPort = 5173,
+    [int]$FrontendPort = 5175,
     [switch]$DisableBackgroundMonitor = $true,
     [switch]$DisableRemoteEmbeddings = $true,
     [switch]$SkipEmailDeliveryForTesting = $true,

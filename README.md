@@ -53,7 +53,7 @@ Expected local endpoints:
 
 | Service | URL |
 | --- | --- |
-| Frontend | `http://127.0.0.1:5173` |
+| Frontend | `http://127.0.0.1:5175` |
 | Go Gateway | `http://127.0.0.1:9000` |
 | Python API | `http://127.0.0.1:8000` |
 | Gateway Health | `http://127.0.0.1:9000/health/ready` |
