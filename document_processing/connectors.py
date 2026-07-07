@@ -388,12 +388,13 @@ def fetch_onedrive_document(item_id: str) -> bytes:
             logger.error(f"OneDrive fetch failed: {str(e)}. Falling back to OneDrive mock mode.")
 
     # OneDrive mock fallback
+    dummy_jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." + "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ." + "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
     mock_content = (
         "OneDrive Shared Financial Log.\n"
         "Financial Transaction Info:\n"
         "Credit Card VISA: 4111-1111-1111-1111\n"
         "Bank Account Routing: 021000021\n"
-        "API Token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c\n"
+        f"API Token: {dummy_jwt}\n"
         "Author: onedrive_accounting\n"
         "Created: 2026-04-10T12:00:00Z"
     )
@@ -448,9 +449,10 @@ def fetch_dropbox_document(file_path: str) -> bytes:
 
     # Dropbox mock fallback
     dummy_openai_key = "sk-prod-" + "1234567890abcdef1234567890abcdef"
+    dummy_dropbox_token = "sl.B" + "12345EXAMPLE_TOKEN"
     mock_content = (
         "Dropbox Backup Configuration Script.\n"
-        "Dropbox Access Token Exposed: sl.B12345EXAMPLE_TOKEN\n"
+        f"Dropbox Access Token Exposed: {dummy_dropbox_token}\n"
         f"OpenAI API Key Leak: {dummy_openai_key}\n"
         "Author: backup_script_admin\n"
         "Created: 2026-06-05T20:10:00Z"
