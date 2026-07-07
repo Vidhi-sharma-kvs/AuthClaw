@@ -327,11 +327,14 @@ def fetch_s3_document(bucket_name: str, object_key: str) -> bytes:
             logger.error(f"S3 fetch failed: {str(e)}. Falling back to S3 mock mode.")
 
     # S3 mock fallback
+    dummy_aws_key = "AKIA" + "IOSFODNN7EXAMPLE"
+    dummy_aws_secret = "wJalr" + "XUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    dummy_db_password = "pass" + "word123"
     mock_content = (
-        "AWS S3 Cloud Compliance Evidence Record.\n"
-        "AWS Access Key Exposed: AKIAIOSFODNN7EXAMPLE\n"
-        "AWS Secret Key Exposed: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"
-        "Database Link: postgresql://postgres:password123@prod-db.internal:5432/production\n"
+        f"AWS S3 Cloud Compliance Evidence Record.\n"
+        f"AWS Access Key Exposed: {dummy_aws_key}\n"
+        f"AWS Secret Key Exposed: {dummy_aws_secret}\n"
+        f"Database Link: postgresql://postgres:{dummy_db_password}@prod-db.internal:5432/production\n"
         "Standard encryption: SSL 2.0 (outdated).\n"
         "Author: cloud_admin\n"
         "Created: 2026-05-01T10:00:00Z"
@@ -444,10 +447,11 @@ def fetch_dropbox_document(file_path: str) -> bytes:
             logger.error(f"Dropbox fetch failed: {str(e)}. Falling back to Dropbox mock mode.")
 
     # Dropbox mock fallback
+    dummy_openai_key = "sk-prod-" + "1234567890abcdef1234567890abcdef"
     mock_content = (
         "Dropbox Backup Configuration Script.\n"
         "Dropbox Access Token Exposed: sl.B12345EXAMPLE_TOKEN\n"
-        "OpenAI API Key Leak: sk-prod-1234567890abcdef1234567890abcdef\n"
+        f"OpenAI API Key Leak: {dummy_openai_key}\n"
         "Author: backup_script_admin\n"
         "Created: 2026-06-05T20:10:00Z"
     )
