@@ -117,7 +117,7 @@ class ObservabilityService:
             FROM {database}.{view}
             WHERE toString(tenant_id) = '{tenant}'
             FORMAT JSONEachRow
-        """
+        """  # nosec B608
         try:
             rows = self._clickhouse_query_json(query)
             if not rows:

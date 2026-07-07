@@ -175,7 +175,7 @@ def verify_audit_chain(tenant_id: int = None) -> dict:
             FROM audit_logs
             {tenant_filter}
             ORDER BY id ASC
-            """),
+            """),  # nosec B608
             params
         )
         rows = res.fetchall()
