@@ -80,15 +80,17 @@ class SensitiveDataDetector:
         "LOCATION": "address",
     }
 
+    _cached_presidio_analyzer = None
+
     def __init__(self, tenant_id=None):
         self.tenant_id = tenant_id
-        self._presidio_analyzer = None
-        try:
-            from presidio_analyzer import AnalyzerEngine
-
-            self._presidio_analyzer = AnalyzerEngine()
-        except Exception:
-            self._presidio_analyzer = None
+        if SensitiveDataDetector._cached_presidio_analyzer is None:
+            try:
+                from presidio_analyzer import AnalyzerEngine
+                SensitiveDataDetector._cached_presidio_analyzer = AnalyzerEngine()
+            except Exception:
+                pass
+        self._presidio_analyzer = SensitiveDataDetector._cached_presidio_analyzer
 
     @property
     def presidio_enabled(self) -> bool:

@@ -404,7 +404,6 @@ def stream_redact_sensitive_tokens(token_stream, username: str = "admin_user", t
     truth and adds a streaming interface without changing current callers.
     """
     pending = ""
-    all_findings = []
     holdback = holdback_chars or _stream_holdback_size()
 
     for token in token_stream:
@@ -414,16 +413,16 @@ def stream_redact_sensitive_tokens(token_stream, username: str = "admin_user", t
         if len(pending) <= holdback:
             continue
 
-        safe_prefix = pending[:-holdback]
-        pending = pending[-holdback:]
-        redacted_prefix, findings = _redact_stream_buffer(safe_prefix, username, tenant_id)
-        all_findings.extend(findings)
-        if redacted_prefix:
-            yield redacted_prefix
+        redacted_pending, _ = _redact_stream_buffer(pending, username, tenant_id)
+        slice_idx = len(redacted_pending) - holdback
+        if slice_idx > 0:
+            yielded = redacted_pending[:slice_idx]
+            pending = redacted_pending[slice_idx:]
+            if yielded:
+                yield yielded
 
     if pending:
-        redacted_tail, findings = _redact_stream_buffer(pending, username, tenant_id)
-        all_findings.extend(findings)
+        redacted_tail, _ = _redact_stream_buffer(pending, username, tenant_id)
         if redacted_tail:
             yield redacted_tail
 
@@ -443,11 +442,13 @@ async def async_stream_redact_sensitive_tokens(token_stream, username: str = "ad
         if len(pending) <= holdback:
             continue
 
-        safe_prefix = pending[:-holdback]
-        pending = pending[-holdback:]
-        redacted_prefix, _ = _redact_stream_buffer(safe_prefix, username, tenant_id)
-        if redacted_prefix:
-            yield redacted_prefix
+        redacted_pending, _ = _redact_stream_buffer(pending, username, tenant_id)
+        slice_idx = len(redacted_pending) - holdback
+        if slice_idx > 0:
+            yielded = redacted_pending[:slice_idx]
+            pending = redacted_pending[slice_idx:]
+            if yielded:
+                yield yielded
 
     if pending:
         redacted_tail, _ = _redact_stream_buffer(pending, username, tenant_id)

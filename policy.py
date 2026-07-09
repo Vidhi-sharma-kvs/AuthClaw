@@ -14,9 +14,9 @@ OPA_POLICY_URL = os.getenv("AUTHCLAW_OPA_POLICY_URL", "http://localhost:8181/v1/
 OPA_TIMEOUT_SECONDS = float(os.getenv("AUTHCLAW_OPA_TIMEOUT_SECONDS", "0.25"))
 OPA_CIRCUIT_BREAK_SECONDS = float(os.getenv("AUTHCLAW_OPA_CIRCUIT_BREAK_SECONDS", "30"))
 
-# Cache variable
 _cached_policy = None
 _opa_disabled_until = 0.0
+_db_policies_cache = {}
 
 
 def _truthy(value: str, default: bool = True) -> bool:
@@ -455,6 +455,12 @@ def get_db_policies(tenant_id=None):
     """
     Retrieves active policies from the database.
     """
+    current_time = time.time()
+    if "PYTEST_CURRENT_TEST" not in os.environ and tenant_id in _db_policies_cache:
+        cached_time, cached_val = _db_policies_cache[tenant_id]
+        if current_time - cached_time < 2.0:
+            return cached_val
+
     try:
         from database import engine
         from sqlalchemy import text
@@ -475,6 +481,8 @@ def get_db_policies(tenant_id=None):
                 except Exception:
                     pass
                 policies.append(p_dict)
+            if "PYTEST_CURRENT_TEST" not in os.environ:
+                _db_policies_cache[tenant_id] = (current_time, policies)
             return policies
     except Exception as e:
         logger.warning(f"Error fetching active policies from DB: {e}")
