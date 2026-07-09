@@ -2851,7 +2851,7 @@ def simulate_existing_policy(policy_id: int, payload: Dict[str, str], authorizat
 def publish_policy(policy_id: int, authorization: Optional[str] = Header(None)):
     from database import engine
     from verify_audit import create_audit_block
-    from services.policy_engine import PolicyEngine, record_policy_history
+    from services.policy_engine import PolicyEngine, record_policy_history, validate_policy_rules_for_lifecycle
     tenant_id = resolve_tenant_from_authorization(authorization)
     actor = policy_actor_from_authorization(authorization)
     with engine.connect() as conn:
@@ -2866,6 +2866,9 @@ def publish_policy(policy_id: int, authorization: Optional[str] = Header(None)):
         if row is None:
             raise HTTPException(status_code=404, detail="Policy not found.")
         rules = PolicyEngine().parse_rules(row[1])
+        validation_errors = validate_policy_rules_for_lifecycle(rules)
+        if validation_errors:
+            raise HTTPException(status_code=400, detail={"message": "Policy cannot be published.", "errors": validation_errors})
         version = int(row[2] or 1)
         checksum = policy_rules_checksum(rules)
         conn.execute(
@@ -3082,7 +3085,7 @@ def archive_policy(policy_id: int, authorization: Optional[str] = Header(None)):
 @app.post("/policies/{policy_id}/rollback")
 def rollback_policy(policy_id: int, payload: Dict[str, int], authorization: Optional[str] = Header(None)):
     from database import engine
-    from services.policy_engine import PolicyEngine, record_policy_history
+    from services.policy_engine import PolicyEngine, record_policy_history, validate_policy_rules_for_lifecycle
     tenant_id = resolve_tenant_from_authorization(authorization)
     actor = policy_actor_from_authorization(authorization)
     target_version = int(payload.get("version", 0) or 0)
@@ -3100,6 +3103,9 @@ def rollback_policy(policy_id: int, payload: Dict[str, int], authorization: Opti
         if not version_row:
             raise HTTPException(status_code=404, detail="Policy version not found.")
         rules = PolicyEngine().parse_rules(version_row[0])
+        validation_errors = validate_policy_rules_for_lifecycle(rules)
+        if validation_errors:
+            raise HTTPException(status_code=400, detail={"message": "Policy version cannot be rolled back.", "errors": validation_errors})
         current = conn.execute(
             text("SELECT COALESCE(version, 1) AS version FROM policies WHERE id = :id AND tenant_id = :tenant_id"),
             {"id": policy_id, "tenant_id": tenant_id},

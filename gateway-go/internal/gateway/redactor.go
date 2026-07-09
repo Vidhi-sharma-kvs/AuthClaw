@@ -9,7 +9,7 @@ import (
 
 const (
 	streamSafePlaceholder = "[AuthClaw blocked unsafe stream chunk]"
-	defaultCarryBytes     = 512
+	defaultCarryBytes     = 2048
 )
 
 type redactionPattern struct {
@@ -48,6 +48,11 @@ func NewStreamingRedactor() *StreamingRedactor {
 				replacement: "[REDACTED_AWS_KEY]",
 			},
 			{
+				trigger:     "anthropic_api_key",
+				re:          regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{16,}\b`),
+				replacement: "[REDACTED_API_KEY]",
+			},
+			{
 				trigger:     "openai_api_key",
 				re:          regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{16,}\b`),
 				replacement: "[REDACTED_API_KEY]",
@@ -73,14 +78,54 @@ func NewStreamingRedactor() *StreamingRedactor {
 				replacement: "Bearer [REDACTED_TOKEN]",
 			},
 			{
+				trigger:     "azure_openai_key",
+				re:          regexp.MustCompile(`(?i)\bazure[_-]?openai[_-]?(api[_-]?)?key\s*[:=]\s*["']?[A-Za-z0-9._-]{16,}["']?`),
+				replacement: "[REDACTED_AZURE_OPENAI_KEY]",
+			},
+			{
+				trigger:     "cohere_api_key",
+				re:          regexp.MustCompile(`(?i)\bcohere[_-]?(api[_-]?)?key\s*[:=]\s*["']?[A-Za-z0-9._-]{16,}["']?`),
+				replacement: "[REDACTED_COHERE_KEY]",
+			},
+			{
+				trigger:     "secret_assignment",
+				re:          regexp.MustCompile(`(?i)\b(api[_-]?key|secret|access[_-]?token|refresh[_-]?token|password|client[_-]?secret)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{12,}["']?`),
+				replacement: "[REDACTED_SECRET_ASSIGNMENT]",
+			},
+			{
 				trigger:     "email",
 				re:          regexp.MustCompile(`\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b`),
 				replacement: "[REDACTED_EMAIL]",
 			},
 			{
+				trigger:     "credit_card",
+				re:          regexp.MustCompile(`\b(?:\d[ -]*?){13,19}\b`),
+				replacement: "[REDACTED_FINANCIAL_IDENTIFIER]",
+			},
+			{
 				trigger:     "phone",
 				re:          regexp.MustCompile(`(?i)(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{3,5}\)?[\s.-]?)\d{3,5}[\s.-]?\d{3,6}\b`),
 				replacement: "[REDACTED_PHONE]",
+			},
+			{
+				trigger:     "ssn",
+				re:          regexp.MustCompile(`\b\d{3}-\d{2}-\d{4}\b`),
+				replacement: "[REDACTED_SSN]",
+			},
+			{
+				trigger:     "medical_identifier",
+				re:          regexp.MustCompile(`(?i)\b(MRN|medical record|patient id|patient identifier)\s*[:#=]?\s*[A-Za-z0-9-]{5,}\b`),
+				replacement: "[REDACTED_MEDICAL_IDENTIFIER]",
+			},
+			{
+				trigger:     "phi_context",
+				re:          regexp.MustCompile(`(?i)\b(patient|diagnosis|prescription|treatment plan|health history)\b[^\n\r]{0,120}`),
+				replacement: "[REDACTED_PHI_CONTEXT]",
+			},
+			{
+				trigger:     "prompt_injection",
+				re:          regexp.MustCompile(`(?i)\b(ignore\s+(all\s+)?(previous\s+)?instructions|reveal\s+system\s+prompt|show\s+internal\s+system\s+prompts|developer\s+mode|jailbreak|bypass\s+policy)\b[^\n\r]{0,120}`),
+				replacement: "[REDACTED_PROMPT_INJECTION]",
 			},
 			{
 				trigger:     "system_prompt",

@@ -22,13 +22,22 @@ def test_redactor_masks_required_sensitive_categories_and_fail_closes():
     for trigger in [
         "jwt",
         "aws_access_key",
+        "anthropic_api_key",
         "openai_api_key",
         "sendgrid_api_key",
         "google_api_key",
         "authclaw_api_key",
         "bearer_token",
+        "secret_assignment",
+        "azure_openai_key",
+        "cohere_api_key",
         "email",
         "phone",
+        "ssn",
+        "credit_card",
+        "medical_identifier",
+        "phi_context",
+        "prompt_injection",
         "system_prompt",
         "hidden_metadata",
     ]:
@@ -50,4 +59,6 @@ def test_go_streaming_redaction_tests_cover_mandatory_cases():
     assert "TestStreamingRedactorHighSpeedChunks" in redactor_test
     assert "TestStreamingRedactorFailClosedPlaceholder" in redactor_test
     assert "TestStreamingRedactorMasksInternalPromptAndMetadata" in redactor_test
+    assert "TestStreamingRedactorAdversarialFragmentationNoLeak" in redactor_test
+    assert "TestStreamingRedactorMasksProviderAndFinancialSecrets" in redactor_test
     assert "TestGatewayRedactsProxiedSSEStream" in server_test

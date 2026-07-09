@@ -77,6 +77,11 @@ sensitive_data:
     medical_identifier: redact
     financial_identifier: tokenize
 
+opa:
+  package: authclaw.policy
+  bundle_version: "1.0.0"
+  fail_closed: true
+
 approval:
   require_mfa: true
   default_mfa_code: "123456"

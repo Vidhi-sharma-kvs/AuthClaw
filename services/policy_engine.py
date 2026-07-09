@@ -22,6 +22,19 @@ ACTION_PRIORITY = {
     ACTION_BLOCK: 3,
 }
 
+LIFECYCLE_ALLOWED_RULE_KEYS = {
+    "action",
+    "allowed_topics",
+    "blocked_keywords",
+    "blocked_topics",
+    "categories",
+    "category",
+    "category_actions",
+    "pii_redaction",
+    "secret_detection",
+    "actions",
+}
+
 CATEGORY_PRIORITY = {
     "PROMPT_INJECTION": 0,
     "SECURITY_BYPASS": 1,
@@ -598,3 +611,59 @@ def record_policy_history(
             },
         )
         conn.commit()
+
+
+def validate_policy_rules_for_lifecycle(rules: Dict[str, Any]) -> List[str]:
+    errors: List[str] = []
+    if not isinstance(rules, dict):
+        return ["Policy rules must be a JSON object."]
+
+    if not any(key in rules for key in LIFECYCLE_ALLOWED_RULE_KEYS):
+        errors.append("Policy rules must contain at least one enforceable control.")
+
+    unknown_keys = sorted(set(rules) - LIFECYCLE_ALLOWED_RULE_KEYS)
+    if unknown_keys:
+        errors.append(f"Policy rules contain unsupported keys: {', '.join(unknown_keys)}.")
+
+    engine = PolicyEngine()
+    action = rules.get("action")
+    if action is not None and engine._normalize_action(action) is None:
+        errors.append(f"Policy action '{action}' is not supported.")
+
+    for key in ("blocked_keywords", "blocked_topics", "allowed_topics", "categories"):
+        if key not in rules:
+            continue
+        value = rules.get(key)
+        if isinstance(value, str):
+            items = [value]
+        elif isinstance(value, Iterable) and not isinstance(value, dict):
+            items = list(value)
+        else:
+            errors.append(f"Policy rules.{key} must be a string or list of strings.")
+            continue
+        if key != "allowed_topics" and len([item for item in items if str(item).strip()]) == 0:
+            errors.append(f"Policy rules.{key} must contain at least one non-empty value.")
+        for item in items:
+            if not isinstance(item, str) or not item.strip():
+                errors.append(f"Policy rules.{key} contains an empty or non-string value.")
+                break
+
+    for key in ("category_actions", "actions"):
+        if key not in rules:
+            continue
+        value = rules.get(key)
+        if not isinstance(value, dict):
+            errors.append(f"Policy rules.{key} must be an object.")
+            continue
+        for category, category_action in value.items():
+            if not isinstance(category, str) or not category.strip():
+                errors.append(f"Policy rules.{key} contains an invalid category name.")
+                break
+            if engine._normalize_action(category_action) is None:
+                errors.append(f"Policy rules.{key}.{category} action '{category_action}' is not supported.")
+
+    for key in ("pii_redaction", "secret_detection"):
+        if key in rules and not isinstance(rules.get(key), bool):
+            errors.append(f"Policy rules.{key} must be a boolean.")
+
+    return errors

@@ -67,6 +67,8 @@ def test_phase11_production_validation_requires_s3_bucket_when_s3_enabled(monkey
     monkeypatch.setenv("SMTP_HOST", "smtp.sendgrid.net")
     monkeypatch.setenv("SMTP_FROM", "no-reply@authclaw.example.com")
     monkeypatch.setenv("AUTHCLAW_RATE_LIMIT_PER_MINUTE", "120")
+    monkeypatch.setenv("AUTHCLAW_OPA_ENABLED", "true")
+    monkeypatch.setenv("AUTHCLAW_OPA_POLICY_URL", "http://opa:8181/v1/data/authclaw/policy")
     monkeypatch.setenv("AWS_SECRETS_MANAGER_ENABLED", "true")
     monkeypatch.setenv("AWS_REGION", "us-east-1")
     monkeypatch.setenv("AUTHCLAW_DOCUMENT_STORAGE_BACKEND", "s3")

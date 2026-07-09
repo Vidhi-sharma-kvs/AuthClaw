@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 import conftest
+import policy
 from database import engine
 from main import app, create_jwt
 
@@ -101,3 +102,56 @@ def test_policy_publish_creates_immutable_version_and_approval_record():
     approvals = client.get(f"/policies/{policy_id}/approvals", headers=auth_headers())
     assert approvals.status_code == 200
     assert any(row["status"] == "approved" for row in approvals.json())
+
+
+def test_policy_publish_rejects_placeholder_rules():
+    create_payload = {
+        "name": "Phase 3 Placeholder Guard",
+        "type": "Custom",
+        "rules": json.dumps({"placeholder": True}),
+        "enabled": True,
+        "status": "draft",
+        "severity_level": "LOW",
+    }
+    created = client.post("/policies", headers=auth_headers(), json=create_payload)
+    assert created.status_code == 200
+    policy_id = created.json()["policy_id"]
+
+    published = client.post(f"/policies/{policy_id}/publish", headers=auth_headers())
+
+    assert published.status_code == 400
+    detail = published.json()["detail"]
+    assert detail["message"] == "Policy cannot be published."
+    assert any("enforceable control" in error or "unsupported keys" in error for error in detail["errors"])
+
+
+def test_opa_required_mode_fails_closed_when_disabled(monkeypatch):
+    monkeypatch.setenv("AUTHCLAW_OPA_REQUIRED", "true")
+    monkeypatch.setenv("AUTHCLAW_OPA_ENABLED", "false")
+    policy._opa_disabled_until = 0
+
+    result = policy.evaluate_opa_policy("clean request")
+
+    assert result["decision"] == "BLOCK"
+    assert result["allowed"] is False
+    assert result["category"] == "opa_enforcement"
+    assert "required" in result["reason"].lower()
+
+
+def test_yaml_to_opa_bundle_contains_enterprise_policy_categories():
+    policy._cached_policy = None
+    bundle = policy.build_opa_bundle(policy.load_policy())
+    rego = bundle["authclaw.rego"]
+
+    assert bundle[".manifest"]["roots"] == ["authclaw"]
+    for required in [
+        "prompt_injection_keywords",
+        "security_bypass_keywords",
+        "data_exfiltration_keywords",
+        "secret_regexes",
+        "pii_regexes",
+        "phi_regexes",
+        "financial_regexes",
+        'decision := "REDACT"',
+    ]:
+        assert required in rego
