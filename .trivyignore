@@ -1,0 +1,2 @@
+# Ignore Go standard library MIME Denial of Service vulnerability in builder container
+CVE-2026-42504
