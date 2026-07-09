@@ -45,7 +45,6 @@ const AppRouter = () => {
       {publicRoutes.map((route) => (
         <Route key={route.path} path={route.path} element={<PublicPage page={route.page} />} />
       ))}
-      <Route path="/trust" element={<TrustCenter />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Login initialStep="register" />} />
       <Route
@@ -67,6 +66,7 @@ const AppRouter = () => {
         <Route path="/providers" element={<GatewayCenter />} />
         <Route path="/connectors" element={<Connectors />} />
         <Route path="/api-keys" element={<APIKeys />} />
+        <Route path="/trust" element={<TrustCenter />} />
 
         <Route path="/gateway" element={<Navigate to="/providers" replace />} />
         <Route path="/gateway/requests" element={<GatewayRequests />} />

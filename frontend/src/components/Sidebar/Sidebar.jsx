@@ -25,6 +25,7 @@ const ROUTE_PERMISSIONS = {
   '/providers': ['Super Admin', 'Security Admin', 'Developer'],
   '/connectors': ['Super Admin', 'Security Admin', 'Developer'],
   '/api-keys': ['Super Admin', 'Security Admin', 'Developer'],
+  '/trust': ['Super Admin', 'Security Admin', 'Compliance Officer', 'Auditor', 'Viewer'],
   '/policies': ['Super Admin', 'Security Admin', 'Compliance Officer', 'Developer'],
   '/requests': ['Super Admin', 'Security Admin', 'Compliance Officer', 'Developer', 'Auditor'],
   '/approvals': ['Super Admin', 'Security Admin', 'Compliance Officer'],
@@ -49,6 +50,7 @@ const Sidebar = ({ isOpen, toggleSidebar }) => {
     { name: 'Providers', path: '/providers', icon: Server },
     { name: 'Connectors', path: '/connectors', icon: PlugZap },
     { name: 'API Keys', path: '/api-keys', icon: FileText },
+    { name: 'Trust Center', path: '/trust', icon: ShieldCheck },
     { name: 'Settings', path: '/settings', icon: SettingsIcon },
   ];
 
