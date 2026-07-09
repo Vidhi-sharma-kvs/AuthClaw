@@ -389,7 +389,16 @@ def run_startup_migrations():
         executed_by VARCHAR(255),
         mfa_verified BOOLEAN DEFAULT FALSE,
         last_action_at TIMESTAMP,
-        metadata TEXT
+        metadata TEXT,
+        approval_mfa_verified BOOLEAN DEFAULT FALSE,
+        execution_mfa_verified BOOLEAN DEFAULT FALSE,
+        approval_mfa_binding_hash VARCHAR(64),
+        execution_mfa_binding_hash VARCHAR(64),
+        approval_mfa_counter BIGINT,
+        execution_mfa_counter BIGINT,
+        execution_token_hash VARCHAR(64),
+        execution_token_used_at TIMESTAMP,
+        execution_expires_at TIMESTAMP
     );
 
     ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS approval_id VARCHAR(100);
@@ -414,6 +423,15 @@ def run_startup_migrations():
     ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS mfa_verified BOOLEAN DEFAULT FALSE;
     ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS last_action_at TIMESTAMP;
     ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS metadata TEXT;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS approval_mfa_verified BOOLEAN DEFAULT FALSE;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS execution_mfa_verified BOOLEAN DEFAULT FALSE;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS approval_mfa_binding_hash VARCHAR(64);
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS execution_mfa_binding_hash VARCHAR(64);
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS approval_mfa_counter BIGINT;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS execution_mfa_counter BIGINT;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS execution_token_hash VARCHAR(64);
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS execution_token_used_at TIMESTAMP;
+    ALTER TABLE gateway_approvals ADD COLUMN IF NOT EXISTS execution_expires_at TIMESTAMP;
 
     CREATE TABLE IF NOT EXISTS approval_audit_events (
         id SERIAL PRIMARY KEY,

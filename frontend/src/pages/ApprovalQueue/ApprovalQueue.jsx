@@ -28,8 +28,11 @@ const ApprovalQueue = () => {
   const [activeTab, setActiveTab] = useState('pending'); // pending, approved, rejected, executed, all
   const [loading, setLoading] = useState(true);
   const [selectedApproval, setSelectedApproval] = useState(null);
+  const [executionApproval, setExecutionApproval] = useState(null);
   const [mfaCode, setMfaCode] = useState('');
+  const [executionMfaCode, setExecutionMfaCode] = useState('');
   const [approvalComment, setApprovalComment] = useState('');
+  const [executionComment, setExecutionComment] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
 
   const { addToast } = useToast();
@@ -109,17 +112,31 @@ const ApprovalQueue = () => {
     }
   };
 
-  const handleExecute = async (id) => {
-    const comment = window.prompt('Add an execution comment for the audit trail:', '') || '';
+  const handleExecuteClick = (app) => {
+    setExecutionApproval(app);
+    setExecutionMfaCode('');
+    setExecutionComment('');
+  };
+
+  const handleExecuteConfirm = async () => {
+    if (!executionApproval) return;
+    if (!executionMfaCode.trim()) {
+      addToast('Enter a fresh MFA code before executing this action.', 'error');
+      return;
+    }
+    setActionLoading(true);
     try {
-      const result = await executeApproval(id, comment);
+      const result = await executeApproval(executionApproval.approval_id, executionMfaCode, executionComment);
       addToast(`Action executed successfully! Output: ${result.response?.substr(0, 40)}...`, 'success');
+      setExecutionApproval(null);
       fetchApprovals();
       window.dispatchEvent(new CustomEvent('audit-updated'));
     } catch (err) {
       console.error(err);
       const detail = err.response?.data?.detail || 'Execution failed.';
       addToast(detail, 'error');
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -316,7 +333,9 @@ const ApprovalQueue = () => {
                     {app.approved_by && <div>Approved By: <span className="text-[#0E1726]">{app.approved_by}</span></div>}
                     {app.rejected_by && <div>Rejected By: <span className="text-[#0E1726]">{app.rejected_by}</span></div>}
                     {app.executed_by && <div>Executed By: <span className="text-[#0E1726]">{app.executed_by}</span></div>}
-                    <div>MFA: <span className={app.mfa_verified ? 'text-emerald-400 font-bold' : 'text-[#6B7488]'}>{app.mfa_verified ? 'Verified' : 'Not verified'}</span></div>
+                    <div>Approval MFA: <span className={app.approval_mfa_verified ? 'text-emerald-400 font-bold' : 'text-[#6B7488]'}>{app.approval_mfa_verified ? 'Verified' : 'Not verified'}</span></div>
+                    <div>Execution MFA: <span className={app.execution_mfa_verified ? 'text-emerald-400 font-bold' : 'text-[#6B7488]'}>{app.execution_mfa_verified ? 'Verified' : 'Not verified'}</span></div>
+                    {app.execution_expires_at && <div>Execute By: <span className="text-[#0E1726]">{formatDate(app.execution_expires_at)}</span></div>}
                   </div>
 
                   <div className="flex gap-3 ml-auto shrink-0">
@@ -343,10 +362,10 @@ const ApprovalQueue = () => {
                       <Button
                         variant="primary"
                         size="sm"
-                        onClick={() => handleExecute(app.approval_id)}
+                        onClick={() => handleExecuteClick(app)}
                       >
                         <Play className="w-4 h-4 animate-pulse" />
-                        Execute Action
+                        Execute with MFA
                       </Button>
                     )}
                   </div>
@@ -456,6 +475,81 @@ const ApprovalQueue = () => {
                 disabled={actionLoading}
               >
                 {actionLoading ? 'Verifying...' : 'Confirm Approval'}
+              </Button>
+            </div>
+          </GlassCard>
+        </div>
+      )}
+
+      {executionApproval && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0E1726]/35 backdrop-blur-sm p-4">
+          <GlassCard className="relative max-w-md w-full p-6 space-y-6" hover={false}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-[#0E1726] flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-emerald-500" />
+                Execute Approved Action
+              </h3>
+              <button 
+                onClick={() => setExecutionApproval(null)}
+                className="text-[#475069] hover:text-[#0E1726]"
+              >
+                x
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <span className="text-xs text-[#475069] uppercase tracking-wider font-semibold block">Action Payload</span>
+                <span className="text-xs font-mono break-all text-[#0E1726] mt-0.5 block bg-[#F5F7FA] p-2.5 border border-[#E6E9F0] rounded">
+                  {executionApproval.requested_action}
+                </span>
+              </div>
+              <p className="text-[11px] text-[#6B7488] leading-relaxed">
+                Execution requires a fresh MFA code. Reusing the approval code is rejected.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-[#475069] uppercase tracking-wider font-semibold block">Fresh Execution MFA Code</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                placeholder="Enter 6-digit code"
+                value={executionMfaCode}
+                onChange={(e) => setExecutionMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] focus:ring-2 focus:ring-[#6D28D9]/15 transition-colors"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-[#475069] uppercase tracking-wider font-semibold block">Execution Comment</label>
+              <textarea
+                rows={3}
+                placeholder="Why are you executing this approved action now?"
+                value={executionComment}
+                onChange={(e) => setExecutionComment(e.target.value)}
+                className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] transition-colors resize-none"
+              />
+            </div>
+
+            <div className="flex justify-end gap-3 pt-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setExecutionApproval(null)}
+                disabled={actionLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleExecuteConfirm}
+                disabled={actionLoading}
+              >
+                {actionLoading ? 'Verifying...' : 'Confirm Execution'}
               </Button>
             </div>
           </GlassCard>

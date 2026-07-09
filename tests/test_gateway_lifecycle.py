@@ -1,21 +1,31 @@
 import hashlib
 import uuid
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timezone, timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+import conftest
 from approval_store import create_approval, get_approval
 from database import engine
-from main import API_KEY, app
+from main import API_KEY, app, create_jwt, get_hotp_token
 from services.gateway_service import GatewayService
 
 
 client = TestClient(app)
+token = create_jwt(
+    {
+        "sub": conftest.tenant_email,
+        "email": conftest.tenant_email,
+        "tenant_id": conftest.tenant_id,
+        "role": "Super Admin",
+    }
+)
 headers = {
     "X-API-Key": API_KEY,
     "Content-Type": "application/json",
-    "Authorization": f"Bearer {API_KEY}",
+    "Authorization": f"Bearer {token}",
 }
 
 
@@ -26,6 +36,10 @@ def _tenant_id_for_test_key():
             text("SELECT tenant_id FROM tenant_api_keys WHERE key_hash = :hash"),
             {"hash": key_hash},
         ).scalar()
+
+
+def _mfa_code(offset: int = 0) -> str:
+    return get_hotp_token(conftest.totp_secret, int(time.time()) // 30 + offset)
 
 
 def test_gateway_lifecycle_writes_route_decision_audit_and_trace():
@@ -134,6 +148,10 @@ def test_execute_approval_uses_gateway_service_and_records_lifecycle(monkeypatch
     )
     approval["status"] = "approved"
     approval["approved_at"] = datetime.now(timezone.utc).isoformat()
+    approval["approved_by"] = conftest.tenant_email
+    approval["approval_mfa_counter"] = int(time.time()) // 30
+    approval["approval_mfa_verified"] = True
+    approval["execution_expires_at"] = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
 
     calls = []
     original_execute_approval = GatewayService.execute_approval
@@ -147,6 +165,7 @@ def test_execute_approval_uses_gateway_service_and_records_lifecycle(monkeypatch
     response = client.post(
         f"/execute/{approval['approval_id']}",
         headers=headers,
+        json={"mfa_code": _mfa_code(1), "comment": "Execute lifecycle test."},
     )
 
     assert response.status_code == 200

@@ -110,14 +110,20 @@ def _persist_record(record: dict) -> None:
                         created_at, expires_at, approved_at, rejected_at, executed_at,
                         requested_action, query, risk_level, audit_id, reason, comments,
                         approved_by, rejected_by, executed_by, mfa_verified, last_action_at,
-                        metadata
+                        metadata, approval_mfa_verified, execution_mfa_verified,
+                        approval_mfa_binding_hash, execution_mfa_binding_hash,
+                        approval_mfa_counter, execution_mfa_counter,
+                        execution_token_hash, execution_token_used_at, execution_expires_at
                     )
                     VALUES (
                         :approval_id, :request_id, :correlation_id, :tenant_id, :status,
                         :created_at, :expires_at, :approved_at, :rejected_at, :executed_at,
                         :requested_action, :query, :risk_level, :audit_id, :reason, :comments,
                         :approved_by, :rejected_by, :executed_by, :mfa_verified, :last_action_at,
-                        :metadata
+                        :metadata, :approval_mfa_verified, :execution_mfa_verified,
+                        :approval_mfa_binding_hash, :execution_mfa_binding_hash,
+                        :approval_mfa_counter, :execution_mfa_counter,
+                        :execution_token_hash, :execution_token_used_at, :execution_expires_at
                     )
                     ON CONFLICT (approval_id) DO UPDATE SET
                         request_id = EXCLUDED.request_id,
@@ -139,7 +145,16 @@ def _persist_record(record: dict) -> None:
                         executed_by = EXCLUDED.executed_by,
                         mfa_verified = EXCLUDED.mfa_verified,
                         last_action_at = EXCLUDED.last_action_at,
-                        metadata = EXCLUDED.metadata
+                        metadata = EXCLUDED.metadata,
+                        approval_mfa_verified = EXCLUDED.approval_mfa_verified,
+                        execution_mfa_verified = EXCLUDED.execution_mfa_verified,
+                        approval_mfa_binding_hash = EXCLUDED.approval_mfa_binding_hash,
+                        execution_mfa_binding_hash = EXCLUDED.execution_mfa_binding_hash,
+                        approval_mfa_counter = EXCLUDED.approval_mfa_counter,
+                        execution_mfa_counter = EXCLUDED.execution_mfa_counter,
+                        execution_token_hash = EXCLUDED.execution_token_hash,
+                        execution_token_used_at = EXCLUDED.execution_token_used_at,
+                        execution_expires_at = EXCLUDED.execution_expires_at
                     """
                 ),
                 {
@@ -165,6 +180,15 @@ def _persist_record(record: dict) -> None:
                     "mfa_verified": bool(record.get("mfa_verified", False)),
                     "last_action_at": _parse_optional_dt(record.get("last_action_at")),
                     "metadata": json.dumps(record.get("metadata", {})),
+                    "approval_mfa_verified": bool(record.get("approval_mfa_verified", record.get("mfa_verified", False))),
+                    "execution_mfa_verified": bool(record.get("execution_mfa_verified", False)),
+                    "approval_mfa_binding_hash": record.get("approval_mfa_binding_hash"),
+                    "execution_mfa_binding_hash": record.get("execution_mfa_binding_hash"),
+                    "approval_mfa_counter": record.get("approval_mfa_counter"),
+                    "execution_mfa_counter": record.get("execution_mfa_counter"),
+                    "execution_token_hash": record.get("execution_token_hash"),
+                    "execution_token_used_at": _parse_optional_dt(record.get("execution_token_used_at")),
+                    "execution_expires_at": _parse_optional_dt(record.get("execution_expires_at")),
                 },
             )
             conn.commit()
@@ -207,6 +231,15 @@ def _row_to_record(row) -> PersistentApprovalRecord:
             "rejected_by": mapping.get("rejected_by"),
             "executed_by": mapping.get("executed_by"),
             "mfa_verified": bool(mapping.get("mfa_verified")),
+            "approval_mfa_verified": bool(mapping.get("approval_mfa_verified", mapping.get("mfa_verified"))),
+            "execution_mfa_verified": bool(mapping.get("execution_mfa_verified")),
+            "approval_mfa_binding_hash": mapping.get("approval_mfa_binding_hash"),
+            "execution_mfa_binding_hash": mapping.get("execution_mfa_binding_hash"),
+            "approval_mfa_counter": mapping.get("approval_mfa_counter"),
+            "execution_mfa_counter": mapping.get("execution_mfa_counter"),
+            "execution_token_hash": mapping.get("execution_token_hash"),
+            "execution_token_used_at": as_iso(mapping.get("execution_token_used_at")),
+            "execution_expires_at": as_iso(mapping.get("execution_expires_at")),
             "last_action_at": as_iso(mapping.get("last_action_at")),
             "metadata": json.loads(mapping.get("metadata") or "{}"),
         }
@@ -284,6 +317,15 @@ def create_approval(
         "rejected_by":       None,
         "executed_by":       None,
         "mfa_verified":      False,
+        "approval_mfa_verified": False,
+        "execution_mfa_verified": False,
+        "approval_mfa_binding_hash": None,
+        "execution_mfa_binding_hash": None,
+        "approval_mfa_counter": None,
+        "execution_mfa_counter": None,
+        "execution_token_hash": None,
+        "execution_token_used_at": None,
+        "execution_expires_at": None,
         "last_action_at":    now.isoformat(),
         "metadata":          metadata or {},
     })

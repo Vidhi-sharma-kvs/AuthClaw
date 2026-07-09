@@ -93,6 +93,9 @@ def load_and_validate_policy(filepath: str) -> dict:
     expiry_minutes = approval_raw.get("expiry_minutes", 30)
     if not isinstance(expiry_minutes, (int, float)) or expiry_minutes <= 0:
         raise ValueError("approval.expiry_minutes must be a positive number.")
+    execution_expiry_minutes = approval_raw.get("execution_expiry_minutes", 10)
+    if not isinstance(execution_expiry_minutes, (int, float)) or execution_expiry_minutes <= 0:
+        raise ValueError("approval.execution_expiry_minutes must be a positive number.")
 
     sensitive_data_raw = data.get("sensitive_data", {})
     if not isinstance(sensitive_data_raw, dict):
@@ -147,6 +150,7 @@ def load_and_validate_policy(filepath: str) -> dict:
             "require_mfa": require_mfa,
             "default_mfa_code": default_mfa_code,
             "expiry_minutes": int(expiry_minutes),
+            "execution_expiry_minutes": int(execution_expiry_minutes),
         },
         "sensitive_data": {
             "default_action": default_sensitive_action,

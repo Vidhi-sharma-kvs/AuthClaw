@@ -19,13 +19,7 @@ export const getApprovalById = async (id) => {
 };
 
 export const approveApproval = async (id, mfaCode = null, comment = '') => {
-  // If mfaCode is provided, send it in body, else empty string body for legacy compat
-  const hasJsonPayload = Boolean(mfaCode || comment);
-  const config = hasJsonPayload
-    ? { headers: { 'Content-Type': 'application/json' } }
-    : { headers: { 'Content-Type': 'text/plain' } };
-  const payload = hasJsonPayload ? { mfa_code: mfaCode, comment } : "";
-  const response = await apiClient.post(`/approve/${id}`, payload, config);
+  const response = await apiClient.post(`/approve/${id}`, { mfa_code: mfaCode, comment });
   return response.data;
 };
 
@@ -34,7 +28,7 @@ export const rejectApproval = async (id, comment = '') => {
   return response.data;
 };
 
-export const executeApproval = async (id, comment = '') => {
-  const response = await apiClient.post(`/execute/${id}`, { comment });
+export const executeApproval = async (id, mfaCode = null, comment = '') => {
+  const response = await apiClient.post(`/execute/${id}`, { mfa_code: mfaCode, comment });
   return response.data;
 };
