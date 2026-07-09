@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "authclaw-sdk"
-version = "0.1.0"
+version = "1.0.0"
 description = "Python client SDK for the AuthClaw AI security gateway."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -14,13 +14,14 @@ authors = [
 ]
 keywords = ["authclaw", "ai-security", "gateway", "redaction", "compliance"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Typing :: Typed",
 ]
 
 [project.urls]
