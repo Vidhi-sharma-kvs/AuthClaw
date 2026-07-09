@@ -724,6 +724,20 @@ class ProviderConnectRequest(BaseModel):
     live_test: Optional[bool] = None
 
 
+class RemediationConnectorRequest(BaseModel):
+    provider: str
+    name: Optional[str] = None
+    credential_ref: Optional[str] = None
+    role_identifier: Optional[str] = None
+    region: Optional[str] = None
+    scope: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class RemediationScanRequest(BaseModel):
+    connector_id: int
+
+
 class ChatRequest(BaseModel):
     session_id: str
     message: str
@@ -6304,6 +6318,75 @@ def get_governance_analytics(tenant_id: int = Depends(get_authenticated_tenant))
     from services.observability_service import ObservabilityService
 
     return ObservabilityService().governance_analytics(tenant_id)
+
+
+def _remediation_runtime():
+    from services.remediation_runtime import RemediationRuntime
+    return RemediationRuntime()
+
+
+def _remediation_error(exc: Exception):
+    message = str(exc)
+    status_code = 404 if "not found" in message.lower() else 400
+    raise HTTPException(status_code=status_code, detail=message)
+
+
+@app.get("/remediation/connectors")
+def list_remediation_connectors(tenant_id: int = Depends(get_authenticated_tenant)):
+    return _remediation_runtime().list_connectors(tenant_id)
+
+
+@app.post("/remediation/connectors")
+def create_remediation_connector(req: RemediationConnectorRequest, tenant_id: int = Depends(get_authenticated_tenant)):
+    try:
+        return _remediation_runtime().create_connector(tenant_id, req.model_dump())
+    except Exception as exc:
+        _remediation_error(exc)
+
+
+@app.post("/remediation/connectors/{connector_id}/test")
+def test_remediation_connector(connector_id: int, tenant_id: int = Depends(get_authenticated_tenant)):
+    try:
+        return _remediation_runtime().test_connector(tenant_id, connector_id)
+    except Exception as exc:
+        _remediation_error(exc)
+
+
+@app.post("/remediation/scans")
+def run_remediation_scan(req: RemediationScanRequest, tenant_id: int = Depends(get_authenticated_tenant)):
+    try:
+        return _remediation_runtime().run_scan(tenant_id, req.connector_id)
+    except Exception as exc:
+        _remediation_error(exc)
+
+
+@app.get("/remediation/findings")
+def list_remediation_findings(tenant_id: int = Depends(get_authenticated_tenant)):
+    return _remediation_runtime().list_findings(tenant_id)
+
+
+@app.post("/remediation/findings/{finding_id}/plan")
+def create_remediation_plan(finding_id: int, tenant_id: int = Depends(get_authenticated_tenant)):
+    try:
+        return _remediation_runtime().create_plan(tenant_id, finding_id)
+    except Exception as exc:
+        _remediation_error(exc)
+
+
+@app.post("/remediation/plans/{plan_id}/approval")
+def request_remediation_plan_approval(plan_id: int, tenant_id: int = Depends(get_authenticated_tenant)):
+    try:
+        return _remediation_runtime().request_plan_approval(tenant_id, plan_id)
+    except Exception as exc:
+        _remediation_error(exc)
+
+
+@app.get("/remediation/workers/{worker_id}")
+def get_remediation_worker(worker_id: str, tenant_id: int = Depends(get_authenticated_tenant)):
+    try:
+        return _remediation_runtime().get_worker(tenant_id, worker_id)
+    except Exception as exc:
+        _remediation_error(exc)
 
 @app.post("/keys/generate")
 def generate_tenant_api_key(req: KeyGenerateRequest, tenant_id: int = Depends(get_authenticated_tenant)):

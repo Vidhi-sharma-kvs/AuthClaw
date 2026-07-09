@@ -1,27 +1,34 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
   CheckCircle2,
   Cloud,
-  Database,
   ExternalLink,
   GitBranch,
   KeyRound,
   Lock,
-  MessageSquare,
   PlugZap,
   RefreshCw,
-  Server,
   ShieldCheck,
   X,
 } from 'lucide-react';
 import { Button, StatusBadge } from '../../components/Common/DesignSystem';
 import { useToast } from '../../components/Common/Toast';
+import {
+  createRemediationPlan,
+  listRemediationConnectors,
+  listRemediationFindings,
+  requestRemediationApproval,
+  runRemediationScan,
+  saveRemediationConnector,
+  testRemediationConnector,
+} from '../../services/remediationService';
 
 const connectorCatalog = [
   {
     id: 'aws',
+    provider: 'aws',
     name: 'AWS',
     icon: Cloud,
     status: 'Connected',
@@ -32,6 +39,7 @@ const connectorCatalog = [
   },
   {
     id: 'gcp',
+    provider: 'gcp',
     name: 'Google Cloud',
     icon: Cloud,
     status: 'Ready',
@@ -41,73 +49,14 @@ const connectorCatalog = [
     tone: 'violet',
   },
   {
-    id: 'azure',
-    name: 'Azure',
-    icon: Server,
-    status: 'Ready',
-    scope: 'Key Vault, Monitor, Entra ID',
-    lastSync: 'Not synced',
-    region: 'Central India',
-    tone: 'blue',
-  },
-  {
     id: 'github',
+    provider: 'github',
     name: 'GitHub',
     icon: GitBranch,
     status: 'Connected',
     scope: 'Repos read, security events, actions logs',
     lastSync: 'Today 13:22',
     region: 'org: authclaw-labs',
-    tone: 'ink',
-  },
-  {
-    id: 'slack',
-    name: 'Slack',
-    icon: MessageSquare,
-    status: 'Ready',
-    scope: 'Approval alerts, audit notifications',
-    lastSync: 'Not synced',
-    region: '#security-ops',
-    tone: 'violet',
-  },
-  {
-    id: 'jira',
-    name: 'Jira',
-    icon: Activity,
-    status: 'Ready',
-    scope: 'Remediation tickets, approval workflow',
-    lastSync: 'Not synced',
-    region: 'project: SEC',
-    tone: 'blue',
-  },
-  {
-    id: 's3',
-    name: 'Amazon S3',
-    icon: Database,
-    status: 'Ready',
-    scope: 'Evidence vault, redacted exports',
-    lastSync: 'Not synced',
-    region: 'bucket policy pending',
-    tone: 'gold',
-  },
-  {
-    id: 'snowflake',
-    name: 'Snowflake',
-    icon: Database,
-    status: 'Ready',
-    scope: 'Audit analytics warehouse',
-    lastSync: 'Not synced',
-    region: 'account locator pending',
-    tone: 'blue',
-  },
-  {
-    id: 'siem',
-    name: 'SIEM',
-    icon: ShieldCheck,
-    status: 'Ready',
-    scope: 'Security events, policy violations',
-    lastSync: 'Not synced',
-    region: 'syslog/http collector',
     tone: 'ink',
   },
 ];
@@ -122,6 +71,7 @@ const toneStyles = {
 const Connectors = () => {
   const { addToast } = useToast();
   const [connectors, setConnectors] = useState(connectorCatalog);
+  const [findings, setFindings] = useState([]);
   const [activeConnector, setActiveConnector] = useState(null);
   const [form, setForm] = useState({
     credentialRef: '',
@@ -135,44 +85,110 @@ const Connectors = () => {
     [connectors]
   );
 
+  const refreshRuntime = async () => {
+    try {
+      const [savedConnectors, runtimeFindings] = await Promise.all([
+        listRemediationConnectors(),
+        listRemediationFindings(),
+      ]);
+      const byProvider = new Map(savedConnectors.map((connector) => [connector.provider, connector]));
+      setConnectors(
+        connectorCatalog.map((catalog) => {
+          const saved = byProvider.get(catalog.provider);
+          if (!saved) return catalog;
+          return {
+            ...catalog,
+            dbId: saved.id,
+            status: saved.status === 'connected' ? 'Connected' : 'Configured',
+            scope: saved.scope || catalog.scope,
+            region: saved.region || catalog.region,
+            lastSync: saved.last_tested_at ? new Date(saved.last_tested_at).toLocaleString() : 'Configured',
+            credentialRef: saved.credential_ref,
+            roleArn: saved.role_identifier || '',
+          };
+        })
+      );
+      setFindings(runtimeFindings);
+    } catch (error) {
+      console.error(error);
+      addToast('Failed to load remediation runtime state.', 'error');
+    }
+  };
+
+  useEffect(() => {
+    refreshRuntime();
+  }, []);
+
   const openConnector = (connector) => {
     setActiveConnector(connector);
     setForm({
-      credentialRef: `${connector.id}-credential-ref`,
-      roleArn: connector.id === 'aws' ? 'arn:aws:iam::123456789012:role/AuthClawReadOnly' : '',
+      credentialRef: connector.credentialRef || `${connector.provider}-credential-ref`,
+      roleArn: connector.roleArn || (connector.provider === 'aws' ? 'arn:aws:iam::123456789012:role/AuthClawReadOnly' : ''),
       region: connector.region,
       scope: connector.scope,
     });
   };
 
-  const saveConnector = () => {
+  const saveConnector = async () => {
     if (!activeConnector) return;
-    setConnectors((prev) =>
-      prev.map((connector) =>
-        connector.id === activeConnector.id
-          ? {
-              ...connector,
-              status: 'Connected',
-              scope: form.scope || connector.scope,
-              region: form.region || connector.region,
-              lastSync: 'Just now',
-            }
-          : connector
-      )
-    );
-    addToast(`${activeConnector.name} connector saved.`, 'success');
-    setActiveConnector(null);
+    try {
+      await saveRemediationConnector({
+        provider: activeConnector.provider,
+        name: activeConnector.name,
+        credential_ref: form.credentialRef,
+        role_identifier: form.roleArn,
+        region: form.region,
+        scope: form.scope,
+      });
+      addToast(`${activeConnector.name} connector saved.`, 'success');
+      setActiveConnector(null);
+      refreshRuntime();
+    } catch (error) {
+      console.error(error);
+      addToast('Connector save failed.', 'error');
+    }
   };
 
-  const testConnector = (connectorId) => {
-    setConnectors((prev) =>
-      prev.map((connector) =>
-        connector.id === connectorId
-          ? { ...connector, status: 'Connected', lastSync: 'Just now' }
-          : connector
-      )
-    );
-    addToast('Connector handshake completed.', 'success');
+  const testConnector = async (connector) => {
+    if (!connector.dbId) {
+      addToast('Save the connector before testing it.', 'error');
+      return;
+    }
+    try {
+      await testRemediationConnector(connector.dbId);
+      addToast('Connector handshake completed.', 'success');
+      refreshRuntime();
+    } catch (error) {
+      console.error(error);
+      addToast('Connector handshake failed.', 'error');
+    }
+  };
+
+  const scanConnector = async (connector) => {
+    if (!connector.dbId) {
+      addToast('Save the connector before scanning.', 'error');
+      return;
+    }
+    try {
+      const result = await runRemediationScan(connector.dbId);
+      addToast(`Read-only scan created ${result.findings.length} findings.`, 'success');
+      refreshRuntime();
+    } catch (error) {
+      console.error(error);
+      addToast('Read-only scan failed.', 'error');
+    }
+  };
+
+  const requestApprovalForFinding = async (findingId) => {
+    try {
+      const plan = await createRemediationPlan(findingId);
+      const approval = await requestRemediationApproval(plan.id);
+      addToast(`Approval requested: ${approval.approval_id.slice(0, 8)}`, 'success');
+      refreshRuntime();
+    } catch (error) {
+      console.error(error);
+      addToast('Failed to request remediation approval.', 'error');
+    }
   };
 
   return (
@@ -256,11 +272,19 @@ const Connectors = () => {
               <div className="mt-5 flex items-center justify-between gap-3 border-t border-[#E6E9F0] pt-4">
                 <button
                   type="button"
-                  onClick={() => testConnector(connector.id)}
+                  onClick={() => testConnector(connector)}
                   className="auth-btn-soft inline-flex items-center gap-2 px-3 py-2 text-xs font-bold"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
                   Test
+                </button>
+                <button
+                  type="button"
+                  onClick={() => scanConnector(connector)}
+                  className="auth-btn-soft inline-flex items-center gap-2 px-3 py-2 text-xs font-bold"
+                >
+                  <Activity className="h-3.5 w-3.5" />
+                  Scan
                 </button>
                 <button
                   type="button"
@@ -294,6 +318,44 @@ const Connectors = () => {
             Trust Center
             <ExternalLink className="h-4 w-4" />
           </a>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-[#E6E9F0] bg-white/85 p-5">
+        <div className="flex flex-col gap-2 border-b border-[#E6E9F0] pb-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-base font-bold text-[#0E1726] font-display">Remediation Findings</h2>
+            <p className="text-sm text-[#475069]">Read-only worker scans create findings. Plan creation is non-destructive; execution waits for HITL approval.</p>
+          </div>
+          <StatusBadge status={`${findings.length} Findings`} />
+        </div>
+        <div className="mt-4 grid gap-3">
+          {findings.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-[#E6E9F0] bg-[#F5F7FA]/70 p-5 text-sm text-[#6B7488]">
+              No findings yet. Run a read-only scan from a configured connector.
+            </div>
+          ) : (
+            findings.slice(0, 8).map((finding) => (
+              <div key={finding.id} className="rounded-lg border border-[#E6E9F0] bg-white p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StatusBadge status={finding.provider?.toUpperCase() || 'Provider'} />
+                      <StatusBadge status={finding.severity || 'MEDIUM'} />
+                      <StatusBadge status={finding.status || 'open'} />
+                    </div>
+                    <h3 className="mt-2 text-sm font-bold text-[#0E1726]">{finding.finding}</h3>
+                    <p className="mt-1 text-xs text-[#475069]">{finding.recommendation}</p>
+                    <p className="mt-1 font-mono text-[11px] text-[#6B7488]">{finding.resource_id}</p>
+                  </div>
+                  <Button size="sm" onClick={() => requestApprovalForFinding(finding.id)}>
+                    <ShieldCheck className="h-4 w-4" />
+                    Plan + Request Approval
+                  </Button>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </section>
 

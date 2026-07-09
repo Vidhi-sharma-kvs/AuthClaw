@@ -609,6 +609,99 @@ def run_startup_migrations():
         approval_status VARCHAR(20) DEFAULT 'pending'
     );
 
+    ALTER TABLE remediation_findings ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+    ALTER TABLE remediation_findings ADD COLUMN IF NOT EXISTS connector_id INTEGER;
+    ALTER TABLE remediation_findings ADD COLUMN IF NOT EXISTS provider VARCHAR(50);
+    ALTER TABLE remediation_findings ADD COLUMN IF NOT EXISTS resource_id VARCHAR(255);
+    ALTER TABLE remediation_findings ADD COLUMN IF NOT EXISTS finding_type VARCHAR(100);
+    ALTER TABLE remediation_findings ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'open';
+    ALTER TABLE remediation_findings ADD COLUMN IF NOT EXISTS worker_id VARCHAR(100);
+    ALTER TABLE remediation_findings ADD COLUMN IF NOT EXISTS evidence TEXT;
+    ALTER TABLE remediation_findings ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+    ALTER TABLE remediation_findings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+
+    CREATE TABLE IF NOT EXISTS remediation_connectors (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        provider VARCHAR(50) NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        credential_ref TEXT NOT NULL,
+        role_identifier TEXT,
+        region VARCHAR(100),
+        scope TEXT,
+        status VARCHAR(50) DEFAULT 'configured',
+        health_message TEXT,
+        last_tested_at TIMESTAMP,
+        metadata TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT uniq_remediation_connector UNIQUE(tenant_id, provider, name)
+    );
+
+    CREATE TABLE IF NOT EXISTS worker_credential_leases (
+        lease_id VARCHAR(100) PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        connector_id INTEGER REFERENCES remediation_connectors(id) ON DELETE CASCADE,
+        provider VARCHAR(50) NOT NULL,
+        scope TEXT NOT NULL,
+        token_hash VARCHAR(64) NOT NULL,
+        issued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL,
+        revoked_at TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS remediation_worker_runs (
+        worker_id VARCHAR(100) PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        connector_id INTEGER REFERENCES remediation_connectors(id) ON DELETE SET NULL,
+        provider VARCHAR(50) NOT NULL,
+        mode VARCHAR(50) NOT NULL,
+        status VARCHAR(50) NOT NULL,
+        credential_lease_id VARCHAR(100) REFERENCES worker_credential_leases(lease_id) ON DELETE SET NULL,
+        finding_id INTEGER,
+        plan_id INTEGER,
+        approval_id VARCHAR(100),
+        started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        completed_at TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL,
+        logs TEXT,
+        evidence TEXT,
+        error TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS remediation_plans (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        finding_id INTEGER REFERENCES remediation_findings(id) ON DELETE CASCADE,
+        connector_id INTEGER REFERENCES remediation_connectors(id) ON DELETE SET NULL,
+        provider VARCHAR(50) NOT NULL,
+        resource_id VARCHAR(255) NOT NULL,
+        proposed_action VARCHAR(100) NOT NULL,
+        risk_level VARCHAR(20) NOT NULL,
+        rollback_plan TEXT NOT NULL,
+        evidence_requirements TEXT NOT NULL,
+        status VARCHAR(50) DEFAULT 'planned',
+        approval_id VARCHAR(100),
+        plan_payload TEXT NOT NULL,
+        execution_evidence TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS remediation_worker_audit_events (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        worker_id VARCHAR(100),
+        connector_id INTEGER,
+        finding_id INTEGER,
+        plan_id INTEGER,
+        approval_id VARCHAR(100),
+        event_type VARCHAR(100) NOT NULL,
+        details TEXT NOT NULL,
+        metadata TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Access Control Users & Roles
     CREATE TABLE IF NOT EXISTS user_roles (
         id SERIAL PRIMARY KEY,
@@ -826,6 +919,11 @@ def run_startup_migrations():
     CREATE INDEX IF NOT EXISTS idx_policy_change_approvals_tenant_policy ON policy_change_approvals(tenant_id, policy_id, status);
     CREATE INDEX IF NOT EXISTS idx_policy_simulation_results_tenant_policy ON policy_simulation_results(tenant_id, policy_id);
     CREATE INDEX IF NOT EXISTS idx_policy_evaluation_audit_tenant_request ON policy_evaluation_audit(tenant_id, request_id);
+    CREATE INDEX IF NOT EXISTS idx_remediation_connectors_tenant ON remediation_connectors(tenant_id, provider);
+    CREATE INDEX IF NOT EXISTS idx_remediation_findings_tenant ON remediation_findings(tenant_id, status);
+    CREATE INDEX IF NOT EXISTS idx_remediation_plans_tenant ON remediation_plans(tenant_id, finding_id);
+    CREATE INDEX IF NOT EXISTS idx_remediation_worker_runs_tenant ON remediation_worker_runs(tenant_id, status);
+    CREATE INDEX IF NOT EXISTS idx_worker_credential_leases_tenant ON worker_credential_leases(tenant_id, connector_id);
     CREATE INDEX IF NOT EXISTS idx_knowledge_documents_tenant_id ON knowledge_documents(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_tenant_document ON knowledge_chunks(tenant_id, document_id);
     CREATE INDEX IF NOT EXISTS idx_documents_tenant_id ON documents(tenant_id);
@@ -1062,6 +1160,42 @@ def run_startup_migrations():
     CREATE POLICY tenant_isolation_compliance_evidence ON compliance_evidence
         USING (tenant_id::text = current_setting('app.tenant_id', true))
         WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE remediation_connectors ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_remediation_connectors ON remediation_connectors;
+    CREATE POLICY tenant_isolation_remediation_connectors ON remediation_connectors
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE remediation_findings ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_remediation_findings ON remediation_findings;
+    CREATE POLICY tenant_isolation_remediation_findings ON remediation_findings
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE remediation_plans ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_remediation_plans ON remediation_plans;
+    CREATE POLICY tenant_isolation_remediation_plans ON remediation_plans
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE remediation_worker_runs ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_remediation_worker_runs ON remediation_worker_runs;
+    CREATE POLICY tenant_isolation_remediation_worker_runs ON remediation_worker_runs
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE worker_credential_leases ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_worker_credential_leases ON worker_credential_leases;
+    CREATE POLICY tenant_isolation_worker_credential_leases ON worker_credential_leases
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE remediation_worker_audit_events ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_remediation_worker_audit_events ON remediation_worker_audit_events;
+    CREATE POLICY tenant_isolation_remediation_worker_audit_events ON remediation_worker_audit_events
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
     """
     force_rls_sql = """
     ALTER TABLE audit_logs FORCE ROW LEVEL SECURITY;
@@ -1097,6 +1231,12 @@ def run_startup_migrations():
     ALTER TABLE chat_messages FORCE ROW LEVEL SECURITY;
     ALTER TABLE secrets FORCE ROW LEVEL SECURITY;
     ALTER TABLE compliance_evidence FORCE ROW LEVEL SECURITY;
+    ALTER TABLE remediation_connectors FORCE ROW LEVEL SECURITY;
+    ALTER TABLE remediation_findings FORCE ROW LEVEL SECURITY;
+    ALTER TABLE remediation_plans FORCE ROW LEVEL SECURITY;
+    ALTER TABLE remediation_worker_runs FORCE ROW LEVEL SECURITY;
+    ALTER TABLE worker_credential_leases FORCE ROW LEVEL SECURITY;
+    ALTER TABLE remediation_worker_audit_events FORCE ROW LEVEL SECURITY;
     """
     try:
         with engine.connect() as conn:
