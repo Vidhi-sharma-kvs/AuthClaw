@@ -6,7 +6,7 @@ psycopg2-binary
 pydantic
 python-dotenv
 pyyaml
-cryptography
+cryptography>=48.0.1
 requests
 redis
 dnspython
