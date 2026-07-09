@@ -123,21 +123,21 @@ jobs:
       - name: Build frontend image
         run: docker build -t authclaw-frontend:ci -f frontend/Dockerfile frontend
       - name: Scan backend image
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: authclaw-api:ci
           format: table
           severity: CRITICAL,HIGH
           exit-code: "1"
       - name: Scan Go gateway image
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: authclaw-gateway:ci
           format: table
           severity: CRITICAL,HIGH
           exit-code: "1"
       - name: Scan frontend image
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: authclaw-frontend:ci
           format: table
