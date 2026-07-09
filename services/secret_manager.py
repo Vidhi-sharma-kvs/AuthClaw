@@ -86,6 +86,22 @@ def _is_production() -> bool:
     return os.getenv("AUTHCLAW_ENV", "development").lower() in {"production", "prod"}
 
 
+def select_secret_backend(requested: Optional[str] = None) -> str:
+    explicit = (requested or os.getenv("AUTHCLAW_SECRET_BACKEND") or "").strip().lower()
+    if explicit in {"local_env", "local"} and _truthy(os.getenv("AWS_SECRETS_MANAGER_ENABLED")):
+        return "aws_secrets_manager"
+    if explicit and explicit not in {"auto", "automatic"}:
+        return explicit
+    auto_requested = explicit in {"auto", "automatic"}
+    if os.getenv("VAULT_ADDR") and os.getenv("VAULT_TOKEN"):
+        return "hashicorp_vault"
+    if _truthy(os.getenv("AWS_SECRETS_MANAGER_ENABLED")) or (
+        auto_requested and (os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION"))
+    ):
+        return "aws_secrets_manager"
+    return "local_env"
+
+
 def _safe_error(name: str, detail: str) -> SecretManagerError:
     return SecretManagerError(f"Secret '{name}' {detail}.")
 
@@ -100,11 +116,17 @@ class SecretManager:
     """
 
     def __init__(self, backend: Optional[str] = None):
-        requested = (backend or os.getenv("AUTHCLAW_SECRET_BACKEND") or "").strip().lower()
-        if (not requested or requested in {"local_env", "local"}) and _truthy(os.getenv("AWS_SECRETS_MANAGER_ENABLED")):
-            requested = "aws_secrets_manager"
-        self.backend = requested or "local_env"
+        self.backend = select_secret_backend(backend)
         self.region_name = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION")
+
+    def selection_policy(self) -> Dict[str, Any]:
+        return {
+            "requested_backend": (os.getenv("AUTHCLAW_SECRET_BACKEND") or "auto").strip().lower(),
+            "selected_backend": self.backend,
+            "fallback_hierarchy": ["hashicorp_vault", "aws_secrets_manager", "local_env"],
+            "production_allows_local": not _is_production(),
+            "rotation_supported": self.backend in {"local_env", "local", "aws_secrets_manager", "hashicorp_vault", "vault"},
+        }
 
     def get_secret(self, name: str) -> Optional[str]:
         if self.backend in {"local_env", "local"}:

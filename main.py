@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException, Response, status, Request, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
@@ -33,6 +33,17 @@ from services.gateway_service import (
     GatewayProviderConfigurationError,
     GatewayProviderUnavailableError,
     GatewayService,
+)
+from services.enterprise_identity import (
+    EnterpriseIdentityError,
+    complete_oidc_callback,
+    create_authorization_request,
+    list_provider_configs,
+    public_jwks,
+    revoke_authclaw_refresh_token,
+    security_posture,
+    set_provider_enabled,
+    upsert_provider_config,
 )
 from services.tenant_context import auth_lookup_context, get_current_tenant_id, tenant_context
 
@@ -99,6 +110,56 @@ def _feature_enabled(name: str, default: bool = False) -> bool:
     if raw_value is None:
         return default
     return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_production_env() -> bool:
+    return os.getenv("AUTHCLAW_ENV", "development").strip().lower() in {"production", "prod"}
+
+
+def _https_enforcement_enabled() -> bool:
+    return _is_production_env() or _feature_enabled("AUTHCLAW_ENFORCE_HTTPS", False)
+
+
+def _local_request_host(host: str) -> bool:
+    hostname = (host or "").split(":", 1)[0].lower()
+    return hostname in {"localhost", "127.0.0.1", "::1", "testserver"}
+
+
+def _mark_set_cookie_headers_secure(response: Response) -> None:
+    raw_headers = []
+    for name, value in response.raw_headers:
+        if name.lower() == b"set-cookie":
+            cookie = value.decode("latin-1")
+            lower_cookie = cookie.lower()
+            if "secure" not in lower_cookie:
+                cookie += "; Secure"
+            if "samesite" not in lower_cookie:
+                cookie += "; SameSite=Lax"
+            raw_headers.append((name, cookie.encode("latin-1")))
+        else:
+            raw_headers.append((name, value))
+    response.raw_headers = raw_headers
+
+
+@app.middleware("http")
+async def production_security_middleware(request: Request, call_next):
+    enforce_https = _https_enforcement_enabled()
+    forwarded_proto = request.headers.get("X-Forwarded-Proto", "").split(",", 1)[0].strip().lower()
+    scheme = forwarded_proto or request.url.scheme
+    host = request.headers.get("host", "")
+
+    if enforce_https and scheme == "http" and not _local_request_host(host):
+        target = request.url.replace(scheme="https")
+        return RedirectResponse(str(target), status_code=status.HTTP_308_PERMANENT_REDIRECT)
+
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if enforce_https and not _local_request_host(host):
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        _mark_set_cookie_headers_secure(response)
+    return response
 
 
 def _gateway_runtime_path(path: str) -> bool:
@@ -4311,6 +4372,34 @@ class PasswordResetConfirmRequest(BaseModel):
 class RefreshRequest(BaseModel):
     refresh_token: str
 
+class OIDCProviderConfigRequest(BaseModel):
+    id: Optional[int] = None
+    provider_type: str = "generic_oidc"
+    display_name: Optional[str] = None
+    client_id: str
+    client_secret: str
+    discovery_url: Optional[str] = None
+    issuer: Optional[str] = None
+    authorization_endpoint: Optional[str] = None
+    token_endpoint: Optional[str] = None
+    userinfo_endpoint: Optional[str] = None
+    jwks_uri: Optional[str] = None
+    redirect_uri: str
+    scopes: Optional[str] = None
+    groups_claim: Optional[str] = "groups"
+    role_mapping: Optional[dict] = None
+    enabled: bool = True
+
+class OIDCProviderEnableRequest(BaseModel):
+    enabled: bool
+
+class OIDCCallbackRequest(BaseModel):
+    state: str
+    code: str
+
+class LogoutRequest(BaseModel):
+    refresh_token: Optional[str] = None
+
 JWT_SECRET = SecretManager().get_secret("JWT_SECRET") or SecretManager().get_secret("AUTHCLAW_JWT_SECRET")
 if not JWT_SECRET:
     raise RuntimeError("JWT secret is not available through the AuthClaw SecretManager.")
@@ -4519,6 +4608,152 @@ def validate_refresh_token_record(payload: dict):
     return row
 
 
+def _tenant_id_from_domain(domain: Optional[str]) -> Optional[int]:
+    if not domain:
+        return None
+    from database import engine
+    from sqlalchemy import text
+
+    with auth_lookup_context(), engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT id FROM tenants WHERE lower(domain) = lower(:domain) AND status = 'active' LIMIT 1"),
+            {"domain": domain},
+        ).fetchone()
+    return row[0] if row else None
+
+
+def _public_oidc_providers_for_tenant(tenant_id: int) -> List[dict]:
+    providers = list_provider_configs(tenant_id)
+    return [
+        {
+            "id": provider["id"],
+            "provider_type": provider["provider_type"],
+            "display_name": provider["display_name"],
+            "issuer": provider["issuer"],
+            "enabled": provider["enabled"],
+            "scopes": provider["scopes"],
+        }
+        for provider in providers
+        if provider.get("enabled")
+    ]
+
+
+@app.get("/.well-known/jwks.json")
+def jwks_metadata():
+    return public_jwks()
+
+
+@app.get("/auth/jwks")
+def auth_jwks_metadata():
+    return public_jwks()
+
+
+@app.get("/auth/oidc/providers")
+def oidc_public_providers(tenant_id: Optional[int] = None, domain: Optional[str] = None):
+    resolved_tenant_id = tenant_id or _tenant_id_from_domain(domain)
+    if not resolved_tenant_id:
+        raise HTTPException(status_code=400, detail="tenant_id or domain is required.")
+    try:
+        return {"tenant_id": resolved_tenant_id, "providers": _public_oidc_providers_for_tenant(resolved_tenant_id)}
+    except EnterpriseIdentityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/auth/oidc/login")
+def oidc_login(tenant_id: int, provider_id: int):
+    try:
+        return create_authorization_request(tenant_id, provider_id)
+    except EnterpriseIdentityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _complete_oidc_login_response(state: str, code: str) -> dict:
+    try:
+        result = complete_oidc_callback(state, code)
+    except EnterpriseIdentityError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    profile = result["profile"]
+    now_ts = int(time.time())
+    access_payload = {
+        "sub": profile["email"],
+        "email": profile["email"],
+        "tenant_id": profile["tenant_id"],
+        "user_id": profile["user_id"],
+        "role": profile["role"],
+        "permissions": profile["permissions"],
+        "auth_source": "oidc",
+        "iat": now_ts,
+        "exp": now_ts + 3600,
+    }
+    access_token = create_jwt(access_payload)
+    refresh_token = create_refresh_token_for_user(profile["user_id"], profile["tenant_id"], profile["email"])
+    return {
+        "status": "success",
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "expires_in": 3600,
+        "mfa_required": False,
+        "auth_source": "oidc",
+        "user": {
+            "email": profile["email"],
+            "tenant_id": profile["tenant_id"],
+            "user_id": profile["user_id"],
+            "role": profile["role"],
+            "permissions": profile["permissions"],
+        },
+        "provider": result["provider"],
+        "provider_refresh_token_stored": result["provider_refresh_token_stored"],
+    }
+
+
+@app.get("/auth/oidc/callback")
+def oidc_callback_get(state: str, code: str):
+    return _complete_oidc_login_response(state, code)
+
+
+@app.post("/auth/oidc/callback")
+def oidc_callback_post(req: OIDCCallbackRequest):
+    return _complete_oidc_login_response(req.state, req.code)
+
+
+@app.post("/auth/logout")
+def auth_logout(req: LogoutRequest):
+    revoked = False
+    if req.refresh_token:
+        revoked = revoke_authclaw_refresh_token(req.refresh_token)
+    return {"status": "success", "refresh_token_revoked": revoked}
+
+
+@app.get("/identity/providers")
+def identity_provider_list(payload: dict = Depends(require_tenant_access_admin)):
+    return list_provider_configs(payload["tenant_id"])
+
+
+@app.post("/identity/providers")
+def identity_provider_upsert(req: OIDCProviderConfigRequest, payload: dict = Depends(require_tenant_access_admin)):
+    try:
+        request_payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+        return upsert_provider_config(payload["tenant_id"], request_payload)
+    except EnterpriseIdentityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/identity/providers/{provider_id}/enabled")
+def identity_provider_enabled(provider_id: int, req: OIDCProviderEnableRequest, payload: dict = Depends(require_tenant_access_admin)):
+    try:
+        return set_provider_enabled(payload["tenant_id"], provider_id, req.enabled)
+    except EnterpriseIdentityError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/security/posture")
+def phase1_security_posture(payload: dict = Depends(require_tenant_access_admin)):
+    posture = security_posture()
+    posture["tenant_id"] = payload["tenant_id"]
+    return posture
+
+
 def deliver_auth_email(recipient: str, subject: str, body: str, purpose: str) -> None:
     import smtplib
     from email.message import EmailMessage
@@ -4725,6 +4960,8 @@ def env_bool(name: str, default: bool = False) -> bool:
 
 
 def skip_email_delivery_for_testing() -> bool:
+    if env_value("AUTHCLAW_ENV", "development").lower() in {"production", "prod"}:
+        return False
     return env_bool("SKIP_EMAIL_DELIVERY_FOR_TESTING")
 
 
@@ -4734,6 +4971,8 @@ def soft_fail_email_delivery_for_local() -> bool:
 
 
 def skip_domain_verification_for_testing() -> bool:
+    if env_value("AUTHCLAW_ENV", "development").lower() in {"production", "prod"}:
+        return False
     return env_bool("SKIP_DOMAIN_VERIFICATION")
 
 

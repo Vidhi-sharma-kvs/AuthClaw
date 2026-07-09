@@ -235,6 +235,88 @@ def run_startup_migrations():
         used_at TIMESTAMP
     );
 
+    -- Tenant Enterprise Identity Provider Configuration (OIDC / SSO)
+    CREATE TABLE IF NOT EXISTS tenant_identity_providers (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        provider_type VARCHAR(50) NOT NULL,
+        display_name VARCHAR(255) NOT NULL,
+        client_id VARCHAR(255) NOT NULL,
+        encrypted_client_secret TEXT NOT NULL,
+        discovery_url TEXT,
+        issuer TEXT NOT NULL,
+        authorization_endpoint TEXT NOT NULL,
+        token_endpoint TEXT NOT NULL,
+        userinfo_endpoint TEXT,
+        jwks_uri TEXT NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        scopes TEXT DEFAULT 'openid email profile offline_access',
+        groups_claim VARCHAR(100) DEFAULT 'groups',
+        role_mapping TEXT DEFAULT '{}',
+        enabled BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT uniq_tenant_identity_provider_client UNIQUE(tenant_id, provider_type, client_id)
+    );
+
+    ALTER TABLE tenant_identity_providers ADD COLUMN IF NOT EXISTS provider_type VARCHAR(50);
+    ALTER TABLE tenant_identity_providers ADD COLUMN IF NOT EXISTS display_name VARCHAR(255);
+    ALTER TABLE tenant_identity_providers ADD COLUMN IF NOT EXISTS client_id VARCHAR(255);
+    ALTER TABLE tenant_identity_providers ADD COLUMN IF NOT EXISTS encrypted_client_secret TEXT;
+    ALTER TABLE tenant_identity_providers ADD COLUMN IF NOT EXISTS discovery_url TEXT;
+    ALTER TABLE tenant_identity_providers ADD COLUMN IF NOT EXISTS issuer TEXT;
+    ALTER TABLE tenant_identity_providers ADD COLUMN IF NOT EXISTS authorization_endpoint TEXT;
+    ALTER TABLE tenant_identity_providers ADD COLUMN IF NOT EXISTS token_endpoint TEXT;
+    ALTER TABLE tenant_identity_providers ADD COLUMN IF NOT EXISTS userinfo_endpoint TEXT;
+    ALTER TABLE tenant_identity_providers ADD COLUMN IF NOT EXISTS jwks_uri TEXT;
+    ALTER TABLE tenant_identity_providers ADD COLUMN IF NOT EXISTS redirect_uri TEXT;
+    ALTER TABLE tenant_identity_providers ADD COLUMN IF NOT EXISTS scopes TEXT DEFAULT 'openid email profile offline_access';
+    ALTER TABLE tenant_identity_providers ADD COLUMN IF NOT EXISTS groups_claim VARCHAR(100) DEFAULT 'groups';
+    ALTER TABLE tenant_identity_providers ADD COLUMN IF NOT EXISTS role_mapping TEXT DEFAULT '{}';
+    ALTER TABLE tenant_identity_providers ADD COLUMN IF NOT EXISTS enabled BOOLEAN DEFAULT TRUE;
+    ALTER TABLE tenant_identity_providers ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+    ALTER TABLE tenant_identity_providers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+
+    CREATE TABLE IF NOT EXISTS oidc_login_states (
+        state_hash VARCHAR(64) PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        provider_id INTEGER REFERENCES tenant_identity_providers(id) ON DELETE CASCADE,
+        code_verifier TEXT NOT NULL,
+        nonce VARCHAR(255) NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL,
+        used_at TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS oidc_jwks_cache (
+        provider_id INTEGER PRIMARY KEY REFERENCES tenant_identity_providers(id) ON DELETE CASCADE,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        jwks_json TEXT NOT NULL,
+        refreshed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL,
+        last_error TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS oidc_user_sessions (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        provider_id INTEGER REFERENCES tenant_identity_providers(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES tenant_users(id) ON DELETE CASCADE,
+        provider_subject VARCHAR(255),
+        encrypted_provider_refresh_token TEXT,
+        token_version INTEGER DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        revoked_at TIMESTAMP,
+        CONSTRAINT uniq_oidc_provider_user_session UNIQUE(provider_id, user_id)
+    );
+
+    ALTER TABLE oidc_user_sessions ADD COLUMN IF NOT EXISTS provider_subject VARCHAR(255);
+    ALTER TABLE oidc_user_sessions ADD COLUMN IF NOT EXISTS encrypted_provider_refresh_token TEXT;
+    ALTER TABLE oidc_user_sessions ADD COLUMN IF NOT EXISTS token_version INTEGER DEFAULT 1;
+    ALTER TABLE oidc_user_sessions ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP;
+
     -- Provider Credentials (Encrypted)
     CREATE TABLE IF NOT EXISTS tenant_credentials (
         id SERIAL PRIMARY KEY,
@@ -707,6 +789,11 @@ def run_startup_migrations():
     CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_tenant_id ON auth_refresh_tokens(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_auth_mfa_sessions_tenant_id ON auth_mfa_sessions(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_auth_password_reset_tokens_user ON auth_password_reset_tokens(tenant_id, user_id, expires_at);
+    CREATE INDEX IF NOT EXISTS idx_tenant_identity_providers_tenant_id ON tenant_identity_providers(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_tenant_identity_providers_enabled ON tenant_identity_providers(tenant_id, enabled);
+    CREATE INDEX IF NOT EXISTS idx_oidc_login_states_tenant_provider ON oidc_login_states(tenant_id, provider_id, expires_at);
+    CREATE INDEX IF NOT EXISTS idx_oidc_jwks_cache_tenant_id ON oidc_jwks_cache(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_oidc_user_sessions_tenant_user ON oidc_user_sessions(tenant_id, user_id);
     CREATE INDEX IF NOT EXISTS idx_tenant_credentials_tenant_id ON tenant_credentials(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_tenant_credentials_provider ON tenant_credentials(tenant_id, provider);
     CREATE INDEX IF NOT EXISTS idx_agent_events_tenant_id ON agent_events(tenant_id);
@@ -798,6 +885,39 @@ def run_startup_migrations():
             tenant_id::text = current_setting('app.tenant_id', true)
             OR current_setting('app.auth_lookup', true) = 'on'
         );
+
+    ALTER TABLE tenant_identity_providers ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_tenant_identity_providers ON tenant_identity_providers;
+    CREATE POLICY tenant_isolation_tenant_identity_providers ON tenant_identity_providers
+        USING (
+            tenant_id::text = current_setting('app.tenant_id', true)
+            OR current_setting('app.auth_lookup', true) = 'on'
+        )
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE oidc_login_states ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_oidc_login_states ON oidc_login_states;
+    CREATE POLICY tenant_isolation_oidc_login_states ON oidc_login_states
+        USING (
+            tenant_id::text = current_setting('app.tenant_id', true)
+            OR current_setting('app.auth_lookup', true) = 'on'
+        )
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE oidc_jwks_cache ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_oidc_jwks_cache ON oidc_jwks_cache;
+    CREATE POLICY tenant_isolation_oidc_jwks_cache ON oidc_jwks_cache
+        USING (
+            tenant_id::text = current_setting('app.tenant_id', true)
+            OR current_setting('app.auth_lookup', true) = 'on'
+        )
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE oidc_user_sessions ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_oidc_user_sessions ON oidc_user_sessions;
+    CREATE POLICY tenant_isolation_oidc_user_sessions ON oidc_user_sessions
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
 
     ALTER TABLE tenant_credentials ENABLE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation_tenant_credentials ON tenant_credentials;
@@ -934,6 +1054,10 @@ def run_startup_migrations():
     ALTER TABLE auth_refresh_tokens FORCE ROW LEVEL SECURITY;
     ALTER TABLE auth_mfa_sessions FORCE ROW LEVEL SECURITY;
     ALTER TABLE auth_password_reset_tokens FORCE ROW LEVEL SECURITY;
+    ALTER TABLE tenant_identity_providers FORCE ROW LEVEL SECURITY;
+    ALTER TABLE oidc_login_states FORCE ROW LEVEL SECURITY;
+    ALTER TABLE oidc_jwks_cache FORCE ROW LEVEL SECURITY;
+    ALTER TABLE oidc_user_sessions FORCE ROW LEVEL SECURITY;
     ALTER TABLE tenant_credentials FORCE ROW LEVEL SECURITY;
     ALTER TABLE agent_events FORCE ROW LEVEL SECURITY;
     ALTER TABLE gateway_approvals FORCE ROW LEVEL SECURITY;
