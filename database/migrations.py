@@ -811,6 +811,70 @@ def run_startup_migrations():
         activated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS event_delivery_records (
+        id SERIAL PRIMARY KEY,
+        event_id VARCHAR(160) NOT NULL UNIQUE,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        stream VARCHAR(50) NOT NULL,
+        topic VARCHAR(160) NOT NULL,
+        source VARCHAR(100),
+        status VARCHAR(40) NOT NULL DEFAULT 'queued',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_retry_at TIMESTAMP,
+        delivered_at TIMESTAMP,
+        error_message TEXT,
+        payload TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS event_dead_letters (
+        id SERIAL PRIMARY KEY,
+        event_id VARCHAR(160) NOT NULL UNIQUE,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        stream VARCHAR(50) NOT NULL,
+        topic VARCHAR(160) NOT NULL,
+        payload TEXT NOT NULL,
+        error_message TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        resolved_at TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS event_consumer_checkpoints (
+        id SERIAL PRIMARY KEY,
+        stream VARCHAR(50) NOT NULL,
+        consumer_group VARCHAR(120) NOT NULL,
+        pending_events INTEGER NOT NULL DEFAULT 0,
+        dead_letter_count INTEGER NOT NULL DEFAULT 0,
+        lag_seconds INTEGER NOT NULL DEFAULT 0,
+        last_delivered_at TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(stream, consumer_group)
+    );
+
+    CREATE TABLE IF NOT EXISTS rate_limit_events (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        limiter_key VARCHAR(200) NOT NULL,
+        limit_count INTEGER NOT NULL,
+        remaining INTEGER NOT NULL,
+        backend VARCHAR(40) NOT NULL,
+        allowed BOOLEAN NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS worker_throttle_events (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        worker_type VARCHAR(80) NOT NULL,
+        throttle_key VARCHAR(200) NOT NULL,
+        limit_count INTEGER NOT NULL,
+        active_count INTEGER NOT NULL,
+        allowed BOOLEAN NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
     ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS corpus_version VARCHAR(50);
     ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS corpus_version VARCHAR(50);
     ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS vector_backend VARCHAR(100) DEFAULT 'postgres_json';
@@ -1003,6 +1067,11 @@ def run_startup_migrations():
     CREATE INDEX IF NOT EXISTS idx_compliance_control_evidence_tenant ON compliance_control_evidence(tenant_id, framework, control_id);
     CREATE INDEX IF NOT EXISTS idx_compliance_control_scores_tenant ON compliance_control_scores(tenant_id, framework);
     CREATE INDEX IF NOT EXISTS idx_compliance_score_changes_tenant ON compliance_score_changes(tenant_id, framework, created_at);
+    CREATE INDEX IF NOT EXISTS idx_event_delivery_records_status ON event_delivery_records(status, stream, created_at);
+    CREATE INDEX IF NOT EXISTS idx_event_delivery_records_tenant ON event_delivery_records(tenant_id, stream, status);
+    CREATE INDEX IF NOT EXISTS idx_event_dead_letters_tenant ON event_dead_letters(tenant_id, stream, created_at);
+    CREATE INDEX IF NOT EXISTS idx_rate_limit_events_tenant ON rate_limit_events(tenant_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_worker_throttle_events_tenant ON worker_throttle_events(tenant_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_knowledge_documents_tenant_id ON knowledge_documents(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_tenant_document ON knowledge_chunks(tenant_id, document_id);
     CREATE INDEX IF NOT EXISTS idx_documents_tenant_id ON documents(tenant_id);
@@ -1258,6 +1327,30 @@ def run_startup_migrations():
         USING (tenant_id::text = current_setting('app.tenant_id', true))
         WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
 
+    ALTER TABLE event_delivery_records ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_event_delivery_records ON event_delivery_records;
+    CREATE POLICY tenant_isolation_event_delivery_records ON event_delivery_records
+        USING (tenant_id IS NULL OR tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id IS NULL OR tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE event_dead_letters ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_event_dead_letters ON event_dead_letters;
+    CREATE POLICY tenant_isolation_event_dead_letters ON event_dead_letters
+        USING (tenant_id IS NULL OR tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id IS NULL OR tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE rate_limit_events ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_rate_limit_events ON rate_limit_events;
+    CREATE POLICY tenant_isolation_rate_limit_events ON rate_limit_events
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE worker_throttle_events ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_worker_throttle_events ON worker_throttle_events;
+    CREATE POLICY tenant_isolation_worker_throttle_events ON worker_throttle_events
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
     ALTER TABLE remediation_connectors ENABLE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation_remediation_connectors ON remediation_connectors;
     CREATE POLICY tenant_isolation_remediation_connectors ON remediation_connectors
@@ -1331,6 +1424,10 @@ def run_startup_migrations():
     ALTER TABLE compliance_control_evidence FORCE ROW LEVEL SECURITY;
     ALTER TABLE compliance_control_scores FORCE ROW LEVEL SECURITY;
     ALTER TABLE compliance_score_changes FORCE ROW LEVEL SECURITY;
+    ALTER TABLE event_delivery_records FORCE ROW LEVEL SECURITY;
+    ALTER TABLE event_dead_letters FORCE ROW LEVEL SECURITY;
+    ALTER TABLE rate_limit_events FORCE ROW LEVEL SECURITY;
+    ALTER TABLE worker_throttle_events FORCE ROW LEVEL SECURITY;
     ALTER TABLE remediation_connectors FORCE ROW LEVEL SECURITY;
     ALTER TABLE remediation_findings FORCE ROW LEVEL SECURITY;
     ALTER TABLE remediation_plans FORCE ROW LEVEL SECURITY;

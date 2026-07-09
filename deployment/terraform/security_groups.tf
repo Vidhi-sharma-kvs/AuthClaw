@@ -125,3 +125,55 @@ resource "aws_security_group" "vpc_endpoints" {
   })
 }
 
+resource "aws_security_group" "msk" {
+  count       = var.enable_observability_pipeline ? 1 : 0
+  name        = "${local.name_prefix}-msk-sg"
+  description = "AuthClaw MSK access from ECS tasks"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description     = "Kafka TLS from ECS"
+    from_port       = 9094
+    to_port         = 9094
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-msk-sg"
+  })
+}
+
+resource "aws_security_group" "redis" {
+  count       = var.enable_observability_pipeline ? 1 : 0
+  name        = "${local.name_prefix}-redis-sg"
+  description = "AuthClaw Redis access from ECS tasks"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description     = "Redis from ECS"
+    from_port       = 6379
+    to_port         = 6379
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-redis-sg"
+  })
+}
+

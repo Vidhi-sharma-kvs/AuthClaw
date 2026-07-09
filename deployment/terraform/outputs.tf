@@ -28,3 +28,18 @@ output "ecs_cluster" {
   value       = aws_ecs_cluster.main.name
 }
 
+output "msk_bootstrap_brokers_tls" {
+  description = "MSK TLS bootstrap brokers for the AuthClaw event pipeline."
+  value       = var.enable_observability_pipeline ? aws_msk_cluster.observability[0].bootstrap_brokers_tls : ""
+}
+
+output "redis_primary_endpoint" {
+  description = "Redis primary endpoint for distributed rate limiting and worker throttling."
+  value       = var.enable_observability_pipeline ? aws_elasticache_replication_group.redis[0].primary_endpoint_address : ""
+}
+
+output "analytics_database" {
+  description = "Managed analytics database used as the production ClickHouse-equivalent store."
+  value       = var.enable_observability_pipeline ? aws_timestreamwrite_database.analytics[0].database_name : ""
+}
+

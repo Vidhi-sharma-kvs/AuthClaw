@@ -41,7 +41,16 @@ resource "aws_ecs_task_definition" "app" {
         { name = "MODEL_PROVIDER", value = var.model_provider },
         { name = "MODEL_NAME", value = var.model_name },
         { name = "AUTHCLAW_DOCUMENT_STORAGE_BACKEND", value = "s3" },
-        { name = "AUTHCLAW_DOCUMENT_S3_BUCKET", value = aws_s3_bucket.documents.bucket }
+        { name = "AUTHCLAW_DOCUMENT_S3_BUCKET", value = aws_s3_bucket.documents.bucket },
+        { name = "AUTHCLAW_RATE_LIMIT_ENABLED", value = "true" },
+        { name = "AUTHCLAW_REQUIRE_REDIS_RATE_LIMIT", value = var.enable_observability_pipeline ? "true" : "false" },
+        { name = "AUTHCLAW_REQUIRE_KAFKA", value = var.enable_observability_pipeline ? "true" : "false" },
+        { name = "AUTHCLAW_REQUIRE_CLICKHOUSE", value = "false" },
+        { name = "REDIS_URL", value = var.enable_observability_pipeline ? "rediss://${aws_elasticache_replication_group.redis[0].primary_endpoint_address}:6379/0" : "" },
+        { name = "KAFKA_BROKERS", value = var.enable_observability_pipeline ? aws_msk_cluster.observability[0].bootstrap_brokers_tls : "" },
+        { name = "KAFKA_REST_URL", value = var.kafka_rest_url },
+        { name = "KAFKA_ANALYTICS_TOPIC", value = "authclaw-analytics-events" },
+        { name = "KAFKA_DLQ_TOPIC", value = "authclaw-dead-letter-events" }
       ]
       secrets = [
         { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.database_url.arn },
@@ -80,7 +89,11 @@ resource "aws_ecs_task_definition" "app" {
         { name = "AUTHCLAW_BACKEND_URL", value = "http://127.0.0.1:8000" },
         { name = "AUTHCLAW_ALLOWED_ORIGINS", value = var.allowed_origins },
         { name = "AUTHCLAW_SECRET_BACKEND", value = "aws_secrets_manager" },
-        { name = "AWS_REGION", value = var.aws_region }
+        { name = "AWS_REGION", value = var.aws_region },
+        { name = "KAFKA_BROKERS", value = var.enable_observability_pipeline ? aws_msk_cluster.observability[0].bootstrap_brokers_tls : "" },
+        { name = "KAFKA_REST_URL", value = var.kafka_rest_url },
+        { name = "KAFKA_ANALYTICS_TOPIC", value = "authclaw-analytics-events" },
+        { name = "KAFKA_DLQ_TOPIC", value = "authclaw-dead-letter-events" }
       ]
       logConfiguration = {
         logDriver = "awslogs"

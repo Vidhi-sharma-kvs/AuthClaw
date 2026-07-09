@@ -14,20 +14,24 @@ import (
 type Event map[string]any
 
 type Producer struct {
-	brokers []string
-	restURL string
-	topic   string
-	queue   chan Event
-	client  *http.Client
+	brokers     []string
+	restURL     string
+	topic       string
+	dlqTopic    string
+	queue       chan Event
+	client      *http.Client
+	maxAttempts int
 }
 
 func NewProducer(brokers []string, restURL string, topic string) *Producer {
 	p := &Producer{
-		brokers: brokers,
-		restURL: strings.TrimRight(restURL, "/"),
-		topic:   topic,
-		queue:   make(chan Event, 1024),
-		client:  &http.Client{Timeout: 2 * time.Second},
+		brokers:     brokers,
+		restURL:     strings.TrimRight(restURL, "/"),
+		topic:       topic,
+		dlqTopic:    topic + ".dlq",
+		queue:       make(chan Event, 1024),
+		client:      &http.Client{Timeout: 2 * time.Second},
+		maxAttempts: 3,
 	}
 	go p.run()
 	return p
@@ -56,23 +60,33 @@ func (p *Producer) run() {
 			continue
 		}
 		if p.restURL != "" {
-			if err := p.publishKafkaREST(event); err == nil {
+			if err := p.publishKafkaRESTWithRetry(p.topic, event); err == nil {
 				continue
 			} else {
 				log.Printf("audit_event_kafka_rest_error topic=%s error=%v", p.topic, err)
+				p.deadLetter(event, err)
+				continue
 			}
 		}
-		log.Printf(
-			"audit_event_kafka_scaffold topic=%s brokers=%s payload=%s",
-			p.topic,
-			strings.Join(p.brokers, ","),
-			payload,
-		)
+		p.deadLetter(event, fmt.Errorf("Kafka REST/MSK proxy endpoint missing for brokers=%s", strings.Join(p.brokers, ",")))
 	}
 }
 
-func (p *Producer) publishKafkaREST(event Event) error {
-	endpoint := fmt.Sprintf("%s/topics/%s", p.restURL, url.PathEscape(p.topic))
+func (p *Producer) publishKafkaRESTWithRetry(topic string, event Event) error {
+	var lastErr error
+	for attempt := 1; attempt <= p.maxAttempts; attempt++ {
+		if err := p.publishKafkaREST(topic, event); err != nil {
+			lastErr = err
+			time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
+			continue
+		}
+		return nil
+	}
+	return lastErr
+}
+
+func (p *Producer) publishKafkaREST(topic string, event Event) error {
+	endpoint := fmt.Sprintf("%s/topics/%s", p.restURL, url.PathEscape(topic))
 	body, err := json.Marshal(map[string]any{
 		"records": []map[string]any{
 			{"value": event},
@@ -96,4 +110,22 @@ func (p *Producer) publishKafkaREST(event Event) error {
 		return fmt.Errorf("kafka rest returned %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func (p *Producer) deadLetter(event Event, err error) {
+	payload, _ := json.Marshal(event)
+	log.Printf("audit_event_dead_letter topic=%s dlq_topic=%s error=%v payload=%s", p.topic, p.dlqTopic, err, payload)
+	if p.restURL == "" {
+		return
+	}
+	dlqEvent := Event{
+		"event_type":   "audit_event_dead_letter",
+		"source_topic": p.topic,
+		"error":        err.Error(),
+		"payload":      string(payload),
+		"created_at":   time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if dlqErr := p.publishKafkaRESTWithRetry(p.dlqTopic, dlqEvent); dlqErr != nil {
+		log.Printf("audit_event_dead_letter_publish_error topic=%s error=%v", p.dlqTopic, dlqErr)
+	}
 }

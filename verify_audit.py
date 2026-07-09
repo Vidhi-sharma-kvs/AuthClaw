@@ -223,15 +223,17 @@ def _write_clickhouse_event(event: dict) -> None:
 
 def mirror_audit_event_to_clickhouse(event: dict) -> None:
     """
-    Non-blocking mirror for immutable audit events. Missing ClickHouse never
-    prevents the PostgreSQL audit chain from being written.
+    Durable audit/event pipeline entrypoint. Events are recorded before delivery,
+    then published to Kafka REST/MSK and ClickHouse when configured. Delivery
+    failures are retained for retry/dead-letter visibility and never prevent the
+    source PostgreSQL audit chain from being written.
     """
-    if not clickhouse_pipeline_enabled():
-        return
     try:
-        _ensure_clickhouse_worker()
-        _clickhouse_queue.put_nowait(event)
-    except Exception:
+        from services.event_pipeline import EventPipeline
+
+        EventPipeline().record_and_deliver(event, stream="audit")
+    except Exception as exc:
+        logger.debug("Audit event pipeline delivery skipped: %s", exc)
         return
 
 

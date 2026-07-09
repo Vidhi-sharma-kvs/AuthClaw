@@ -199,7 +199,36 @@ def _tenant_tier_limit(tenant_id: int) -> int:
     return default_limits.get(tier, default_limits["enterprise"])
 
 
-def _consume_rate_limit_token(tenant_id: int, limit: int) -> Tuple[bool, int]:
+def _record_rate_limit_event(tenant_id: int, key: str, limit: int, remaining: int, backend: str, allowed: bool) -> None:
+    try:
+        from database import engine
+        with engine.connect() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO rate_limit_events (
+                        tenant_id, limiter_key, limit_count, remaining, backend,
+                        allowed, created_at
+                    )
+                    VALUES (
+                        :tenant_id, :limiter_key, :limit_count, :remaining, :backend,
+                        :allowed, NOW()
+                    )
+                """),
+                {
+                    "tenant_id": tenant_id,
+                    "limiter_key": key,
+                    "limit_count": limit,
+                    "remaining": remaining,
+                    "backend": backend,
+                    "allowed": allowed,
+                },
+            )
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _consume_rate_limit_token(tenant_id: int, limit: int) -> Tuple[bool, int, str]:
     window = int(time.time() // 60)
     redis_url = os.getenv("REDIS_URL")
     key = f"authclaw:rate:{tenant_id}:{window}"
@@ -211,9 +240,13 @@ def _consume_rate_limit_token(tenant_id: int, limit: int) -> Tuple[bool, int]:
             count = int(client.incr(key))
             if count == 1:
                 client.expire(key, 90)
-            return count <= limit, max(0, limit - count)
+            remaining = max(0, limit - count)
+            allowed = count <= limit
+            _record_rate_limit_event(tenant_id, key, limit, remaining, "redis", allowed)
+            return allowed, remaining, "redis"
         except Exception:
-            pass
+            if _is_production_env() or _feature_enabled("AUTHCLAW_REQUIRE_REDIS_RATE_LIMIT", False):
+                raise
 
     state_key = (tenant_id, window)
     count = _rate_limit_memory.get(state_key, 0) + 1
@@ -221,7 +254,10 @@ def _consume_rate_limit_token(tenant_id: int, limit: int) -> Tuple[bool, int]:
     for stale_key in list(_rate_limit_memory.keys()):
         if stale_key[1] < window - 1:
             _rate_limit_memory.pop(stale_key, None)
-    return count <= limit, max(0, limit - count)
+    remaining = max(0, limit - count)
+    allowed = count <= limit
+    _record_rate_limit_event(tenant_id, key, limit, remaining, "memory", allowed)
+    return allowed, remaining, "memory"
 
 
 @app.middleware("http")
@@ -244,7 +280,7 @@ async def enterprise_gateway_middleware(request: Request, call_next):
                     api_key_val = authorization[7:]
                 tenant_id = resolve_tenant(api_key_val, authorization)
                 limit = _tenant_tier_limit(tenant_id)
-                allowed, remaining = _consume_rate_limit_token(tenant_id, limit)
+                allowed, remaining, limiter_backend = _consume_rate_limit_token(tenant_id, limit)
                 if not allowed:
                     return JSONResponse(
                         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -253,11 +289,12 @@ async def enterprise_gateway_middleware(request: Request, call_next):
                             "limit_rpm": limit,
                             "tenant_id": tenant_id,
                         },
-                        headers={"X-RateLimit-Limit": str(limit), "X-RateLimit-Remaining": "0"},
+                        headers={"X-RateLimit-Limit": str(limit), "X-RateLimit-Remaining": "0", "X-RateLimit-Backend": limiter_backend},
                     )
                 response = await call_next(request)
                 response.headers["X-RateLimit-Limit"] = str(limit)
                 response.headers["X-RateLimit-Remaining"] = str(remaining)
+                response.headers["X-RateLimit-Backend"] = limiter_backend
                 return response
             except HTTPException as exc:
                 return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
@@ -2151,6 +2188,22 @@ def get_metrics():
             drift_alerts = conn.execute(text("SELECT COUNT(*) FROM compliance_drift_alerts")).scalar() or 0
             secret_leaks = conn.execute(text("SELECT COUNT(*) FROM document_findings WHERE finding_type IN ('Secret', 'Credentials')")).scalar() or 0
             pii_violations = conn.execute(text("SELECT COUNT(*) FROM document_findings WHERE finding_type = 'PII'")).scalar() or 0
+            provider_errors = conn.execute(text("""
+                SELECT COUNT(*)
+                FROM gateway_requests
+                WHERE lower(COALESCE(status, decision, '')) LIKE '%error%'
+                   OR lower(COALESCE(status, decision, '')) LIKE '%fail%'
+                   OR lower(COALESCE(status, decision, '')) LIKE '%unavailable%'
+                   OR lower(COALESCE(status, decision, '')) LIKE '%timeout%'
+            """)).scalar() or 0
+            approval_latency_row = conn.execute(text("""
+                SELECT AVG(EXTRACT(EPOCH FROM (COALESCE(executed_at, approved_at, rejected_at, last_action_at, NOW()) - created_at)))
+                FROM gateway_approvals
+                WHERE created_at IS NOT NULL
+            """)).fetchone()
+            avg_approval_latency_seconds = int(approval_latency_row[0] or 0) if approval_latency_row else 0
+            rate_limit_blocked = conn.execute(text("SELECT COUNT(*) FROM rate_limit_events WHERE allowed = FALSE AND created_at >= NOW() - INTERVAL '1 hour'")).scalar() or 0
+            worker_throttle_blocked = conn.execute(text("SELECT COUNT(*) FROM worker_throttle_events WHERE allowed = FALSE AND created_at >= NOW() - INTERVAL '1 hour'")).scalar() or 0
 
             risk_res = conn.execute(text("SELECT risk_level, COUNT(*) FROM gateway_requests GROUP BY risk_level")).fetchall()
             risk_dist = {"LOW": 0, "MEDIUM": 0, "HIGH": 0}
@@ -2163,6 +2216,10 @@ def get_metrics():
             
             # Incorporate document findings into compliance score
             compliance_score = max(0, 100 - (open_findings * 5) - (failed_tests * 10) - (total_violations * 8))
+            from services.event_pipeline import EventPipeline
+            from verify_audit import verify_audit_chain
+            event_pipeline_metrics = EventPipeline().delivery_metrics()
+            audit_chain_status = verify_audit_chain()
             
     except Exception as e:
         logger.error(f"Error querying metrics from database: {e}")
@@ -2184,6 +2241,12 @@ def get_metrics():
         drift_alerts = 0
         secret_leaks = 0
         pii_violations = 0
+        provider_errors = 0
+        avg_approval_latency_seconds = 0
+        rate_limit_blocked = 0
+        worker_throttle_blocked = 0
+        event_pipeline_metrics = {"streams": {}, "checkpoints": []}
+        audit_chain_status = {"valid": True, "records_checked": 0}
         risk_dist = {"LOW": 0, "MEDIUM": 0, "HIGH": 0}
         compliance_score = 90
 
@@ -2192,6 +2255,10 @@ def get_metrics():
     executed = sum(1 for a in approvals.values() if a["status"] == "executed")
     approved = sum(1 for a in approvals.values() if a["status"] == "approved")
     rejected = sum(1 for a in approvals.values() if a["status"] == "rejected")
+    pending_pipeline = sum(int(cp.get("pending_events") or 0) for cp in event_pipeline_metrics.get("checkpoints", []))
+    dead_letters = sum(int(cp.get("dead_letter_count") or 0) for cp in event_pipeline_metrics.get("checkpoints", []))
+    max_queue_lag = max([int(cp.get("lag_seconds") or 0) for cp in event_pipeline_metrics.get("checkpoints", [])] or [0])
+    redaction_rate = round((pii_violations + secret_leaks) / total_requests, 4) if total_requests else 0
 
     return {
         "total_requests": total_requests,
@@ -2203,6 +2270,17 @@ def get_metrics():
         "audit_chain_records": audit_chain_records,
         "risk_distribution": risk_dist,
         "avg_latency": avg_latency,
+        "gateway_latency_ms": avg_latency,
+        "redaction_rate": redaction_rate,
+        "provider_errors": provider_errors,
+        "avg_approval_latency_seconds": avg_approval_latency_seconds,
+        "queue_lag_seconds": max_queue_lag,
+        "queue_pending_events": pending_pipeline,
+        "dead_letter_events": dead_letters,
+        "audit_chain_status": audit_chain_status,
+        "event_pipeline": event_pipeline_metrics,
+        "rate_limit_blocked": rate_limit_blocked,
+        "worker_throttle_blocked": worker_throttle_blocked,
         "token_consumption": token_consumption,
         "active_tenants": active_tenants,
         "active_routes": active_routes,
@@ -2221,6 +2299,20 @@ def get_metrics():
         "secret_leaks": secret_leaks,
         "pii_violations": pii_violations
     }
+
+
+@app.post("/observability/pipeline/retry")
+def retry_event_pipeline_dead_letters(
+    limit: int = 100,
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    from services.event_pipeline import EventPipeline
+
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    result = EventPipeline().retry_dead_letters(limit=max(1, min(limit, 1000)))
+    result["tenant_id"] = tenant_id
+    return result
 
 
 @app.get("/platform/summary")

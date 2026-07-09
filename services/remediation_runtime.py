@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from approval_store import create_approval
 from database import engine
+from services.worker_throttle import WorkerThrottle
 
 
 SUPPORTED_PROVIDERS = {"aws", "gcp", "github"}
@@ -392,6 +393,7 @@ class RemediationRuntime:
         return worker_id
 
     def run_scan(self, tenant_id: int, connector_id: int) -> Dict[str, Any]:
+        WorkerThrottle("remediation").enforce(tenant_id)
         connector = self.get_connector(tenant_id, connector_id)
         lease = self._lease_credentials(tenant_id, connector, "read_only_scan")
         worker_id = self._create_worker(tenant_id, connector, "read_only_scan", lease["lease_id"])
@@ -575,6 +577,7 @@ class RemediationRuntime:
 
     def execute_approved_plan(self, approval_record: Dict[str, Any]) -> Dict[str, Any]:
         tenant_id = int(approval_record["tenant_id"])
+        WorkerThrottle("remediation").enforce(tenant_id)
         metadata = approval_record.get("metadata") or {}
         plan_id = int(metadata.get("remediation_plan_id") or 0)
         if not plan_id:

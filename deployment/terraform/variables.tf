@@ -140,3 +140,27 @@ variable "model_name" {
   type        = string
   default     = "gemini-2.5-flash-lite"
 }
+
+variable "enable_observability_pipeline" {
+  description = "Provision production Kafka/MSK, Redis rate limiting, and managed analytics storage."
+  type        = bool
+  default     = true
+}
+
+variable "kafka_rest_url" {
+  description = "Kafka REST Proxy URL for ECS producers. Use a private MSK REST proxy or compatible endpoint."
+  type        = string
+  default     = ""
+}
+
+variable "msk_broker_instance_type" {
+  description = "MSK broker instance type for the AuthClaw event pipeline."
+  type        = string
+  default     = "kafka.t3.small"
+}
+
+variable "redis_node_type" {
+  description = "ElastiCache Redis node type for distributed rate limiting and worker throttling."
+  type        = string
+  default     = "cache.t4g.micro"
+}

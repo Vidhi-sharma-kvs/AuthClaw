@@ -365,6 +365,46 @@ const Dashboard = () => {
           <p className="text-xl font-bold text-[#0E1726]">{auditSum?.valid ? "Secured" : "Unverified"}</p>
           <div className="text-[10px] text-emerald-400 font-semibold">OK Chained Block Linkage</div>
         </GlassCard>
+
+        <GlassCard className="space-y-2">
+          <div className="flex justify-between items-center text-[#6B7488]">
+            <span className="text-[10px] font-bold uppercase tracking-wider">Queue Lag</span>
+            <Clock className="w-4 h-4 text-amber-500" />
+          </div>
+          <p className="text-xl font-bold text-[#0E1726]">{metrics?.queue_lag_seconds || governanceAnalytics?.queue_lag?.max_lag_seconds || 0}s</p>
+          <div className="text-[10px] text-[#6B7488]">
+            DLQ: {metrics?.dead_letter_events || governanceAnalytics?.queue_lag?.dead_letter_count || 0}
+          </div>
+        </GlassCard>
+
+        <GlassCard className="space-y-2">
+          <div className="flex justify-between items-center text-[#6B7488]">
+            <span className="text-[10px] font-bold uppercase tracking-wider">Provider Errors</span>
+            <AlertTriangle className="w-4 h-4 text-rose-500" />
+          </div>
+          <p className="text-xl font-bold text-[#0E1726]">{metrics?.provider_errors || governanceAnalytics?.provider_errors?.total || 0}</p>
+          <div className="text-[10px] text-[#6B7488]">Last hour gateway/provider failures</div>
+        </GlassCard>
+
+        <GlassCard className="space-y-2">
+          <div className="flex justify-between items-center text-[#6B7488]">
+            <span className="text-[10px] font-bold uppercase tracking-wider">Approval Latency</span>
+            <Activity className="w-4 h-4 text-blue-500" />
+          </div>
+          <p className="text-xl font-bold text-[#0E1726]">{metrics?.avg_approval_latency_seconds || governanceAnalytics?.approval_latency?.avg_seconds || 0}s</p>
+          <div className="text-[10px] text-[#6B7488]">Average approval lifecycle</div>
+        </GlassCard>
+
+        <GlassCard className="space-y-2">
+          <div className="flex justify-between items-center text-[#6B7488]">
+            <span className="text-[10px] font-bold uppercase tracking-wider">Rate Limiter</span>
+            <Server className="w-4 h-4 text-emerald-500" />
+          </div>
+          <p className="text-xl font-bold text-[#0E1726]">{governanceAnalytics?.rate_limits?.backend || 'none'}</p>
+          <div className="text-[10px] text-[#6B7488]">
+            Blocked: {metrics?.rate_limit_blocked || governanceAnalytics?.rate_limits?.blocked || 0}
+          </div>
+        </GlassCard>
       </div>
 
       {/* Main Details summaries Section */}

@@ -6,6 +6,7 @@ import urllib.parse
 import urllib.request
 
 from database import engine
+from services.event_pipeline import EventPipeline
 from sqlalchemy import text
 from verify_audit import clickhouse_pipeline_enabled, verify_audit_chain
 
@@ -35,10 +36,15 @@ class ObservabilityService:
             blocked = self._blocked_requests(conn, tenant_id_text)
             redactions = self._redaction_summary(conn, tenant_id, tenant_id_text)
             approvals = self._approval_summary(conn, tenant_id)
+            approval_latency = self._approval_latency(conn, tenant_id)
+            provider_errors = self._provider_errors(conn, tenant_id_text)
+            rate_limits = self._rate_limit_summary(conn, tenant_id)
+            worker_throttle = self._worker_throttle_summary(conn, tenant_id)
             recent_requests = self._recent_requests(conn, tenant_id_text)
             latest_hash = self._latest_audit_hash(conn, tenant_id)
 
         verification = verify_audit_chain(tenant_id=tenant_id)
+        pipeline = EventPipeline().delivery_metrics()
         audit = {
             "valid": bool(verification.get("valid", True)),
             "records_checked": _int(verification.get("records_checked")),
@@ -57,10 +63,16 @@ class ObservabilityService:
             "tenant_id": tenant_id,
             "gateway": gateway,
             "providers": providers,
+            "provider_errors": provider_errors,
             "blocked_requests": blocked,
             "redactions": redactions,
             "approvals": approvals,
+            "approval_latency": approval_latency,
             "audit": audit,
+            "event_pipeline": pipeline,
+            "queue_lag": self._queue_lag(pipeline),
+            "rate_limits": rate_limits,
+            "worker_throttle": worker_throttle,
             "recent_requests": recent_requests,
             "clickhouse_pipeline": clickhouse_status,
         }
@@ -325,6 +337,113 @@ class ObservabilityService:
             "executed": by_status.get("executed", 0),
             "expired": by_status.get("expired", 0),
             "by_status": by_status,
+        }
+
+    def _approval_latency(self, conn, tenant_id: int) -> Dict[str, Any]:
+        row = conn.execute(
+            text(
+                """
+                SELECT
+                    AVG(EXTRACT(EPOCH FROM (COALESCE(executed_at, approved_at, rejected_at, last_action_at, NOW()) - created_at))) AS avg_seconds,
+                    PERCENTILE_CONT(0.95) WITHIN GROUP (
+                        ORDER BY EXTRACT(EPOCH FROM (COALESCE(executed_at, approved_at, rejected_at, last_action_at, NOW()) - created_at))
+                    ) AS p95_seconds
+                FROM gateway_approvals
+                WHERE tenant_id = :tenant_id
+                  AND created_at IS NOT NULL
+                """
+            ),
+            {"tenant_id": tenant_id},
+        ).fetchone()
+        return {"avg_seconds": _float(row[0] if row else 0), "p95_seconds": _float(row[1] if row else 0)}
+
+    def _provider_errors(self, conn, tenant_id_text: str) -> Dict[str, Any]:
+        rows = conn.execute(
+            text(
+                """
+                SELECT COALESCE(NULLIF(provider, ''), 'unknown') AS provider_name, COUNT(*)
+                FROM gateway_requests
+                WHERE tenant_id = :tenant_id
+                  AND (
+                    lower(COALESCE(status, decision, '')) LIKE '%error%'
+                    OR lower(COALESCE(status, decision, '')) LIKE '%fail%'
+                    OR lower(COALESCE(status, decision, '')) LIKE '%unavailable%'
+                    OR lower(COALESCE(status, decision, '')) LIKE '%timeout%'
+                  )
+                GROUP BY COALESCE(NULLIF(provider, ''), 'unknown')
+                ORDER BY COUNT(*) DESC
+                """
+            ),
+            {"tenant_id": tenant_id_text},
+        ).fetchall()
+        total = sum(_int(row[1]) for row in rows)
+        return {"total": total, "by_provider": {row[0]: _int(row[1]) for row in rows}}
+
+    def _rate_limit_summary(self, conn, tenant_id: int) -> Dict[str, Any]:
+        rows = conn.execute(
+            text(
+                """
+                SELECT backend, allowed, COUNT(*), MIN(remaining), MAX(created_at)
+                FROM rate_limit_events
+                WHERE tenant_id = :tenant_id
+                  AND created_at >= NOW() - INTERVAL '1 hour'
+                GROUP BY backend, allowed
+                """
+            ),
+            {"tenant_id": tenant_id},
+        ).fetchall()
+        summary = {"allowed": 0, "blocked": 0, "backend": "none", "min_remaining": None, "last_seen": None}
+        for row in rows:
+            if row[1]:
+                summary["allowed"] += _int(row[2])
+            else:
+                summary["blocked"] += _int(row[2])
+            summary["backend"] = row[0] or summary["backend"]
+            if summary["min_remaining"] is None:
+                summary["min_remaining"] = _int(row[3])
+            else:
+                summary["min_remaining"] = min(summary["min_remaining"], _int(row[3]))
+            summary["last_seen"] = _iso(row[4])
+        return summary
+
+    def _worker_throttle_summary(self, conn, tenant_id: int) -> Dict[str, Any]:
+        rows = conn.execute(
+            text(
+                """
+                SELECT worker_type, allowed, COUNT(*), MAX(active_count), MAX(limit_count), MAX(created_at)
+                FROM worker_throttle_events
+                WHERE tenant_id = :tenant_id
+                  AND created_at >= NOW() - INTERVAL '1 hour'
+                GROUP BY worker_type, allowed
+                """
+            ),
+            {"tenant_id": tenant_id},
+        ).fetchall()
+        by_type: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            item = by_type.setdefault(row[0], {"allowed": 0, "blocked": 0, "active_count": 0, "limit_count": 0, "last_seen": None})
+            if row[1]:
+                item["allowed"] += _int(row[2])
+            else:
+                item["blocked"] += _int(row[2])
+            item["active_count"] = max(item["active_count"], _int(row[3]))
+            item["limit_count"] = max(item["limit_count"], _int(row[4]))
+            item["last_seen"] = _iso(row[5])
+        return {"by_type": by_type}
+
+    def _queue_lag(self, pipeline: Dict[str, Any]) -> Dict[str, Any]:
+        max_lag = 0
+        dead_letters = 0
+        pending = 0
+        for checkpoint in pipeline.get("checkpoints", []):
+            max_lag = max(max_lag, _int(checkpoint.get("lag_seconds")))
+            dead_letters += _int(checkpoint.get("dead_letter_count"))
+            pending += _int(checkpoint.get("pending_events"))
+        return {
+            "max_lag_seconds": max_lag,
+            "pending_events": pending,
+            "dead_letter_count": dead_letters,
+            "alertable": max_lag > int(os.getenv("AUTHCLAW_QUEUE_LAG_ALERT_SECONDS", "300")) or dead_letters > 0,
         }
 
     def _recent_requests(self, conn, tenant_id_text: str) -> List[Dict[str, Any]]:

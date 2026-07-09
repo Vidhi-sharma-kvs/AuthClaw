@@ -8,6 +8,7 @@ python-dotenv
 pyyaml
 cryptography
 requests
+redis
 dnspython
 langgraph
 google-genai

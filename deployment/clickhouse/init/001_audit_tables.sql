@@ -62,3 +62,26 @@ SELECT
     created_at
 FROM authclaw.audit_events
 WHERE integrity_hash != '';
+
+CREATE TABLE IF NOT EXISTS authclaw.event_delivery_metrics
+(
+    stream LowCardinality(String),
+    status LowCardinality(String),
+    pending_events UInt64 DEFAULT 0,
+    dead_letter_count UInt64 DEFAULT 0,
+    lag_seconds UInt64 DEFAULT 0,
+    max_attempts UInt64 DEFAULT 0,
+    updated_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (stream, status);
+
+CREATE VIEW IF NOT EXISTS authclaw.pipeline_health_view AS
+SELECT
+    stream,
+    sum(pending_events) AS pending_events,
+    sum(dead_letter_count) AS dead_letter_count,
+    max(lag_seconds) AS max_lag_seconds,
+    max(updated_at) AS last_updated_at
+FROM authclaw.event_delivery_metrics
+GROUP BY stream;
