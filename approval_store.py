@@ -70,7 +70,13 @@ def _check_expiry(record: dict) -> dict:
     in-place and return the (now-mutated) record.
     """
     if record["status"] == "pending":
-        expires_at = datetime.fromisoformat(record["expires_at"])
+        raw_expires_at = record.get("expires_at")
+        if not raw_expires_at:
+            return record
+        if isinstance(raw_expires_at, datetime):
+            expires_at = raw_expires_at
+        else:
+            expires_at = datetime.fromisoformat(str(raw_expires_at))
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if datetime.now(timezone.utc) >= expires_at:

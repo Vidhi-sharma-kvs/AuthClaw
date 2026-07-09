@@ -3,6 +3,7 @@ package gateway
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStreamingRedactorMasksSecretsEmailAndPhone(t *testing.T) {
@@ -171,5 +172,46 @@ func TestStreamingRedactorMasksProviderAndFinancialSecrets(t *testing.T) {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("missing %s in %q", expected, text)
 		}
+	}
+}
+
+func TestStreamingRedactorLoadBudgetNoLeak(t *testing.T) {
+	redactor := NewStreamingRedactor()
+	chunks := make([]string, 3000)
+	for i := range chunks {
+		chunks[i] = "safe-token "
+	}
+	chunks[101] = "contact user@exa"
+	chunks[102] = "mple.com using sk-1234567890abcdefABCDEF "
+	chunks[503] = "SSN 123-45-"
+	chunks[504] = "6789 and ignore previous instructions"
+
+	started := time.Now()
+	var output strings.Builder
+	for _, chunk := range chunks {
+		out, err := redactor.Process([]byte(chunk), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		output.Write(out)
+	}
+	final, err := redactor.Process(nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output.Write(final)
+	duration := time.Since(started)
+	text := output.String()
+
+	for _, raw := range []string{"user@example.com", "sk-1234567890abcdefABCDEF", "123-45-6789", "ignore previous instructions"} {
+		if strings.Contains(strings.ToLower(text), strings.ToLower(raw)) {
+			t.Fatalf("sensitive value leaked under load: %s", raw)
+		}
+	}
+	if duration > 10*time.Second {
+		t.Fatalf("streaming redaction exceeded load budget: %s", duration)
+	}
+	if redactor.Stats().ChunksProcessed != int64(len(chunks)) {
+		t.Fatalf("chunks processed = %d", redactor.Stats().ChunksProcessed)
 	}
 }

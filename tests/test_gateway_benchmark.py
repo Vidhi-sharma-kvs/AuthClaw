@@ -46,3 +46,22 @@ def test_build_headers_uses_api_key_when_bearer_missing():
 
     assert headers["X-API-Key"] == "ac_example"
     assert "Authorization" not in headers
+
+
+def test_evaluate_thresholds_enforces_overhead_target():
+    report = {
+        "summary": {"success_rate": 1.0, "latency_ms": {"p95": 120.0}},
+        "overhead_ms": {"max_p95_overhead_ms": 49.0},
+    }
+
+    passed = gateway_benchmark.evaluate_thresholds(report, min_success_rate=0.99, max_p95_ms=500, max_overhead_ms=50)
+    assert passed["passed"] is True
+
+    failed = gateway_benchmark.evaluate_thresholds(
+        {**report, "overhead_ms": {"max_p95_overhead_ms": 51.0}},
+        min_success_rate=0.99,
+        max_p95_ms=500,
+        max_overhead_ms=50,
+    )
+    assert failed["passed"] is False
+    assert failed["violations"][0]["metric"] == "max_p95_overhead_ms"

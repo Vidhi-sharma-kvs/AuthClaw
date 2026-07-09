@@ -55,6 +55,12 @@ jobs:
           pip install pytest
       - name: Run backend test suite
         run: pytest -q
+      - name: Run deterministic performance thresholds
+        run: >
+          python scripts/performance_validation.py
+          --max-streaming-ms 5000
+          --max-document-scan-ms 2500
+          --max-vector-search-ms 1500
 
   frontend-quality:
     name: Frontend lint and build
@@ -172,13 +178,21 @@ jobs:
         if: steps.check-env.outputs.configured == 'true'
         env:
           BENCHMARK_BASE_URL: ${{ vars.BENCHMARK_BASE_URL }}
+          BENCHMARK_BASELINE_URL: ${{ vars.BENCHMARK_BASELINE_URL }}
           BENCHMARK_API_KEY: ${{ secrets.BENCHMARK_API_KEY }}
-        run: >
-          python scripts/gateway_benchmark.py
-          --base-url "$BENCHMARK_BASE_URL"
-          --api-key "$BENCHMARK_API_KEY"
-          --requests 10
-          --concurrency 4
-          --min-success-rate 0.95
-          --max-p95-ms 5000
+        shell: bash
+        run: |
+          args=(
+            --base-url "$BENCHMARK_BASE_URL"
+            --api-key "$BENCHMARK_API_KEY"
+            --requests 10
+            --concurrency 4
+            --min-success-rate 0.95
+            --max-p95-ms 5000
+            --max-overhead-ms 50
+          )
+          if [ -n "$BENCHMARK_BASELINE_URL" ]; then
+            args+=(--baseline-base-url "$BENCHMARK_BASELINE_URL")
+          fi
+          python scripts/gateway_benchmark.py "${args[@]}"
 

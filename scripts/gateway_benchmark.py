@@ -177,6 +177,47 @@ def compare_overhead(gateway_report: Dict[str, object], baseline_report: Dict[st
     }
 
 
+def evaluate_thresholds(
+    report: Dict[str, object],
+    *,
+    min_success_rate: float = 1.0,
+    max_p95_ms: Optional[float] = None,
+    max_overhead_ms: float = 50.0,
+) -> Dict[str, object]:
+    violations = []
+    summary = report.get("summary", {})
+    latency = summary.get("latency_ms", {})
+    success_rate = float(summary.get("success_rate", 0.0))
+    if success_rate < min_success_rate:
+        violations.append({
+            "metric": "success_rate",
+            "actual": success_rate,
+            "threshold": min_success_rate,
+        })
+    if max_p95_ms is not None and float(latency.get("p95", 0.0)) > max_p95_ms:
+        violations.append({
+            "metric": "p95_latency_ms",
+            "actual": float(latency.get("p95", 0.0)),
+            "threshold": max_p95_ms,
+        })
+    overhead = report.get("overhead_ms") or {}
+    if overhead and float(overhead.get("max_p95_overhead_ms", 0.0)) > max_overhead_ms:
+        violations.append({
+            "metric": "max_p95_overhead_ms",
+            "actual": float(overhead.get("max_p95_overhead_ms", 0.0)),
+            "threshold": max_overhead_ms,
+        })
+    return {
+        "passed": not violations,
+        "violations": violations,
+        "thresholds": {
+            "min_success_rate": min_success_rate,
+            "max_p95_ms": max_p95_ms,
+            "max_overhead_ms": max_overhead_ms,
+        },
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark AuthClaw gateway latency and route compatibility.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
@@ -220,6 +261,14 @@ def main() -> int:
         report["baseline"] = baseline_report
         report["overhead_ms"] = compare_overhead(report, baseline_report)
 
+    threshold_result = evaluate_thresholds(
+        report,
+        min_success_rate=args.min_success_rate,
+        max_p95_ms=args.max_p95_ms,
+        max_overhead_ms=args.max_overhead_ms,
+    )
+    report["thresholds"] = threshold_result
+
     rendered = json.dumps(report, indent=2)
     print(rendered)
     if args.output:
@@ -233,6 +282,8 @@ def main() -> int:
         return 3
     if args.baseline_base_url and report["overhead_ms"]["max_p95_overhead_ms"] > args.max_overhead_ms:
         return 4
+    if not threshold_result["passed"]:
+        return 5
     return 0
 
 
