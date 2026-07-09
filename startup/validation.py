@@ -132,19 +132,27 @@ def validate_environment():
     production = os.getenv("AUTHCLAW_ENV", "development").lower() in {"production", "prod"}
     bootstrap_local_process_secrets()
 
-    # 1. Validate GOOGLE_API_KEY for legacy/local provider fallback.
+    # 1. Validate local provider fallback key.
     # Development can run in degraded/offline-provider mode so the UI, auth,
-    # policies, API keys, and audit flows remain testable without Gemini quota.
-    google_api_key = os.getenv("GOOGLE_API_KEY")
-    if not google_api_key and production:
-        errors.append("GOOGLE_API_KEY is not set or empty.")
-    elif not google_api_key:
-        logger.warning("GOOGLE_API_KEY is not configured. Local runtime will use provider fallback behavior.")
+    # policies, API keys, and audit flows remain testable without provider quota.
+    model_provider = os.getenv("MODEL_PROVIDER", "gemini").lower().replace(" ", "_")
+    provider_key_env = {
+        "gemini": "GOOGLE_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "cohere": "COHERE_API_KEY",
+        "azure_openai": "AZURE_OPENAI_API_KEY",
+        "azure": "AZURE_OPENAI_API_KEY",
+    }.get(model_provider, "GOOGLE_API_KEY")
+    provider_api_key = os.getenv(provider_key_env)
+    if not provider_api_key and production:
+        errors.append(f"{provider_key_env} is not set or empty.")
+    elif not provider_api_key:
+        logger.warning("%s is not configured. Local runtime will use provider fallback behavior.", provider_key_env)
         
     # 2. Validate MODEL_PROVIDER
-    model_provider = os.getenv("MODEL_PROVIDER", "gemini")
-    supported_providers = ["gemini", "openai", "anthropic", "azure_openai"]
-    if model_provider.lower() not in supported_providers:
+    supported_providers = ["gemini", "openai", "anthropic", "cohere", "azure_openai"]
+    if model_provider not in supported_providers and model_provider != "azure":
         errors.append(f"MODEL_PROVIDER '{model_provider}' is not supported. Supported: {supported_providers}")
         
     # 3. Validate MODEL_NAME

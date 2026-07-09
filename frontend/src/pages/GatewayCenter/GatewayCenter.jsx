@@ -56,6 +56,7 @@ const GatewayCenter = () => {
   // Additional fields for Azure OpenAI
   const [azureEndpoint, setAzureEndpoint] = useState('');
   const [azureVersion, setAzureVersion] = useState('');
+  const [azureDeployment, setAzureDeployment] = useState('');
 
   const fetchData = async () => {
     let failed = false;
@@ -82,8 +83,9 @@ const GatewayCenter = () => {
       setProviders([
         { id: 'openai', name: 'OpenAI', model: 'gpt-4o', endpoint: 'https://api.openai.com/v1' },
         { id: 'anthropic', name: 'Anthropic', model: 'claude-3-5-sonnet', endpoint: 'https://api.anthropic.com/v1' },
+        { id: 'cohere', name: 'Cohere', model: 'command-r-plus', endpoint: 'https://api.cohere.com' },
+        { id: 'azure_openai', name: 'Azure OpenAI', model: 'gpt-4o', endpoint: 'https://{resource}.openai.azure.com' },
         { id: 'gemini', name: 'Gemini', model: 'gemini-2.5-flash-lite', endpoint: 'https://generativelanguage.googleapis.com' },
-        { id: 'azure_openai', name: 'Azure OpenAI', model: 'gpt-4', endpoint: 'https://{resource}.openai.azure.com' }
       ]);
       if (failed) {
         addToast('Some gateway settings could not be loaded.', 'error');
@@ -202,17 +204,21 @@ const GatewayCenter = () => {
   const handleConnectProviderSubmit = async (e) => {
     e.preventDefault();
     try {
-      const payload = {
-        provider: selectedProvider,
+      const credentialPayload = {
         api_key: apiKeyInput,
         live_test: liveProviderTest
       };
       if (selectedProvider === 'azure_openai') {
-        payload.azure_endpoint = azureEndpoint;
-        payload.azure_api_version = azureVersion;
+        credentialPayload.api_base = azureEndpoint;
+        credentialPayload.api_version = azureVersion;
+        credentialPayload.deployment = azureDeployment || undefined;
       }
+      const payload = {
+        provider: selectedProvider,
+        payload: credentialPayload
+      };
       
-      const endpoint = providerModalMode === 'rotate' ? '/providers/rotate' : '/providers/connect';
+      const endpoint = providerModalMode === 'rotate' ? `/providers/${selectedProvider}/rotate` : '/providers/connect';
       const res = await apiClient.post(endpoint, payload);
       
       if (res.data.status === 'success' || res.data.message?.includes('successful') || res.data.detail?.includes('successful')) {
@@ -230,7 +236,7 @@ const GatewayCenter = () => {
   const handleTestProvider = async (providerId, verbose = true) => {
     try {
       addToast(`Testing ${providerId.toUpperCase()} connectivity...`, 'info');
-      const res = await apiClient.post(`/providers/test/${providerId}`);
+      const res = await apiClient.post(`/providers/${providerId}/test`);
       if (res.data.status === 'success' || res.data.valid) {
         addToast(`${providerId.toUpperCase()} connection validated: Online (Latency: ${res.data.latency_ms || 32}ms)`, 'success');
       } else {
@@ -405,7 +411,7 @@ const GatewayCenter = () => {
           <div className="flex justify-between items-center">
             <div>
               <h2 className="text-base font-bold text-[#0E1726] tracking-tight">Connected Model Providers</h2>
-              <p className="text-xs text-[#6B7488]">Provide credentials for OpenAI, Anthropic, Gemini, or Azure OpenAI to route LLM requests.</p>
+              <p className="text-xs text-[#6B7488]">Provide credentials for OpenAI, Anthropic, Cohere, Azure OpenAI, or Gemini to route LLM requests.</p>
             </div>
             <Button
               variant="primary"
@@ -414,6 +420,7 @@ const GatewayCenter = () => {
                 setApiKeyInput('');
                 setAzureEndpoint('');
                 setAzureVersion('');
+                setAzureDeployment('');
                 setProviderModalMode('connect');
                 setLiveProviderTest(false);
                 setProviderModalOpen(true);
@@ -431,9 +438,10 @@ const GatewayCenter = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {[
               { id: 'openai', name: 'OpenAI', desc: 'GPT-4o, GPT-4, GPT-3.5 models routing wrapper' },
-              { id: 'gemini', name: 'Google Gemini', desc: 'Gemini 2.5 Flash / Pro native governance wrap' },
               { id: 'anthropic', name: 'Anthropic', desc: 'Claude 3.5 Sonnet / Opus secure control proxy' },
-              { id: 'azure_openai', name: 'Azure OpenAI', desc: 'Enterprise managed endpoints protection' }
+              { id: 'cohere', name: 'Cohere', desc: 'Command family native enterprise chat routing' },
+              { id: 'azure_openai', name: 'Azure OpenAI', desc: 'Enterprise managed deployment endpoints protection' },
+              { id: 'gemini', name: 'Google Gemini', desc: 'Gemini 2.5 Flash / Pro native governance wrap' }
             ].map(p => {
               const status = getProviderConnectionStatus(p.id);
               return (
@@ -470,6 +478,7 @@ const GatewayCenter = () => {
                             setApiKeyInput('');
                             setAzureEndpoint('');
                             setAzureVersion('');
+                            setAzureDeployment('');
                             setLiveProviderTest(false);
                             setProviderModalOpen(true);
                           }}
@@ -541,6 +550,7 @@ const GatewayCenter = () => {
               >
                 <option value="OpenAI">OpenAI</option>
                 <option value="Anthropic">Anthropic</option>
+                <option value="Cohere">Cohere</option>
                 <option value="Azure OpenAI">Azure OpenAI</option>
                 <option value="Gemini">Gemini</option>
               </select>
@@ -646,13 +656,15 @@ const GatewayCenter = () => {
                 setApiKeyInput('');
                 setAzureEndpoint('');
                 setAzureVersion('');
+                setAzureDeployment('');
               }}
               className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] transition-colors uppercase font-bold text-xs tracking-wider"
             >
               <option value="openai">OpenAI</option>
-              <option value="gemini">Google Gemini</option>
               <option value="anthropic">Anthropic</option>
+              <option value="cohere">Cohere</option>
               <option value="azure_openai">Azure OpenAI</option>
+              <option value="gemini">Google Gemini</option>
             </select>
           </div>
 
@@ -689,6 +701,17 @@ const GatewayCenter = () => {
                   placeholder="2024-02-15-preview"
                   value={azureVersion}
                   onChange={(e) => setAzureVersion(e.target.value)}
+                  className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] transition-colors font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-[#475069] mb-1.5">Azure Deployment Name</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="gpt-4o-production"
+                  value={azureDeployment}
+                  onChange={(e) => setAzureDeployment(e.target.value)}
                   className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-[#0E1726] focus:outline-none focus:border-[#6D28D9] transition-colors font-mono"
                 />
               </div>

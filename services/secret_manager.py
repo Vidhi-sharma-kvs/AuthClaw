@@ -45,6 +45,7 @@ SENSITIVE_ENV_NAMES = {
     "GOOGLE_API_KEY",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
+    "COHERE_API_KEY",
     "AZURE_OPENAI_API_KEY",
 }
 
@@ -55,10 +56,12 @@ def normalize_provider(provider: str) -> str:
     normalized = (provider or "").lower().replace(" ", "_")
     if normalized in {"google_gemini", "gemini"}:
         return "gemini"
-    if normalized in {"azure", "azure_openai"}:
+    if normalized in {"azure", "azure_openai", "azure-openai"}:
         return "azure_openai"
     if normalized in {"anthropic", "claude"}:
         return "anthropic"
+    if normalized in {"cohere", "co"}:
+        return "cohere"
     return normalized
 
 

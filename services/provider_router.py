@@ -8,7 +8,9 @@ from database import engine
 from providers import get_provider as get_legacy_provider
 from providers.base import BaseProvider
 from providers.gemini_provider import GeminiProvider
+from services.provider_connection_tester import normalize_provider_payload
 from services.secret_manager import SecretManager, SecretManagerError
+from services.secret_manager import normalize_provider as normalize_provider_name
 from sqlalchemy import text
 
 logger = logging.getLogger("authclaw.provider_router")
@@ -144,7 +146,13 @@ class ProviderRouter:
         return None
 
     def _lookup_environment_credential(self, preferred_provider: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        providers = [self._normalize_provider(preferred_provider)] if preferred_provider else ["openai", "gemini", "anthropic", "azure_openai"]
+        providers = [self._normalize_provider(preferred_provider)] if preferred_provider else [
+            "openai",
+            "anthropic",
+            "cohere",
+            "azure_openai",
+            "gemini",
+        ]
         manager = SecretManager()
 
         for provider in providers:
@@ -158,7 +166,7 @@ class ProviderRouter:
                 try:
                     json_payload = manager.get_json_secret(f"{prefix}_SECRET_JSON")
                     if json_payload and json_payload.get("api_key"):
-                        return {"provider": provider, "payload": json_payload}
+                        return {"provider": provider, "payload": normalize_provider_payload(provider, json_payload)}
                     api_key = manager.get_secret(f"{prefix}_API_KEY")
                 except SecretManagerError as exc:
                     logger.warning(f"Provider secret lookup failed for tenant {self.tenant_id}: {exc}")
@@ -169,13 +177,14 @@ class ProviderRouter:
                         "model": manager.get_secret(f"{prefix}_MODEL"),
                         "api_base": manager.get_secret(f"{prefix}_API_BASE"),
                         "api_version": manager.get_secret(f"{prefix}_API_VERSION"),
+                        "deployment": manager.get_secret(f"{prefix}_DEPLOYMENT"),
                     }
-                    return {"provider": provider, "payload": payload}
+                    return {"provider": provider, "payload": normalize_provider_payload(provider, payload)}
         return None
 
     def _build_selection(self, route: Dict[str, Any], credential: Dict[str, Any], source: str) -> ProviderSelection:
         provider_name = self._normalize_provider(route["provider"])
-        payload = credential["payload"]
+        payload = normalize_provider_payload(provider_name, credential["payload"])
         model = route.get("model") or payload.get("model") or self._default_model_for(provider_name)
         endpoint = route.get("endpoint") or payload.get("api_base")
         api_key = payload.get("api_key")
@@ -190,6 +199,19 @@ class ProviderRouter:
             from providers.anthropic_provider import AnthropicProvider
 
             provider = AnthropicProvider(api_key=api_key, model_name=model, api_url=endpoint or None)
+        elif provider_name == "cohere":
+            from providers.cohere_provider import CohereProvider
+
+            provider = CohereProvider(api_key=api_key, model_name=model, api_url=endpoint or None)
+        elif provider_name == "azure_openai":
+            from providers.azure_openai_provider import AzureOpenAIProvider
+
+            provider = AzureOpenAIProvider(
+                api_key=api_key,
+                deployment=payload.get("deployment") or model,
+                api_url=endpoint or None,
+                api_version=payload.get("api_version"),
+            )
         else:
             raise ValueError(f"Unsupported tenant provider configured: {route['provider']}")
 
@@ -204,24 +226,22 @@ class ProviderRouter:
 
     def _decrypt_payload(self, credential_row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
-            return SecretManager().resolve_provider_payload(credential_row)
+            provider = credential_row.get("provider")
+            return normalize_provider_payload(provider, SecretManager().resolve_provider_payload(credential_row))
         except Exception as exc:
             logger.warning(f"Failed to decrypt provider credential for tenant {self.tenant_id}: {exc}")
             return None
 
     def _normalize_provider(self, provider: str) -> str:
-        normalized = provider.lower().replace(" ", "_")
-        if normalized in ("google_gemini", "gemini"):
-            return "gemini"
-        if normalized in ("openai", "azure_openai"):
-            return "openai"
-        if normalized in ("anthropic", "claude"):
-            return "anthropic"
-        return normalized
+        return normalize_provider_name(provider)
 
     def _default_model_for(self, provider: str) -> str:
         if provider == "openai":
             return "gpt-4o"
         if provider == "anthropic":
             return "claude-3-5-sonnet-20241022"
+        if provider == "cohere":
+            return "command-r-plus"
+        if provider == "azure_openai":
+            return "gpt-4o"
         return "gemini-2.5-flash-lite"

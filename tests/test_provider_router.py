@@ -5,6 +5,8 @@ from sqlalchemy import text
 
 from database import engine
 from main import API_KEY, encrypt_secret
+from providers.azure_openai_provider import AzureOpenAIProvider
+from providers.cohere_provider import CohereProvider
 from providers.gemini_provider import GeminiProvider
 from providers.openai_provider import OpenAIProvider
 from providers.anthropic_provider import AnthropicProvider
@@ -123,3 +125,48 @@ def test_provider_router_supports_anthropic_abstraction():
     assert selection.model == "claude-test-model"
     assert selection.source == "tenant_route"
     assert isinstance(selection.provider, AnthropicProvider)
+
+
+def test_provider_router_supports_cohere_abstraction():
+    tenant_id = _tenant_id_for_test_key()
+    route_id = _create_route(tenant_id, "cohere", "command-r-plus")
+    _connect_provider(tenant_id, "cohere", {"api_key": "cohere-test-key-1234567890", "model": "command-r"})
+
+    try:
+        selection = ProviderRouter(tenant_id=tenant_id).select()
+    finally:
+        _cleanup_route(route_id, tenant_id, "cohere")
+
+    assert selection.route_id == str(route_id)
+    assert selection.provider_name == "cohere"
+    assert selection.model == "command-r-plus"
+    assert selection.source == "tenant_route"
+    assert isinstance(selection.provider, CohereProvider)
+
+
+def test_provider_router_supports_native_azure_openai_abstraction():
+    tenant_id = _tenant_id_for_test_key()
+    route_id = _create_route(tenant_id, "azure_openai", "gpt-4o-prod")
+    _connect_provider(
+        tenant_id,
+        "azure_openai",
+        {
+            "api_key": "azure-test-key-1234567890",
+            "model": "gpt-4o-prod",
+            "deployment": "gpt-4o-prod",
+            "api_base": "https://resource.openai.azure.com",
+            "api_version": "2024-02-15-preview",
+        },
+    )
+
+    try:
+        selection = ProviderRouter(tenant_id=tenant_id).select()
+    finally:
+        _cleanup_route(route_id, tenant_id, "azure_openai")
+
+    assert selection.route_id == str(route_id)
+    assert selection.provider_name == "azure_openai"
+    assert selection.model == "gpt-4o-prod"
+    assert selection.source == "tenant_route"
+    assert isinstance(selection.provider, AzureOpenAIProvider)
+    assert selection.provider.api_version == "2024-02-15-preview"

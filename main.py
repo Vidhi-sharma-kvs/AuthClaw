@@ -570,7 +570,18 @@ class KeyRotateRequest(BaseModel):
 
 class ProviderConnectRequest(BaseModel):
     provider: str
-    payload: dict
+    payload: Optional[dict] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    api_base: Optional[str] = None
+    endpoint: Optional[str] = None
+    base_url: Optional[str] = None
+    api_version: Optional[str] = None
+    deployment: Optional[str] = None
+    deployment_name: Optional[str] = None
+    azure_endpoint: Optional[str] = None
+    azure_api_version: Optional[str] = None
+    live_test: Optional[bool] = None
 
 
 class ChatRequest(BaseModel):
@@ -2222,8 +2233,9 @@ def get_providers(authorization: Optional[str] = Header(None)):
     providers_list = [
         {"id": "openai", "name": "OpenAI", "model": "gpt-4o", "endpoint": "https://api.openai.com/v1"},
         {"id": "anthropic", "name": "Anthropic", "model": "claude-3-5-sonnet", "endpoint": "https://api.anthropic.com/v1"},
+        {"id": "cohere", "name": "Cohere", "model": "command-r-plus", "endpoint": "https://api.cohere.com"},
+        {"id": "azure_openai", "name": "Azure OpenAI", "model": "gpt-4o", "endpoint": "https://my-resource.openai.azure.com"},
         {"id": "gemini", "name": "Gemini", "model": "gemini-2.5-flash-lite", "endpoint": "https://generativelanguage.googleapis.com"},
-        {"id": "azure", "name": "Azure OpenAI", "model": "gpt-4", "endpoint": "https://my-azure.openai.azure.com"}
     ]
     result = []
     with engine.connect() as conn:
@@ -2231,19 +2243,19 @@ def get_providers(authorization: Optional[str] = Header(None)):
             name = prov["name"]
             req_count = conn.execute(
                 text("SELECT COUNT(*) FROM gateway_requests WHERE tenant_id = :tid AND LOWER(provider) = LOWER(:p)"),
-                {"tid": str(tenant_id), "p": name},
+                {"tid": str(tenant_id), "p": prov["id"]},
             ).scalar() or 0
             err_count = conn.execute(
                 text("SELECT COUNT(*) FROM gateway_requests WHERE tenant_id = :tid AND LOWER(provider) = LOWER(:p) AND allowed = FALSE"),
-                {"tid": str(tenant_id), "p": name},
+                {"tid": str(tenant_id), "p": prov["id"]},
             ).scalar() or 0
             avg_lat = conn.execute(
                 text("SELECT AVG(latency) FROM gateway_requests WHERE tenant_id = :tid AND LOWER(provider) = LOWER(:p)"),
-                {"tid": str(tenant_id), "p": name},
+                {"tid": str(tenant_id), "p": prov["id"]},
             ).scalar() or 0
             tokens = conn.execute(
                 text("SELECT SUM(tokens_in + tokens_out) FROM gateway_requests WHERE tenant_id = :tid AND LOWER(provider) = LOWER(:p)"),
-                {"tid": str(tenant_id), "p": name},
+                {"tid": str(tenant_id), "p": prov["id"]},
             ).scalar() or 0
             
             success_rate = round(100.0 * (req_count - err_count) / req_count, 1) if req_count > 0 else 100.0
@@ -6157,6 +6169,30 @@ def rotate_tenant_api_key(key_id: int, req: KeyRotateRequest = KeyRotateRequest(
 
 # 12. PROVIDER CREDENTIALS MANAGEMENT ENDPOINTS
 
+def provider_payload_from_request(req: ProviderConnectRequest) -> Tuple[str, dict, bool]:
+    from services.provider_connection_tester import normalize_provider_payload
+    from services.secret_manager import normalize_provider
+
+    provider = normalize_provider(req.provider)
+    payload = dict(req.payload or {})
+    top_level = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    for key in (
+        "api_key",
+        "model",
+        "api_base",
+        "endpoint",
+        "base_url",
+        "api_version",
+        "deployment",
+        "deployment_name",
+        "azure_endpoint",
+        "azure_api_version",
+    ):
+        if top_level.get(key) not in (None, "") and key not in payload:
+            payload[key] = top_level[key]
+    live_test = bool(payload.pop("live_test", req.live_test or False))
+    return provider, normalize_provider_payload(provider, payload), live_test
+
 @app.post("/providers/connect")
 def connect_provider_credentials(req: ProviderConnectRequest, tenant_id: int = Depends(get_authenticated_tenant)):
     from database import engine
@@ -6165,9 +6201,7 @@ def connect_provider_credentials(req: ProviderConnectRequest, tenant_id: int = D
     from services.provider_connection_tester import ProviderConnectionTestError, test_provider_connection
     from services.secret_manager import SecretManager, SecretManagerError
 
-    provider = req.provider.lower().replace(" ", "_")
-    payload = dict(req.payload or {})
-    live_test = bool(payload.pop("live_test", False))
+    provider, payload, live_test = provider_payload_from_request(req)
 
     try:
         test_result = test_provider_connection(provider, payload, live=live_test)
@@ -6290,8 +6324,9 @@ def test_stored_provider_credentials(provider: str, live: bool = False, tenant_i
     from sqlalchemy import text
     from services.provider_connection_tester import ProviderConnectionTestError, test_provider_connection
     from services.secret_manager import SecretManager
+    from services.secret_manager import normalize_provider
 
-    provider_key = provider.lower().replace(" ", "_")
+    provider_key = normalize_provider(provider)
     with engine.connect() as conn:
         row = conn.execute(
             text(
@@ -6334,7 +6369,8 @@ def test_stored_provider_credentials(provider: str, live: bool = False, tenant_i
 def provider_secret_health(provider: str, tenant_id: int = Depends(get_authenticated_tenant)):
     from database import engine
     from sqlalchemy import text
-    provider_key = provider.lower().replace(" ", "_")
+    from services.secret_manager import normalize_provider
+    provider_key = normalize_provider(provider)
     with engine.connect() as conn:
         row = conn.execute(
             text(
@@ -6366,7 +6402,8 @@ def disconnect_provider_credentials(provider: str, tenant_id: int = Depends(get_
     from sqlalchemy import text
     from verify_audit import create_audit_block
     from services.secret_manager import SecretManager
-    provider_key = provider.lower().replace(" ", "_")
+    from services.secret_manager import normalize_provider
+    provider_key = normalize_provider(provider)
     with engine.connect() as conn:
         row = conn.execute(
             text("SELECT secret_ref, secret_backend FROM tenant_credentials WHERE tenant_id = :tid AND provider = :provider"),
