@@ -164,3 +164,74 @@ variable "redis_node_type" {
   type        = string
   default     = "cache.t4g.micro"
 }
+
+variable "enable_multi_region_dr" {
+  description = "Enable optional active-active DNS, cross-region object replication, and backup-copy DR controls."
+  type        = bool
+  default     = false
+}
+
+variable "secondary_region" {
+  description = "Secondary AWS region used for DR resources and peer-region replication."
+  type        = string
+  default     = "us-west-2"
+}
+
+variable "regional_role" {
+  description = "Role of this Terraform deployment in the active-active topology: primary or secondary."
+  type        = string
+  default     = "primary"
+
+  validation {
+    condition     = contains(["primary", "secondary"], var.regional_role)
+    error_message = "regional_role must be either primary or secondary."
+  }
+}
+
+variable "global_hosted_zone_id" {
+  description = "Route53 hosted zone ID for global AuthClaw DNS. Required when enable_multi_region_dr is true."
+  type        = string
+  default     = ""
+}
+
+variable "global_domain_name" {
+  description = "Global AuthClaw DNS name, for example app.authclaw.example.com."
+  type        = string
+  default     = ""
+}
+
+variable "primary_region_domain_name" {
+  description = "Primary regional ALB or DNS name used as a Route53 active-active target."
+  type        = string
+  default     = ""
+}
+
+variable "secondary_region_domain_name" {
+  description = "Secondary regional ALB or DNS name used as a Route53 active-active target."
+  type        = string
+  default     = ""
+}
+
+variable "global_health_check_path" {
+  description = "HTTP path used by Route53 health checks and DR validation."
+  type        = string
+  default     = "/health/ready"
+}
+
+variable "dr_rto_minutes" {
+  description = "Documented maximum recovery time objective for regional failover validation."
+  type        = number
+  default     = 30
+}
+
+variable "dr_rpo_minutes" {
+  description = "Documented maximum recovery point objective for backup and replication validation."
+  type        = number
+  default     = 15
+}
+
+variable "backup_copy_retention_days" {
+  description = "Retention period for cross-region backup copies."
+  type        = number
+  default     = 35
+}

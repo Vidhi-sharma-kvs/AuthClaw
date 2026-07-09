@@ -1,0 +1,47 @@
+name: Production Promotion
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Immutable image tag to promote."
+        required: true
+      staging_environment:
+        description: "Validated staging environment name."
+        required: true
+        default: "staging"
+      run_dr_validation:
+        description: "Run static DR validation before promotion."
+        required: true
+        default: "true"
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  promotion-readiness:
+    name: Promotion readiness gate
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Record promotion intent
+        run: |
+          echo "Promoting image tag: ${{ inputs.image_tag }}"
+          echo "Validated staging environment: ${{ inputs.staging_environment }}"
+      - name: Run DR validation gate
+        if: inputs.run_dr_validation == 'true'
+        run: python scripts/dr_validation.py --static-only
+      - name: Require immutable image tag
+        shell: bash
+        run: |
+          if [[ "${{ inputs.image_tag }}" == "latest" || "${{ inputs.image_tag }}" == "" ]]; then
+            echo "Production promotion requires an immutable, non-latest image tag."
+            exit 1
+          fi
+      - name: Promotion approval recorded
+        run: echo "Production environment approval and DR readiness gate completed."

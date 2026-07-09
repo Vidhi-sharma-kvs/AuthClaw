@@ -9,11 +9,16 @@ The GitHub Actions workflow at `.github/workflows/ci.yml` runs:
 - Backend tests with PostgreSQL 16
 - Frontend lint
 - Frontend production build
-- Python security scan with Bandit
-- Frontend dependency audit
+- Blocking Python security scan with Bandit
+- Blocking Python dependency audit with pip-audit
+- Blocking Semgrep SAST scan
+- Blocking frontend dependency audit
 - Backend Docker build
+- Blocking Trivy container scans for backend, Go gateway, and frontend images
 - Frontend Docker build
 - Terraform format and validation
+- Deterministic red-team harness
+- Release readiness report gate
 - Optional live gateway benchmark through manual `workflow_dispatch`
 
 ## Test Coverage Areas
@@ -28,6 +33,23 @@ Existing suites cover the Phase 12 quality dimensions:
 - Provider router: `test_provider_router.py`, `test_phase9_secrets_management.py`
 - AWS readiness: `test_phase11_aws_readiness.py`
 - Latency utility: `test_gateway_benchmark.py`
+- Release gates: `test_phase12_release_readiness.py`
+
+## Blocking Security Gates
+
+CI fails on critical/high SAST, dependency, and container findings. Critical/high
+findings must be fixed or formally risk-accepted before production-complete
+release.
+
+Automated checks:
+
+```bash
+bandit -r .
+pip-audit -r requirements.txt --strict
+npm audit --audit-level=high
+python scripts/red_team_harness.py
+python scripts/release_readiness.py --strict
+```
 
 ## Load and Latency
 
@@ -57,4 +79,3 @@ For the first release, keep document intelligence scoped to:
 6. Audit the result
 
 Document chat and RAG should remain secondary until redaction reliability is proven.
-
