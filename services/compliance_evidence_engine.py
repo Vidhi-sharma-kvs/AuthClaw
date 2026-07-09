@@ -228,8 +228,7 @@ class ComplianceEvidenceEngine:
             negative = [item for item in items if int(item.get("impact") or 0) < 0]
             positive = [item for item in items if int(item.get("impact") or 0) >= 0]
             score = 100
-            score += min(10, len(positive) * 2)
-            score += sum(int(item.get("impact") or 0) for item in items)
+            score += sum(int(item.get("impact") or 0) for item in negative)
             score = max(0, min(100, score))
             status = "passing" if score >= 85 else ("watch" if score >= 65 else "failing")
             reason = self._score_reason(control, positive, negative, score)
@@ -443,7 +442,7 @@ class ComplianceEvidenceEngine:
                 "impact": 6 if row.status in {"approved", "executed"} and row.mfa_verified else 2,
             })
         for row in audit_rows:
-            allowed_bonus = 4 if row.approval_status in {"approved", "executed", "N/A"} else -5
+            allowed_bonus = 4 if row.approval_status in {"approved", "executed", "N/A"} else 0
             events.append({
                 "source_type": "audit",
                 "source_id": row.id,
@@ -471,6 +470,9 @@ class ComplianceEvidenceEngine:
         matches = []
         for control in CONTROL_CATALOG:
             if framework_hint and control["framework"].lower() in framework_hint:
+                matches.append(control)
+                continue
+            if control["framework"].lower() in text_value:
                 matches.append(control)
                 continue
             if any(keyword in text_value for keyword in control["keywords"]):

@@ -14,7 +14,7 @@ def get_current_framework_scores() -> dict:
     try:
         from services.compliance_evidence_engine import ComplianceEvidenceEngine
         with engine.connect() as conn:
-            tenant_rows = conn.execute(text("SELECT id FROM tenants WHERE status = 'active' ORDER BY id ASC")).fetchall()
+            tenant_rows = conn.execute(text("SELECT id FROM tenants WHERE COALESCE(status, 'active') = 'active' ORDER BY id ASC")).fetchall()
         tenant_id = tenant_rows[0][0] if tenant_rows else None
         if tenant_id is None:
             return {"SOC2": 100, "GDPR": 100, "HIPAA": 100}

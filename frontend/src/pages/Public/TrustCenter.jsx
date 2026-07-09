@@ -1,16 +1,37 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, ExternalLink, FileCheck2, ShieldCheck } from 'lucide-react';
+import apiClient from '../../services/api';
 import './PublicPage.css';
 
-const trustItems = [
-  { label: 'Gateway status', value: 'Operational' },
-  { label: 'Policy engine', value: 'Active' },
-  { label: 'Audit chain', value: 'Hash verified' },
-  { label: 'Data protection', value: 'Encrypted' }
-];
-
 const TrustCenter = () => {
+  const [trustState, setTrustState] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    apiClient
+      .get('/trust/public')
+      .then((response) => {
+        if (mounted) setTrustState(response.data);
+      })
+      .catch(() => {
+        if (mounted) setTrustState(null);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const trustItems = useMemo(() => {
+    const scores = trustState?.payload?.framework_scores;
+    return [
+      { label: 'Gateway status', value: 'Operational' },
+      { label: 'SOC2 score', value: scores ? `${scores.soc2}%` : 'Published' },
+      { label: 'GDPR score', value: scores ? `${scores.gdpr}%` : 'Published' },
+      { label: 'Export signature', value: trustState?.verification?.valid ? 'Verified' : 'Pending' }
+    ];
+  }, [trustState]);
+
   return (
     <main className="public-container trust-center">
       <section className="trust-hero">
@@ -50,9 +71,18 @@ const TrustCenter = () => {
           <FileCheck2 size={28} />
           <h2>Signed Evidence Exports</h2>
           <p>
-            Audit CSV and PDF exports include SHA-256 signature headers so recipients
-            can verify that evidence bundles have not been modified after download.
+            Audit and evidence packages include an asymmetric signature manifest,
+            hash-chain root, signing key ID, framework scope, and payload digest for
+            independent verification.
           </p>
+          {trustState?.manifest && (
+            <div className="trust-manifest">
+              <span>Signing key</span>
+              <strong>{trustState.manifest.signing_key_id}</strong>
+              <span>Hash-chain root</span>
+              <strong>{trustState.manifest.hash_chain_root?.slice(0, 18)}...</strong>
+            </div>
+          )}
         </div>
         <a className="trust-link" href="/documentation">
           View security documentation

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import contextvars
+import base64
 import hmac
 import logging
 import os
@@ -8,9 +9,12 @@ import queue
 import threading
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import text
 from database import engine
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 GENESIS_HASH = "0" * 64
 _agent_event_request_id = contextvars.ContextVar("agent_event_request_id", default=None)
@@ -18,6 +22,144 @@ _agent_event_sequence = contextvars.ContextVar("agent_event_sequence", default=0
 logger = logging.getLogger("authclaw.audit")
 _clickhouse_queue = None
 _clickhouse_worker_started = False
+_export_private_key = None
+
+
+def _canonical_json_bytes(payload: dict) -> bytes:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(data: str) -> bytes:
+    padded = data + "=" * (-len(data) % 4)
+    return base64.urlsafe_b64decode(padded.encode("ascii"))
+
+
+def _load_export_private_key():
+    global _export_private_key
+    if _export_private_key is not None:
+        return _export_private_key
+
+    pem = os.getenv("AUTHCLAW_EXPORT_SIGNING_PRIVATE_KEY_PEM")
+    key_file = os.getenv("AUTHCLAW_EXPORT_SIGNING_PRIVATE_KEY_FILE")
+    password = os.getenv("AUTHCLAW_EXPORT_SIGNING_PRIVATE_KEY_PASSWORD")
+    if key_file and not pem:
+        with open(key_file, "rb") as handle:
+            pem = handle.read().decode("utf-8")
+
+    if pem:
+        key_bytes = pem.replace("\\n", "\n").encode("utf-8")
+        _export_private_key = serialization.load_pem_private_key(
+            key_bytes,
+            password=password.encode("utf-8") if password else None,
+        )
+    else:
+        _export_private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return _export_private_key
+
+
+def _export_public_key_pem() -> str:
+    key = _load_export_private_key().public_key()
+    return key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
+
+
+def _export_signing_key_id() -> str:
+    digest = hashlib.sha256(_export_public_key_pem().encode("utf-8")).hexdigest()
+    return f"authclaw-export-{digest[:16]}"
+
+
+def get_audit_hash_chain_root(tenant_id: int = None) -> str:
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("""
+                SELECT integrity_hash
+                FROM audit_logs
+                WHERE integrity_hash IS NOT NULL
+                  AND (:tenant_id IS NULL OR tenant_id = :tenant_id)
+                ORDER BY id DESC
+                LIMIT 1
+            """),
+            {"tenant_id": tenant_id},
+        ).fetchone()
+    return row[0] if row and row[0] else GENESIS_HASH
+
+
+def create_signed_export_package(
+    payload: dict,
+    tenant_id: int = None,
+    export_type: str = "audit",
+    framework_scope: str = "all",
+    timeframe: dict = None,
+) -> dict:
+    payload_bytes = _canonical_json_bytes(payload)
+    payload_hash = hashlib.sha256(payload_bytes).hexdigest()
+    generated_at = datetime.now(timezone.utc).isoformat()
+    audit_verification = verify_audit_chain(tenant_id=tenant_id)
+    manifest = {
+        "version": "authclaw.signed-export.v1",
+        "tenant": str(tenant_id or ""),
+        "timeframe": timeframe or {"from": None, "to": generated_at},
+        "hash_chain_root": get_audit_hash_chain_root(tenant_id=tenant_id),
+        "records_checked": audit_verification.get("records_checked", 0),
+        "framework_scope": framework_scope or "all",
+        "export_type": export_type,
+        "payload_sha256": f"sha256-{payload_hash}",
+        "signing_key_id": _export_signing_key_id(),
+        "signing_algorithm": "RSASSA-PSS-SHA256",
+        "generated_at": generated_at,
+        "public_key_pem": _export_public_key_pem(),
+    }
+    signature = _load_export_private_key().sign(
+        _canonical_json_bytes(manifest),
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+        hashes.SHA256(),
+    )
+    manifest["signature"] = _b64url(signature)
+    return {"manifest": manifest, "payload": payload, "payload_b64": _b64url(payload_bytes)}
+
+
+def verify_signed_export_package(payload: dict = None, payload_b64: str = None, manifest: dict = None) -> dict:
+    if not manifest or "signature" not in manifest:
+        return {"valid": False, "reason": "missing signature manifest"}
+    if payload is None and not payload_b64:
+        return {"valid": False, "reason": "missing payload"}
+    try:
+        payload_bytes = _b64url_decode(payload_b64) if payload_b64 else _canonical_json_bytes(payload)
+        expected_hash = manifest.get("payload_sha256")
+        actual_hash = f"sha256-{hashlib.sha256(payload_bytes).hexdigest()}"
+        if expected_hash != actual_hash:
+            return {"valid": False, "reason": "payload hash mismatch", "expected": expected_hash, "actual": actual_hash}
+
+        signature = _b64url_decode(manifest["signature"])
+        unsigned_manifest = dict(manifest)
+        unsigned_manifest.pop("signature", None)
+        public_key_pem = unsigned_manifest.get("public_key_pem")
+        if not public_key_pem:
+            return {"valid": False, "reason": "missing public key"}
+        public_key = serialization.load_pem_public_key(public_key_pem.encode("utf-8"))
+        public_key.verify(
+            signature,
+            _canonical_json_bytes(unsigned_manifest),
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+            hashes.SHA256(),
+        )
+        return {
+            "valid": True,
+            "reason": "signature verified",
+            "payload_sha256": actual_hash,
+            "signing_key_id": unsigned_manifest.get("signing_key_id"),
+            "hash_chain_root": unsigned_manifest.get("hash_chain_root"),
+            "framework_scope": unsigned_manifest.get("framework_scope"),
+            "export_type": unsigned_manifest.get("export_type"),
+        }
+    except (InvalidSignature, ValueError, TypeError) as exc:
+        return {"valid": False, "reason": f"signature verification failed: {exc.__class__.__name__}"}
 
 
 def _env_truthy(name: str, default: bool = True) -> bool:

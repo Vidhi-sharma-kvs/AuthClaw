@@ -1384,6 +1384,21 @@
   white-space: nowrap;
 }
 
+.public-container .trust-manifest {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 14px;
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.public-container .trust-manifest strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+}
+
 @media (max-width: 860px) {
   .public-container .trust-status-grid {
     grid-template-columns: 1fr 1fr;

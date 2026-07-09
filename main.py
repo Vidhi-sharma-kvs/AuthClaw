@@ -4,6 +4,7 @@ import time
 import uuid
 import logging
 import json
+import base64
 import hashlib
 import hmac
 import secrets
@@ -2518,6 +2519,12 @@ class EvidenceUploadRequest(BaseModel):
     file_path: str
 
 
+class SignedExportVerifyRequest(BaseModel):
+    payload: Optional[Dict[str, Any]] = None
+    payload_b64: Optional[str] = None
+    manifest: Dict[str, Any]
+
+
 # --- NEW COMPONENTS ENDPOINTS IMPLEMENTATIONS ---
 
 # 1. PROVIDERS
@@ -4673,6 +4680,140 @@ def get_compliance_framework_scores(
     tenant_id = resolve_tenant(x_api_key, authorization)
     from services.compliance_evidence_engine import ComplianceEvidenceEngine
     return ComplianceEvidenceEngine().calculate_scores(tenant_id)
+
+
+def _build_auditor_package_payload(tenant_id: int, framework: Optional[str] = None) -> Dict[str, Any]:
+    from services.compliance_evidence_engine import ComplianceEvidenceEngine
+    from verify_audit import verify_audit_chain
+
+    engine = ComplianceEvidenceEngine()
+    framework_scope = framework.upper() if framework else None
+    return {
+        "package_type": "auditor_evidence",
+        "tenant_id": tenant_id,
+        "framework_scope": framework_scope or "all",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "framework_scores": engine.calculate_scores(tenant_id),
+        "control_evidence": engine.evidence_export_rows(tenant_id, framework=framework_scope),
+        "score_changes": engine.score_changes(tenant_id, framework=framework_scope),
+        "corpus": engine.corpus_status(),
+        "audit_chain": verify_audit_chain(tenant_id=tenant_id),
+    }
+
+
+@app.get("/audit/export/package")
+def export_signed_audit_package(
+    framework: Optional[str] = None,
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    from document_processing.exports import generate_audit_csv, generate_evidence_csv
+    from services.compliance_evidence_engine import ComplianceEvidenceEngine
+    from verify_audit import create_signed_export_package, verify_audit_chain
+
+    audit_csv = generate_audit_csv(tenant_id=tenant_id)
+    evidence_csv = generate_evidence_csv(tenant_id=tenant_id)
+    payload = {
+        "package_type": "audit_export",
+        "tenant_id": tenant_id,
+        "framework_scope": framework.upper() if framework else "all",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "audit_chain": verify_audit_chain(tenant_id=tenant_id),
+        "framework_scores": ComplianceEvidenceEngine().calculate_scores(tenant_id),
+        "artifacts": [
+            {
+                "name": "audit_ledger.csv",
+                "media_type": "text/csv",
+                "sha256": hashlib.sha256(audit_csv).hexdigest(),
+                "content_b64": base64.b64encode(audit_csv).decode("ascii"),
+            },
+            {
+                "name": "evidence_vault.csv",
+                "media_type": "text/csv",
+                "sha256": hashlib.sha256(evidence_csv).hexdigest(),
+                "content_b64": base64.b64encode(evidence_csv).decode("ascii"),
+            },
+        ],
+    }
+    return create_signed_export_package(
+        payload,
+        tenant_id=tenant_id,
+        export_type="audit-package",
+        framework_scope=framework.upper() if framework else "all",
+    )
+
+
+@app.get("/auditor/package/export")
+def export_signed_auditor_package(
+    framework: Optional[str] = None,
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    from verify_audit import create_signed_export_package
+
+    payload = _build_auditor_package_payload(tenant_id, framework=framework)
+    return create_signed_export_package(
+        payload,
+        tenant_id=tenant_id,
+        export_type="auditor-package",
+        framework_scope=framework.upper() if framework else "all",
+    )
+
+
+@app.post("/audit/export/verify")
+def verify_signed_export(req: SignedExportVerifyRequest):
+    from verify_audit import verify_signed_export_package
+    return verify_signed_export_package(payload=req.payload, payload_b64=req.payload_b64, manifest=req.manifest)
+
+
+@app.get("/trust/public")
+def get_public_trust_state():
+    from database import engine
+    from services.compliance_evidence_engine import ComplianceEvidenceEngine
+    from verify_audit import create_signed_export_package, verify_audit_chain, verify_signed_export_package
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("""
+                SELECT id, name, domain
+                FROM tenants
+                WHERE COALESCE(status, 'active') = 'active'
+                ORDER BY id ASC
+                LIMIT 1
+            """)
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="No active tenant trust state is available")
+
+    tenant_id = int(row.id)
+    evidence_engine = ComplianceEvidenceEngine()
+    payload = {
+        "package_type": "trust_center_state",
+        "tenant_id": tenant_id,
+        "tenant_name": row.name,
+        "tenant_domain": row.domain,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "framework_scores": evidence_engine.calculate_scores(tenant_id),
+        "audit_chain": verify_audit_chain(tenant_id=tenant_id),
+        "corpus": evidence_engine.corpus_status(),
+        "verification_endpoint": "/audit/export/verify",
+    }
+    package = create_signed_export_package(
+        payload,
+        tenant_id=tenant_id,
+        export_type="trust-center-state",
+        framework_scope="SOC2,GDPR,HIPAA",
+    )
+    verification = verify_signed_export_package(payload_b64=package["payload_b64"], manifest=package["manifest"])
+    return {
+        "status": "published",
+        "payload": package["payload"],
+        "manifest": package["manifest"],
+        "payload_b64": package["payload_b64"],
+        "verification": verification,
+    }
 
 
 # ==============================================================================
