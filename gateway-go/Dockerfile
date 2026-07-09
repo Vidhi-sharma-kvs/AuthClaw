@@ -10,6 +10,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /out/authclaw-gateway ./cmd/authclaw-ga
 
 FROM alpine:3.20
 
+RUN apk update && apk upgrade --no-cache
 RUN adduser -D -H -s /sbin/nologin authclaw
 COPY --from=build /out/authclaw-gateway /usr/local/bin/authclaw-gateway
 

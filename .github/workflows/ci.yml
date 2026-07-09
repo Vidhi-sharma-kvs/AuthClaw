@@ -53,6 +53,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest
+          python -m spacy download en_core_web_sm
       - name: Run backend test suite
         run: pytest -vv
       - name: Run deterministic performance thresholds
@@ -106,6 +107,7 @@ jobs:
         uses: semgrep/semgrep-action@v1
         with:
           config: p/ci
+          audit: true
       - name: Frontend dependency audit
         working-directory: frontend
         run: npm audit --audit-level=high
