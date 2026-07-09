@@ -18,6 +18,7 @@ reportlab
 defusedxml
 boto3
 presidio-analyzer
+presidio-anonymizer
 pytesseract
 Pillow
 pdf2image

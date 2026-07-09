@@ -60,6 +60,12 @@ variable "frontend_image" {
   type        = string
 }
 
+variable "opa_image" {
+  description = "OPA image used as the production policy sidecar."
+  type        = string
+  default     = "openpolicyagent/opa:0.70.0"
+}
+
 variable "ecs_task_cpu" {
   description = "Fargate task CPU units."
   type        = number

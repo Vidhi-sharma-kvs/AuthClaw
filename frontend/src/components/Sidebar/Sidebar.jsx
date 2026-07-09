@@ -8,10 +8,13 @@ import {
   Activity,
   BarChart3,
   Building2,
+  CreditCard,
+  FileCheck2,
   PlugZap,
   Server,
   ShieldAlert,
   Settings as SettingsIcon,
+  Target,
   LogOut,
   X
 } from 'lucide-react';
@@ -26,6 +29,9 @@ const ROUTE_PERMISSIONS = {
   '/connectors': ['Super Admin', 'Security Admin', 'Developer'],
   '/api-keys': ['Super Admin', 'Security Admin', 'Developer'],
   '/trust': ['Super Admin', 'Security Admin', 'Compliance Officer', 'Auditor', 'Viewer'],
+  '/frameworks/explorer': ['Super Admin', 'Security Admin', 'Compliance Officer', 'Auditor', 'Viewer'],
+  '/red-team': ['Super Admin', 'Security Admin', 'Compliance Officer', 'Auditor'],
+  '/tenant-plan': ['Super Admin', 'Security Admin'],
   '/policies': ['Super Admin', 'Security Admin', 'Compliance Officer', 'Developer'],
   '/requests': ['Super Admin', 'Security Admin', 'Compliance Officer', 'Developer', 'Auditor'],
   '/approvals': ['Super Admin', 'Security Admin', 'Compliance Officer'],
@@ -51,6 +57,9 @@ const Sidebar = ({ isOpen, toggleSidebar }) => {
     { name: 'Connectors', path: '/connectors', icon: PlugZap },
     { name: 'API Keys', path: '/api-keys', icon: FileText },
     { name: 'Trust Center', path: '/trust', icon: ShieldCheck },
+    { name: 'Frameworks', path: '/frameworks/explorer', icon: FileCheck2 },
+    { name: 'Red Team', path: '/red-team', icon: Target },
+    { name: 'Tenant Plan', path: '/tenant-plan', icon: CreditCard },
     { name: 'Settings', path: '/settings', icon: SettingsIcon },
   ];
 

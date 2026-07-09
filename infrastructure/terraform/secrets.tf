@@ -15,6 +15,7 @@ resource "random_id" "encryption_key" {
 resource "aws_secretsmanager_secret" "database_url" {
   name        = "${local.name_prefix}/database-url"
   description = "AuthClaw PostgreSQL connection string"
+  kms_key_id  = aws_kms_key.authclaw.arn
   tags        = local.common_tags
 }
 
@@ -30,6 +31,7 @@ resource "aws_secretsmanager_secret_version" "database_url" {
 resource "aws_secretsmanager_secret" "jwt_secret" {
   name        = "${local.name_prefix}/jwt-secret"
   description = "AuthClaw JWT signing secret"
+  kms_key_id  = aws_kms_key.authclaw.arn
   tags        = local.common_tags
 }
 
@@ -41,6 +43,7 @@ resource "aws_secretsmanager_secret_version" "jwt_secret" {
 resource "aws_secretsmanager_secret" "encryption_key" {
   name        = "${local.name_prefix}/encryption-key"
   description = "AuthClaw Fernet encryption key"
+  kms_key_id  = aws_kms_key.authclaw.arn
   tags        = local.common_tags
 }
 
@@ -52,6 +55,7 @@ resource "aws_secretsmanager_secret_version" "encryption_key" {
 resource "aws_secretsmanager_secret" "smtp_username" {
   name        = "${local.name_prefix}/smtp-username"
   description = "SMTP username"
+  kms_key_id  = aws_kms_key.authclaw.arn
   tags        = local.common_tags
 }
 
@@ -63,6 +67,7 @@ resource "aws_secretsmanager_secret_version" "smtp_username" {
 resource "aws_secretsmanager_secret" "smtp_password" {
   name        = "${local.name_prefix}/smtp-password"
   description = "SMTP password or API key"
+  kms_key_id  = aws_kms_key.authclaw.arn
   tags        = local.common_tags
 }
 

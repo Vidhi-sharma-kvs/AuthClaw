@@ -24,10 +24,15 @@ const TrustCenter = () => {
 
   const trustItems = useMemo(() => {
     const scores = trustState?.payload?.framework_scores;
+    const runtime = trustState?.payload?.runtime || {};
+    const providerStatus = runtime.provider_status?.status || 'pending';
+    const certificateStatus = runtime.certificate_status?.status || 'pending';
     return [
-      { label: 'Gateway status', value: 'Operational' },
+      { label: 'Gateway status', value: runtime.gateway?.status || 'Pending' },
       { label: 'SOC2 score', value: scores ? `${scores.soc2}%` : 'Published' },
       { label: 'GDPR score', value: scores ? `${scores.gdpr}%` : 'Published' },
+      { label: 'Provider status', value: providerStatus.replace('_', ' ') },
+      { label: 'Certificate status', value: certificateStatus.replace('_', ' ') },
       { label: 'Export signature', value: trustState?.verification?.valid ? 'Verified' : 'Pending' }
     ];
   }, [trustState]);
@@ -81,6 +86,10 @@ const TrustCenter = () => {
               <strong>{trustState.manifest.signing_key_id}</strong>
               <span>Hash-chain root</span>
               <strong>{trustState.manifest.hash_chain_root?.slice(0, 18)}...</strong>
+              <span>Audit records checked</span>
+              <strong>{trustState.manifest.records_checked}</strong>
+              <span>Cache</span>
+              <strong>{trustState.cache?.hit ? 'Warm' : 'Refreshed'}</strong>
             </div>
           )}
         </div>

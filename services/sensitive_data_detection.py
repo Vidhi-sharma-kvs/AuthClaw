@@ -81,16 +81,25 @@ class SensitiveDataDetector:
     }
 
     _cached_presidio_analyzer = None
+    _cached_presidio_anonymizer = None
 
     def __init__(self, tenant_id=None):
         self.tenant_id = tenant_id
-        if SensitiveDataDetector._cached_presidio_analyzer is None:
+        self._use_presidio = self._presidio_requested()
+        if self._use_presidio and SensitiveDataDetector._cached_presidio_analyzer is None:
             try:
                 from presidio_analyzer import AnalyzerEngine
                 SensitiveDataDetector._cached_presidio_analyzer = AnalyzerEngine()
             except Exception:
                 pass
-        self._presidio_analyzer = SensitiveDataDetector._cached_presidio_analyzer
+        if self._use_presidio and SensitiveDataDetector._cached_presidio_anonymizer is None:
+            try:
+                from presidio_anonymizer import AnonymizerEngine
+                SensitiveDataDetector._cached_presidio_anonymizer = AnonymizerEngine()
+            except Exception:
+                pass
+        self._presidio_analyzer = SensitiveDataDetector._cached_presidio_analyzer if self._use_presidio else None
+        self._presidio_anonymizer = SensitiveDataDetector._cached_presidio_anonymizer if self._use_presidio else None
 
     @property
     def presidio_enabled(self) -> bool:
@@ -98,6 +107,7 @@ class SensitiveDataDetector:
 
     def inspect(self, text: str) -> List[SensitiveFinding]:
         findings = self._custom_findings(text)
+        findings.extend(self._enterprise_findings(text))
         findings.extend(self._presidio_findings(text))
         return self._dedupe(findings)
 
@@ -132,6 +142,10 @@ class SensitiveDataDetector:
     def replacement_for(self, finding: SensitiveFinding, action: str) -> str:
         entity_type = finding.entity_type
         value = finding.value
+        if finding.source == "presidio":
+            anonymized = self._presidio_anonymized_value(finding, action)
+            if anonymized is not None:
+                return anonymized
         if action == "allow":
             return value
         if action == "block":
@@ -198,11 +212,27 @@ class SensitiveDataDetector:
                 findings.append(SensitiveFinding(entity_type, start, end, value, confidence, "custom"))
         return findings
 
+    def _enterprise_findings(self, text: str) -> List[SensitiveFinding]:
+        findings = []
+        for item in self._enterprise_patterns():
+            try:
+                entity_type = str(item["entity_type"]).lower().strip().replace(" ", "_")
+                pattern = re.compile(str(item["pattern"]), re.IGNORECASE if item.get("ignore_case", True) else 0)
+                confidence = float(item.get("confidence", 0.86))
+            except Exception:
+                continue
+            for match in pattern.finditer(text):
+                value = match.group(1) if match.lastindex else match.group(0)
+                start, end = match.span(1) if match.lastindex else match.span(0)
+                findings.append(SensitiveFinding(entity_type, start, end, value, confidence, "enterprise"))
+        return findings
+
     def _presidio_findings(self, text: str) -> List[SensitiveFinding]:
         if not self._presidio_analyzer:
             return []
         try:
-            results = self._presidio_analyzer.analyze(text=text, language="en")
+            entities = list(self.presidio_map.keys())
+            results = self._presidio_analyzer.analyze(text=text, language="en", entities=entities)
         except Exception:
             return []
 
@@ -214,6 +244,32 @@ class SensitiveDataDetector:
             value = text[result.start:result.end]
             findings.append(SensitiveFinding(entity_type, result.start, result.end, value, float(result.score), "presidio"))
         return findings
+
+    def _presidio_anonymized_value(self, finding: SensitiveFinding, action: str) -> Optional[str]:
+        if not self._presidio_anonymizer or action not in {"redact", "mask"}:
+            return None
+        try:
+            from presidio_analyzer import RecognizerResult
+            from presidio_anonymizer.entities import OperatorConfig
+
+            entity_type = self._presidio_entity_for_internal(finding.entity_type) or "DEFAULT"
+            replacement = self.mask(finding.entity_type, finding.value) if action == "mask" else "[REDACTED]"
+            result = self._presidio_anonymizer.anonymize(
+                text=finding.value,
+                analyzer_results=[
+                    RecognizerResult(entity_type=entity_type, start=0, end=len(finding.value), score=finding.confidence)
+                ],
+                operators={entity_type: OperatorConfig("replace", {"new_value": replacement})},
+            )
+            return result.text
+        except Exception:
+            return None
+
+    def _presidio_entity_for_internal(self, entity_type: str) -> Optional[str]:
+        for presidio_name, internal_name in self.presidio_map.items():
+            if internal_name == entity_type:
+                return presidio_name
+        return None
 
     def _dedupe(self, findings: Iterable[SensitiveFinding]) -> List[SensitiveFinding]:
         selected: List[SensitiveFinding] = []
@@ -238,6 +294,27 @@ class SensitiveDataDetector:
             return get_policy().get("sensitive_data", {})
         except Exception:
             return {}
+
+    def _enterprise_patterns(self) -> List[Dict[str, object]]:
+        policy_entities = self._policy_config().get("custom_entities", [])
+        env_entities = os.getenv("AUTHCLAW_CUSTOM_ENTITIES_JSON", "")
+        entities: List[Dict[str, object]] = []
+        if isinstance(policy_entities, list):
+            entities.extend([item for item in policy_entities if isinstance(item, dict)])
+        if env_entities:
+            try:
+                import json
+
+                parsed = json.loads(env_entities)
+                if isinstance(parsed, list):
+                    entities.extend([item for item in parsed if isinstance(item, dict)])
+            except Exception:
+                pass
+        return entities
+
+    def _presidio_requested(self) -> bool:
+        raw = os.getenv("USE_PRESIDIO", os.getenv("AUTHCLAW_USE_PRESIDIO", "true"))
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def sanitize_finding_metadata(findings: List[Dict[str, object]]) -> List[Dict[str, object]]:

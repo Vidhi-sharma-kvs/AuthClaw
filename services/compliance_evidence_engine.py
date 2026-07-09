@@ -93,6 +93,60 @@ CONTROL_CATALOG = [
         "evidence_types": ["redaction", "policy", "finding"],
         "keywords": ["transmission", "redact", "phi", "medical", "secret"],
     },
+    {
+        "control_id": "ISO27001-A.5.15",
+        "framework": "ISO27001",
+        "title": "Access Control",
+        "description": "Access to information and systems is managed according to business and security requirements.",
+        "weight": 10,
+        "evidence_types": ["approval", "policy", "audit"],
+        "keywords": ["access", "rbac", "permission", "identity", "mfa"],
+    },
+    {
+        "control_id": "ISO27001-A.8.12",
+        "framework": "ISO27001",
+        "title": "Data Leakage Prevention",
+        "description": "Data leakage prevention measures are applied to systems and networks.",
+        "weight": 10,
+        "evidence_types": ["redaction", "gateway_event", "finding"],
+        "keywords": ["redact", "leak", "pii", "secret", "exfiltrate"],
+    },
+    {
+        "control_id": "PCI-DSS-3.4",
+        "framework": "PCI_DSS",
+        "title": "Protect Stored Account Data",
+        "description": "Primary account numbers and related card data are protected from unauthorized disclosure.",
+        "weight": 10,
+        "evidence_types": ["redaction", "policy", "audit"],
+        "keywords": ["credit card", "cardholder", "financial", "account number", "payment"],
+    },
+    {
+        "control_id": "PCI-DSS-10.2",
+        "framework": "PCI_DSS",
+        "title": "Audit Logging",
+        "description": "User and security events are logged and protected from tampering.",
+        "weight": 10,
+        "evidence_types": ["audit", "gateway_event", "evidence"],
+        "keywords": ["audit", "hash", "ledger", "log", "integrity"],
+    },
+    {
+        "control_id": "NIST-AC-2",
+        "framework": "NIST",
+        "title": "Account Management",
+        "description": "Information system accounts are managed and reviewed.",
+        "weight": 10,
+        "evidence_types": ["approval", "policy", "audit"],
+        "keywords": ["account", "access", "rbac", "user", "approval"],
+    },
+    {
+        "control_id": "NIST-SI-4",
+        "framework": "NIST",
+        "title": "System Monitoring",
+        "description": "The system is monitored to detect attacks, unauthorized activity, and policy violations.",
+        "weight": 10,
+        "evidence_types": ["gateway_event", "finding", "audit"],
+        "keywords": ["monitor", "attack", "prompt injection", "security", "finding"],
+    },
 ]
 
 
@@ -123,8 +177,8 @@ class ComplianceEvidenceEngine:
                 """),
                 {
                     "version_id": self.corpus_version,
-                    "description": "AuthClaw baseline SOC2/GDPR/HIPAA regulatory control corpus.",
-                    "frameworks": json.dumps(["SOC2", "GDPR", "HIPAA"]),
+                    "description": "AuthClaw baseline SOC2/GDPR/HIPAA/ISO27001/PCI DSS/NIST regulatory control corpus.",
+                    "frameworks": json.dumps(["SOC2", "GDPR", "HIPAA", "ISO27001", "PCI_DSS", "NIST"]),
                     "document_count": len(CONTROL_CATALOG),
                     "embedding_backend": os.getenv("AUTHCLAW_EMBEDDING_BACKEND", "deterministic-local"),
                     "vector_backend": os.getenv("AUTHCLAW_VECTOR_BACKEND", "postgres_json"),
@@ -249,7 +303,7 @@ class ComplianceEvidenceEngine:
             self._persist_control_score(tenant_id, control, score, status, len(items), len(negative), reason, source_event, previous)
 
         frameworks = {}
-        for framework in ["SOC2", "GDPR", "HIPAA"]:
+        for framework in sorted({item["framework"] for item in controls}):
             fw_controls = [item for item in control_scores if item["framework"] == framework]
             weighted_total = sum(self._control_weight(item["control_id"]) for item in fw_controls) or 1
             weighted_score = sum(item["score"] * self._control_weight(item["control_id"]) for item in fw_controls) / weighted_total

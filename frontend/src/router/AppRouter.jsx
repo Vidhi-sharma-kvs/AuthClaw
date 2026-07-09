@@ -16,6 +16,9 @@ import GatewayRequestDetail from '../pages/GatewayRequests/GatewayRequestDetail'
 import Guardrails from '../pages/Guardrails/Guardrails';
 import APIKeys from '../pages/APIKeys/APIKeys';
 import Settings from '../pages/Settings/Settings';
+import RedTeam from '../pages/RedTeam/RedTeam';
+import TenantPlan from '../pages/TenantPlan/TenantPlan';
+import FrameworkExplorer from '../pages/FrameworkExplorer/FrameworkExplorer';
 import Login from '../pages/Login/Login';
 import PublicPage from '../pages/Public/PublicPage';
 import TrustCenter from '../pages/Public/TrustCenter';
@@ -67,6 +70,9 @@ const AppRouter = () => {
         <Route path="/connectors" element={<Connectors />} />
         <Route path="/api-keys" element={<APIKeys />} />
         <Route path="/trust" element={<TrustCenter />} />
+        <Route path="/frameworks/explorer" element={<FrameworkExplorer />} />
+        <Route path="/red-team" element={<RedTeam />} />
+        <Route path="/tenant-plan" element={<TenantPlan />} />
 
         <Route path="/gateway" element={<Navigate to="/providers" replace />} />
         <Route path="/gateway/requests" element={<GatewayRequests />} />

@@ -40,6 +40,10 @@ resource "aws_ecs_task_definition" "app" {
         { name = "SMTP_USE_TLS", value = "true" },
         { name = "MODEL_PROVIDER", value = var.model_provider },
         { name = "MODEL_NAME", value = var.model_name },
+        { name = "AUTHCLAW_OPA_REQUIRED", value = "true" },
+        { name = "AUTHCLAW_OPA_URL", value = "http://127.0.0.1:8181/v1/data/authclaw/allow" },
+        { name = "AUTHCLAW_AWS_KMS_KEY_ID", value = aws_kms_key.authclaw.arn },
+        { name = "AUTHCLAW_KMS_PROVIDER", value = "aws_kms" },
         { name = "AUTHCLAW_DOCUMENT_STORAGE_BACKEND", value = "s3" },
         { name = "AUTHCLAW_DOCUMENT_S3_BUCKET", value = aws_s3_bucket.documents.bucket }
       ]
@@ -80,7 +84,9 @@ resource "aws_ecs_task_definition" "app" {
         { name = "AUTHCLAW_BACKEND_URL", value = "http://127.0.0.1:8000" },
         { name = "AUTHCLAW_ALLOWED_ORIGINS", value = var.allowed_origins },
         { name = "AUTHCLAW_SECRET_BACKEND", value = "aws_secrets_manager" },
-        { name = "AWS_REGION", value = var.aws_region }
+        { name = "AWS_REGION", value = var.aws_region },
+        { name = "AUTHCLAW_OPA_REQUIRED", value = "true" },
+        { name = "AUTHCLAW_OPA_URL", value = "http://127.0.0.1:8181/v1/data/authclaw/allow" }
       ]
       logConfiguration = {
         logDriver = "awslogs"
@@ -92,6 +98,35 @@ resource "aws_ecs_task_definition" "app" {
       }
       healthCheck = {
         command     = ["CMD-SHELL", "wget -qO- http://127.0.0.1:9000/health/ready || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 20
+      }
+    },
+    {
+      name      = "authclaw-opa"
+      image     = var.opa_image
+      essential = true
+      portMappings = [{
+        containerPort = 8181
+        protocol      = "tcp"
+      }]
+      command = [
+        "run",
+        "--server",
+        "--addr=127.0.0.1:8181"
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.gateway.name
+          awslogs-region        = var.aws_region
+          awslogs-stream-prefix = "opa"
+        }
+      }
+      healthCheck = {
+        command     = ["CMD-SHELL", "wget -qO- http://127.0.0.1:8181/health || exit 1"]
         interval    = 30
         timeout     = 5
         retries     = 3

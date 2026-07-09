@@ -121,6 +121,11 @@ def run_startup_migrations():
     ALTER TABLE tenants ADD COLUMN IF NOT EXISTS domain_verification_token VARCHAR(255);
     ALTER TABLE tenants ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(32);
     ALTER TABLE tenants ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+    ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_tier VARCHAR(50) DEFAULT 'enterprise';
+    ALTER TABLE tenants ADD COLUMN IF NOT EXISTS plan VARCHAR(50) DEFAULT 'enterprise';
+    ALTER TABLE tenants ADD COLUMN IF NOT EXISTS tier VARCHAR(50) DEFAULT 'enterprise';
+    ALTER TABLE tenants ADD COLUMN IF NOT EXISTS plan_override TEXT;
+    ALTER TABLE tenants ADD COLUMN IF NOT EXISTS plan_updated_at TIMESTAMP;
     ALTER TABLE tenants DROP CONSTRAINT IF EXISTS tenants_name_key;
     ALTER TABLE gateway_routes ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
 

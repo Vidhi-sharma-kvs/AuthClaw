@@ -17,6 +17,9 @@ const pageTitleMap = {
   '/connectors': 'Connectors',
   '/api-keys': 'API Keys',
   '/trust': 'Trust Center',
+  '/frameworks/explorer': 'Framework Explorer',
+  '/red-team': 'Red Team',
+  '/tenant-plan': 'Tenant Plan',
   '/settings': 'Settings',
 };
 

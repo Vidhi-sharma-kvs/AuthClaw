@@ -12,6 +12,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException, Response, status, Request, UploadFile, File, Form, Depends
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -536,6 +537,26 @@ async def tenant_database_context_middleware(request: Request, call_next):
         if tenant_id is not None:
             response.headers["X-Tenant-ID"] = str(tenant_id)
         return response
+
+
+def _rbac_enforcement_enabled() -> bool:
+    explicit = os.getenv("AUTHCLAW_ENABLE_RBAC_ENFORCEMENT")
+    if explicit is not None:
+        return explicit.strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv("AUTHCLAW_ENV", "development").lower() in {"production", "prod"}
+
+
+@app.middleware("http")
+async def production_rbac_enforcement_middleware(request: Request, call_next):
+    if _rbac_enforcement_enabled():
+        from services.rbac_matrix import enforce_request_access, is_public_endpoint
+
+        method = request.method.upper()
+        path = request.url.path
+        if not is_public_endpoint(method, path):
+            payload = optional_user_from_request(request)
+            enforce_request_access(method, path, payload)
+    return await call_next(request)
 
 def approval_actor_from_payload(payload: dict) -> str:
     return payload.get("email") or payload.get("sub") or "System Admin"
@@ -2131,6 +2152,7 @@ def get_readiness():
         "database": "unknown",
         "production_validation": "not_applicable",
         "document_storage": os.getenv("AUTHCLAW_DOCUMENT_STORAGE_BACKEND", "local"),
+        "rbac_enforcement": "enabled" if _rbac_enforcement_enabled() else "disabled",
     }
     http_status = 200
     try:
@@ -2154,6 +2176,15 @@ def get_readiness():
             checks["production_validation"] = "passed"
 
     return JSONResponse(status_code=http_status, content={"status": "ready" if http_status == 200 else "not_ready", "checks": checks})
+
+
+@app.get("/trust/public/health")
+def get_public_trust_health():
+    from services.trust_center_runtime import trust_runtime_health
+
+    result = trust_runtime_health()
+    status_code = 200 if result.get("status") != "unhealthy" else 503
+    return JSONResponse(status_code=status_code, content=jsonable_encoder(result))
 
 
 @app.get("/metrics")
@@ -2615,6 +2646,15 @@ class SignedExportVerifyRequest(BaseModel):
     payload: Optional[Dict[str, Any]] = None
     payload_b64: Optional[str] = None
     manifest: Dict[str, Any]
+
+
+class PolicyBundlePromotionRequest(BaseModel):
+    bundle_id: str
+
+
+class TenantPlanUpdateRequest(BaseModel):
+    plan: str
+    override_reason: Optional[str] = None
 
 
 # --- NEW COMPONENTS ENDPOINTS IMPLEMENTATIONS ---
@@ -4774,6 +4814,170 @@ def get_compliance_framework_scores(
     return ComplianceEvidenceEngine().calculate_scores(tenant_id)
 
 
+@app.get("/compliance/framework-explorer")
+def get_compliance_framework_explorer(
+    framework: Optional[str] = None,
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    from services.compliance_evidence_engine import ComplianceEvidenceEngine
+
+    engine = ComplianceEvidenceEngine()
+    scores = engine.calculate_scores(tenant_id)
+    controls = engine.catalog(framework)
+    evidence_rows = engine.evidence_export_rows(tenant_id, framework=framework)
+    changes = engine.score_changes(tenant_id, framework=framework)
+    evidence_by_control: Dict[str, List[Dict[str, Any]]] = {}
+    for row in evidence_rows:
+        evidence_by_control.setdefault(row["control_id"], []).append(row)
+    score_items: Dict[str, Dict[str, Any]] = {}
+    for key, value in scores.items():
+        if key.endswith("_controls") and isinstance(value, dict):
+            for item in value.get("items", []):
+                score_items[item["control_id"]] = item
+    return {
+        "tenant_id": tenant_id,
+        "framework_filter": framework,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "framework_scores": scores,
+        "controls": [
+            {
+                **control,
+                "score": score_items.get(control["control_id"], {}).get("score"),
+                "status": score_items.get(control["control_id"], {}).get("status", "catalog_only"),
+                "risk": "LOW" if (score_items.get(control["control_id"], {}).get("score") or 100) >= 85 else "MEDIUM",
+                "evidence": evidence_by_control.get(control["control_id"], []),
+                "linked_audit_logs": [
+                    item for item in evidence_by_control.get(control["control_id"], [])
+                    if item.get("source_type") == "audit"
+                ],
+                "linked_policy": [
+                    item for item in evidence_by_control.get(control["control_id"], [])
+                    if item.get("source_type") == "policy"
+                ],
+                "linked_document": [
+                    item for item in evidence_by_control.get(control["control_id"], [])
+                    if item.get("source_type") in {"document", "evidence"}
+                ],
+                "timestamp": score_items.get(control["control_id"], {}).get("calculated_at"),
+            }
+            for control in controls
+        ],
+        "score_changes": changes,
+    }
+
+
+@app.get("/policy/bundles")
+def list_policy_bundles(
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    from services.policy_bundle_manager import PolicyBundleManager
+    return PolicyBundleManager().list_bundles(tenant_id)
+
+
+@app.post("/policy/bundles/build")
+def build_policy_bundle(
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    actor = policy_actor_from_authorization(authorization)
+    from services.policy_bundle_manager import PolicyBundleManager
+    return PolicyBundleManager().build_bundle(tenant_id, actor=actor)
+
+
+@app.post("/policy/bundles/promote")
+def promote_policy_bundle(
+    req: PolicyBundlePromotionRequest,
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    actor = policy_actor_from_authorization(authorization)
+    from services.policy_bundle_manager import PolicyBundleManager
+    try:
+        return PolicyBundleManager().promote_bundle(tenant_id, req.bundle_id, actor=actor)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/policy/bundles/rollback")
+def rollback_policy_bundle(
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    actor = policy_actor_from_authorization(authorization)
+    from services.policy_bundle_manager import PolicyBundleManager
+    try:
+        return PolicyBundleManager().rollback_bundle(tenant_id, actor=actor)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get("/redteam/history")
+def get_redteam_history(
+    limit: int = 100,
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    from services.redteam_service import RedTeamService
+    return RedTeamService().history(tenant_id, limit=limit)
+
+
+@app.get("/redteam/report")
+def get_redteam_report(
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    from services.redteam_service import RedTeamService
+    return RedTeamService().report(tenant_id)
+
+
+@app.post("/redteam/run")
+def run_redteam(
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    actor = policy_actor_from_authorization(authorization)
+    from services.redteam_service import RedTeamService
+    return RedTeamService().run(tenant_id, actor=actor)
+
+
+@app.get("/tenant/plan")
+def get_tenant_plan(
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    from services.tenant_plan_service import TenantPlanService
+    return TenantPlanService().get_plan(tenant_id)
+
+
+@app.post("/tenant/plan/override")
+def update_tenant_plan(
+    req: TenantPlanUpdateRequest,
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    payload = get_current_user_from_authorization(authorization)
+    if payload.get("role") not in {"Super Admin", "Security Admin"}:
+        raise HTTPException(status_code=403, detail="Tenant access administrator role required.")
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    actor = payload.get("email") or payload.get("sub") or "tenant_admin"
+    from services.tenant_plan_service import TenantPlanService
+    try:
+        return TenantPlanService().update_plan(tenant_id, req.plan, actor, req.override_reason or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 def _build_auditor_package_payload(tenant_id: int, framework: Optional[str] = None) -> Dict[str, Any]:
     from services.compliance_evidence_engine import ComplianceEvidenceEngine
     from verify_audit import verify_audit_chain
@@ -4862,50 +5066,9 @@ def verify_signed_export(req: SignedExportVerifyRequest):
 
 @app.get("/trust/public")
 def get_public_trust_state():
-    from database import engine
-    from services.compliance_evidence_engine import ComplianceEvidenceEngine
-    from verify_audit import create_signed_export_package, verify_audit_chain, verify_signed_export_package
+    from services.trust_center_runtime import build_public_trust_state
 
-    with engine.connect() as conn:
-        row = conn.execute(
-            text("""
-                SELECT id, name, domain
-                FROM tenants
-                WHERE COALESCE(status, 'active') = 'active'
-                ORDER BY id ASC
-                LIMIT 1
-            """)
-        ).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="No active tenant trust state is available")
-
-    tenant_id = int(row.id)
-    evidence_engine = ComplianceEvidenceEngine()
-    payload = {
-        "package_type": "trust_center_state",
-        "tenant_id": tenant_id,
-        "tenant_name": row.name,
-        "tenant_domain": row.domain,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "framework_scores": evidence_engine.calculate_scores(tenant_id),
-        "audit_chain": verify_audit_chain(tenant_id=tenant_id),
-        "corpus": evidence_engine.corpus_status(),
-        "verification_endpoint": "/audit/export/verify",
-    }
-    package = create_signed_export_package(
-        payload,
-        tenant_id=tenant_id,
-        export_type="trust-center-state",
-        framework_scope="SOC2,GDPR,HIPAA",
-    )
-    verification = verify_signed_export_package(payload_b64=package["payload_b64"], manifest=package["manifest"])
-    return {
-        "status": "published",
-        "payload": package["payload"],
-        "manifest": package["manifest"],
-        "payload_b64": package["payload_b64"],
-        "verification": verification,
-    }
+    return build_public_trust_state()
 
 
 # ==============================================================================
@@ -5319,6 +5482,43 @@ def phase1_security_posture(payload: dict = Depends(require_tenant_access_admin)
     posture = security_posture()
     posture["tenant_id"] = payload["tenant_id"]
     return posture
+
+
+@app.get("/security/rbac/matrix")
+def security_rbac_matrix(payload: dict = Depends(require_tenant_access_admin)):
+    from services.rbac_matrix import coverage_report
+
+    report = coverage_report(app)
+    report["tenant_id"] = payload["tenant_id"]
+    report["enforcement_enabled"] = _rbac_enforcement_enabled()
+    return report
+
+
+@app.get("/security/tenant-isolation")
+def security_tenant_isolation(payload: dict = Depends(require_tenant_access_admin)):
+    from services.tenant_isolation_report import tenant_isolation_report
+
+    report = tenant_isolation_report()
+    report["tenant_id"] = payload["tenant_id"]
+    return report
+
+
+@app.get("/security/secrets/health")
+def security_secret_health(payload: dict = Depends(require_tenant_access_admin)):
+    from services.production_readiness import secret_management_readiness
+
+    report = secret_management_readiness()
+    report["tenant_id"] = payload["tenant_id"]
+    return report
+
+
+@app.get("/security/production-readiness")
+def security_production_readiness(payload: dict = Depends(require_tenant_access_admin)):
+    from services.production_readiness import production_readiness_report
+
+    report = production_readiness_report(app)
+    report["tenant_id"] = payload["tenant_id"]
+    return report
 
 
 def deliver_auth_email(recipient: str, subject: str, body: str, purpose: str) -> None:
