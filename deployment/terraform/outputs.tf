@@ -43,3 +43,30 @@ output "analytics_database" {
   value       = var.enable_observability_pipeline ? aws_timestreamwrite_database.analytics[0].database_name : ""
 }
 
+output "global_authclaw_url" {
+  description = "Global multi-region AuthClaw URL when Route53 DR routing is enabled."
+  value       = local.multi_region_enabled ? "https://${var.global_domain_name}" : ""
+}
+
+output "documents_replica_bucket" {
+  description = "Secondary-region replicated document bucket."
+  value       = var.enable_multi_region_dr ? aws_s3_bucket.documents_replica[0].bucket : ""
+}
+
+output "dr_backup_vault_primary" {
+  description = "Primary AWS Backup vault used for DR recovery points."
+  value       = var.enable_multi_region_dr ? aws_backup_vault.primary[0].name : ""
+}
+
+output "dr_backup_vault_secondary" {
+  description = "Secondary AWS Backup vault receiving cross-region backup copies."
+  value       = var.enable_multi_region_dr ? aws_backup_vault.secondary[0].name : ""
+}
+
+output "dr_objectives" {
+  description = "Declared DR objectives for validation and release readiness."
+  value = {
+    rto_minutes = var.dr_rto_minutes
+    rpo_minutes = var.dr_rpo_minutes
+  }
+}

@@ -26,4 +26,7 @@ locals {
     "/health/*",
     "/openapi.json",
   ]
+
+  multi_region_enabled = var.enable_multi_region_dr && var.global_hosted_zone_id != "" && var.global_domain_name != ""
+  primary_dns_target   = var.primary_region_domain_name == "" ? aws_lb.main.dns_name : var.primary_region_domain_name
 }
