@@ -8,6 +8,7 @@ from database import engine
 from providers import get_provider as get_legacy_provider
 from providers.base import BaseProvider
 from providers.gemini_provider import GeminiProvider
+from providers.local_provider import LocalProvider
 from services.provider_connection_tester import normalize_provider_payload
 from services.secret_manager import SecretManager, SecretManagerError
 from services.secret_manager import normalize_provider as normalize_provider_name
@@ -67,6 +68,17 @@ class ProviderRouter:
                 "endpoint": (route.get("endpoint") if route else None) or environment_credential["payload"].get("api_base"),
             }
             return self._build_selection(route=route_like, credential=environment_credential, source="environment_secret")
+
+        if self._local_provider_fallback_enabled():
+            local_provider = LocalProvider()
+            return ProviderSelection(
+                route_id=None,
+                provider_name="local",
+                model=local_provider.model_name,
+                endpoint=local_provider.api_url,
+                provider=local_provider,
+                source="local_development_fallback",
+            )
 
         legacy_provider = get_legacy_provider()
         return ProviderSelection(
@@ -234,6 +246,15 @@ class ProviderRouter:
 
     def _normalize_provider(self, provider: str) -> str:
         return normalize_provider_name(provider)
+
+    def _local_provider_fallback_enabled(self) -> bool:
+        env = os.getenv("AUTHCLAW_ENV", "development").strip().lower()
+        if env in {"production", "prod"}:
+            return False
+        configured = os.getenv("AUTHCLAW_ALLOW_LOCAL_PROVIDER_FALLBACK")
+        if configured is None:
+            return True
+        return configured.strip().lower() in {"1", "true", "yes", "on"}
 
     def _default_model_for(self, provider: str) -> str:
         if provider == "openai":

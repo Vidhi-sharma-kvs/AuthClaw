@@ -8,6 +8,7 @@ from main import API_KEY, encrypt_secret
 from providers.azure_openai_provider import AzureOpenAIProvider
 from providers.cohere_provider import CohereProvider
 from providers.gemini_provider import GeminiProvider
+from providers.local_provider import LocalProvider
 from providers.openai_provider import OpenAIProvider
 from providers.anthropic_provider import AnthropicProvider
 from services.provider_router import ProviderRouter
@@ -74,6 +75,35 @@ def _cleanup_route(route_id, tenant_id, provider):
             {"tenant_id": tenant_id, "provider": provider},
         )
         conn.commit()
+
+
+def _clear_tenant_provider_state(tenant_id):
+    with engine.connect() as conn:
+        conn.execute(
+            text(
+                """
+                DELETE FROM gateway_routes
+                WHERE tenant_id = :tenant_id OR tenant_assignment = :tenant_assignment
+                """
+            ),
+            {"tenant_id": tenant_id, "tenant_assignment": str(tenant_id)},
+        )
+        conn.execute(text("DELETE FROM tenant_credentials WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
+        conn.commit()
+
+
+def test_provider_router_uses_local_fallback_without_credentials_in_development(monkeypatch):
+    tenant_id = _tenant_id_for_test_key()
+    _clear_tenant_provider_state(tenant_id)
+    monkeypatch.setenv("AUTHCLAW_ENV", "development")
+    monkeypatch.delenv("AUTHCLAW_ALLOW_LOCAL_PROVIDER_FALLBACK", raising=False)
+
+    selection = ProviderRouter(tenant_id=tenant_id).select()
+
+    assert selection.provider_name == "local"
+    assert selection.model == "authclaw-local-secure"
+    assert selection.source == "local_development_fallback"
+    assert isinstance(selection.provider, LocalProvider)
 
 
 def test_provider_router_selects_gemini_from_tenant_route_and_credentials():
