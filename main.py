@@ -4476,11 +4476,19 @@ def collect_evidence(
     tenant_id = resolve_tenant(x_api_key, authorization)
     now_str = datetime.now(timezone.utc).date().isoformat()
     f_hash = f"sha256-{hashlib.sha256(req.name.encode()).hexdigest()[:16]}"
+    category_upper = str(req.category or "").upper()
+    framework = category_upper if category_upper in {"SOC2", "GDPR", "HIPAA"} else None
     with engine.connect() as conn:
         conn.execute(
             text("""
-            INSERT INTO compliance_evidence (tenant_id, name, category, file_path, collected_at, hash)
-            VALUES (:tenant_id, :name, :category, :file_path, :collected_at, :hash)
+            INSERT INTO compliance_evidence (
+                tenant_id, name, category, file_path, collected_at, hash,
+                framework, source_type, metadata
+            )
+            VALUES (
+                :tenant_id, :name, :category, :file_path, :collected_at, :hash,
+                :framework, 'manual', :metadata
+            )
             """),
             {
                 "tenant_id": tenant_id,
@@ -4488,7 +4496,9 @@ def collect_evidence(
                 "category": req.category,
                 "file_path": req.file_path,
                 "collected_at": now_str,
-                "hash": f_hash
+                "hash": f_hash,
+                "framework": framework,
+                "metadata": json.dumps({"collected_via": "evidence_api"}),
             }
         )
         conn.commit()
@@ -4501,6 +4511,63 @@ def collect_evidence(
         tenant_id=tenant_id
     )
     return {"status": "success", "message": f"Compliance evidence '{req.name}' successfully vaulted."}
+
+
+@app.get("/compliance/controls")
+def get_compliance_controls(
+    framework: Optional[str] = None,
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    resolve_tenant(x_api_key, authorization)
+    from services.compliance_evidence_engine import ComplianceEvidenceEngine
+    return ComplianceEvidenceEngine().catalog(framework)
+
+
+@app.get("/compliance/corpus")
+def get_regulatory_corpus_status(
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    resolve_tenant(x_api_key, authorization)
+    from services.compliance_evidence_engine import ComplianceEvidenceEngine
+    return ComplianceEvidenceEngine().corpus_status()
+
+
+@app.get("/compliance/score-changes")
+def get_compliance_score_changes(
+    framework: Optional[str] = None,
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    from services.compliance_evidence_engine import ComplianceEvidenceEngine
+    return ComplianceEvidenceEngine().score_changes(tenant_id, framework)
+
+
+@app.get("/compliance/controls/{control_id}/evidence")
+def get_control_evidence(
+    control_id: str,
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    from services.compliance_evidence_engine import ComplianceEvidenceEngine
+    return ComplianceEvidenceEngine().evidence_export_rows(tenant_id, control_id=control_id)
+
+
+@app.get("/compliance/evidence/export/csv")
+def export_control_evidence_csv(
+    framework: Optional[str] = None,
+    control_id: Optional[str] = None,
+    x_api_key: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    tenant_id = resolve_tenant(x_api_key, authorization)
+    from services.compliance_evidence_engine import ComplianceEvidenceEngine
+    data = ComplianceEvidenceEngine().evidence_csv(tenant_id, framework=framework, control_id=control_id)
+    filename = f"control_evidence_{framework or 'all'}.csv"
+    return Response(content=data, media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 @app.delete("/evidence/{id}")
 def delete_evidence(
@@ -4604,55 +4671,8 @@ def get_compliance_framework_scores(
     authorization: Optional[str] = Header(None)
 ):
     tenant_id = resolve_tenant(x_api_key, authorization)
-    
-    from database import engine
-    from sqlalchemy import text
-    try:
-        with engine.connect() as conn:
-            rows = conn.execute(
-                text("""
-                SELECT df.risk_level, df.finding_type 
-                FROM document_findings df
-                JOIN documents d ON df.document_id = d.id
-                WHERE d.status NOT IN ('deleted', 's3_deleted')
-                  AND d.tenant_id = :tenant_id
-                  AND df.tenant_id = :tenant_id
-                """),
-                {"tenant_id": tenant_id}
-            ).fetchall()
-    except Exception as e:
-        logger.error(f"Failed to fetch live framework findings: {e}")
-        rows = []
-
-    open_high = sum(1 for r in rows if r[0] in ("CRITICAL", "HIGH"))
-    open_medium = sum(1 for r in rows if r[0] == "MEDIUM")
-    open_low = sum(1 for r in rows if r[0] == "LOW")
-
-    soc2_deduct = (open_high * 12) + (open_medium * 6)
-    gdpr_deduct = (open_high * 15) + (open_low * 4)
-    hipaa_deduct = (open_high * 20) + (open_medium * 8)
-
-    soc2_score = max(20, min(100, 100 - soc2_deduct))
-    gdpr_score = max(20, min(100, 100 - gdpr_deduct))
-    hipaa_score = max(20, min(100, 100 - hipaa_deduct))
-
-    soc2_failed = min(10, open_high)
-    soc2_passed = 10 - soc2_failed
-
-    gdpr_failed = min(8, open_high)
-    gdpr_passed = 8 - gdpr_failed
-
-    hipaa_failed = min(6, open_high)
-    hipaa_passed = 6 - hipaa_failed
-
-    return {
-        "soc2": soc2_score,
-        "gdpr": gdpr_score,
-        "hipaa": hipaa_score,
-        "soc2_controls": {"passed": soc2_passed, "failed": soc2_failed},
-        "gdpr_controls": {"passed": gdpr_passed, "failed": gdpr_failed},
-        "hipaa_controls": {"passed": hipaa_passed, "failed": hipaa_failed}
-    }
+    from services.compliance_evidence_engine import ComplianceEvidenceEngine
+    return ComplianceEvidenceEngine().calculate_scores(tenant_id)
 
 
 # ==============================================================================

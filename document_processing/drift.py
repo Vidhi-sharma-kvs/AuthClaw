@@ -9,51 +9,20 @@ logger = logging.getLogger("authclaw.document_processing.drift")
 
 def get_current_framework_scores() -> dict:
     """
-    Computes live compliance scores (0-100) for each framework based on current database findings.
+    Computes live compliance scores (0-100) from the evidence-backed control engine.
     """
-    scores = {"SOC2": 100, "GDPR": 100, "HIPAA": 100, "PCI-DSS": 100, "ISO27001": 100}
     try:
+        from services.compliance_evidence_engine import ComplianceEvidenceEngine
         with engine.connect() as conn:
-            rows = conn.execute(
-                text("""
-                SELECT df.finding_type, df.matched_pattern, df.risk_level 
-                FROM document_findings df
-                JOIN documents d ON df.document_id = d.id
-                WHERE d.status NOT IN ('deleted', 's3_deleted')
-                """)
-            ).fetchall()
-            
-        for row in rows:
-            ftype, pattern, risk = row[0], row[1], row[2]
-            rl = risk.upper()
-            penalty = 3
-            if rl == "CRITICAL":
-                penalty = 20
-            elif rl == "HIGH":
-                penalty = 15
-            elif rl == "MEDIUM":
-                penalty = 8
-                
-            # Map findings to frameworks by checking substrings in pattern name
-            pat_upper = pattern.upper()
-            matched_any = False
-            for framework in scores.keys():
-                if framework in pat_upper:
-                    scores[framework] -= penalty
-                    matched_any = True
-                    
-            # If it's a general secret or credential leak, it affects all security frameworks!
-            if ftype in ("Secret", "Credentials") and not matched_any:
-                for framework in scores.keys():
-                    scores[framework] -= penalty
+            tenant_rows = conn.execute(text("SELECT id FROM tenants WHERE status = 'active' ORDER BY id ASC")).fetchall()
+        tenant_id = tenant_rows[0][0] if tenant_rows else None
+        if tenant_id is None:
+            return {"SOC2": 100, "GDPR": 100, "HIPAA": 100}
+        result = ComplianceEvidenceEngine().calculate_scores(int(tenant_id))
+        return {"SOC2": result["soc2"], "GDPR": result["gdpr"], "HIPAA": result["hipaa"]}
     except Exception as e:
         logger.error(f"Failed to calculate live framework scores: {e}")
-
-    # Keep bounds between 20 and 100
-    for fw in scores:
-        scores[fw] = max(20, min(100, scores[fw]))
-        
-    return scores
+        return {"SOC2": 100, "GDPR": 100, "HIPAA": 100}
 
 def record_compliance_snapshot():
     """

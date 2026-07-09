@@ -739,6 +739,82 @@ def run_startup_migrations():
         hash VARCHAR(64) NOT NULL
     );
 
+    ALTER TABLE compliance_evidence ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+    ALTER TABLE compliance_evidence ADD COLUMN IF NOT EXISTS control_id VARCHAR(100);
+    ALTER TABLE compliance_evidence ADD COLUMN IF NOT EXISTS source_type VARCHAR(50) DEFAULT 'manual';
+    ALTER TABLE compliance_evidence ADD COLUMN IF NOT EXISTS source_id VARCHAR(100);
+    ALTER TABLE compliance_evidence ADD COLUMN IF NOT EXISTS framework VARCHAR(50);
+    ALTER TABLE compliance_evidence ADD COLUMN IF NOT EXISTS metadata TEXT;
+
+    CREATE TABLE IF NOT EXISTS compliance_control_catalog (
+        control_id VARCHAR(100) PRIMARY KEY,
+        framework VARCHAR(50) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        description TEXT NOT NULL,
+        weight INTEGER NOT NULL DEFAULT 10,
+        evidence_types TEXT NOT NULL,
+        corpus_version VARCHAR(50) NOT NULL DEFAULT '2026.07'
+    );
+
+    CREATE TABLE IF NOT EXISTS compliance_control_evidence (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        framework VARCHAR(50) NOT NULL,
+        control_id VARCHAR(100) NOT NULL,
+        source_type VARCHAR(50) NOT NULL,
+        source_id VARCHAR(100),
+        evidence_id INTEGER,
+        evidence_hash VARCHAR(128),
+        reason TEXT NOT NULL,
+        impact INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        metadata TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS compliance_control_scores (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        framework VARCHAR(50) NOT NULL,
+        control_id VARCHAR(100) NOT NULL,
+        score INTEGER NOT NULL,
+        status VARCHAR(50) NOT NULL,
+        evidence_count INTEGER NOT NULL DEFAULT 0,
+        negative_findings INTEGER NOT NULL DEFAULT 0,
+        reason TEXT NOT NULL,
+        source_event VARCHAR(100),
+        calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        metadata TEXT,
+        CONSTRAINT uniq_control_score UNIQUE(tenant_id, framework, control_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS compliance_score_changes (
+        id SERIAL PRIMARY KEY,
+        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+        framework VARCHAR(50) NOT NULL,
+        control_id VARCHAR(100),
+        previous_score INTEGER,
+        current_score INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        source_event VARCHAR(100),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        metadata TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS regulatory_corpus_versions (
+        version_id VARCHAR(50) PRIMARY KEY,
+        description TEXT NOT NULL,
+        frameworks TEXT NOT NULL,
+        document_count INTEGER NOT NULL DEFAULT 0,
+        embedding_backend VARCHAR(100) NOT NULL,
+        vector_backend VARCHAR(100) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        activated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS corpus_version VARCHAR(50);
+    ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS corpus_version VARCHAR(50);
+    ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS vector_backend VARCHAR(100) DEFAULT 'postgres_json';
+
     -- High Availability failsafe status
     CREATE TABLE IF NOT EXISTS ha_status (
         id SERIAL PRIMARY KEY,
@@ -924,6 +1000,9 @@ def run_startup_migrations():
     CREATE INDEX IF NOT EXISTS idx_remediation_plans_tenant ON remediation_plans(tenant_id, finding_id);
     CREATE INDEX IF NOT EXISTS idx_remediation_worker_runs_tenant ON remediation_worker_runs(tenant_id, status);
     CREATE INDEX IF NOT EXISTS idx_worker_credential_leases_tenant ON worker_credential_leases(tenant_id, connector_id);
+    CREATE INDEX IF NOT EXISTS idx_compliance_control_evidence_tenant ON compliance_control_evidence(tenant_id, framework, control_id);
+    CREATE INDEX IF NOT EXISTS idx_compliance_control_scores_tenant ON compliance_control_scores(tenant_id, framework);
+    CREATE INDEX IF NOT EXISTS idx_compliance_score_changes_tenant ON compliance_score_changes(tenant_id, framework, created_at);
     CREATE INDEX IF NOT EXISTS idx_knowledge_documents_tenant_id ON knowledge_documents(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_tenant_document ON knowledge_chunks(tenant_id, document_id);
     CREATE INDEX IF NOT EXISTS idx_documents_tenant_id ON documents(tenant_id);
@@ -1161,6 +1240,24 @@ def run_startup_migrations():
         USING (tenant_id::text = current_setting('app.tenant_id', true))
         WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
 
+    ALTER TABLE compliance_control_evidence ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_compliance_control_evidence ON compliance_control_evidence;
+    CREATE POLICY tenant_isolation_compliance_control_evidence ON compliance_control_evidence
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE compliance_control_scores ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_compliance_control_scores ON compliance_control_scores;
+    CREATE POLICY tenant_isolation_compliance_control_scores ON compliance_control_scores
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
+    ALTER TABLE compliance_score_changes ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_compliance_score_changes ON compliance_score_changes;
+    CREATE POLICY tenant_isolation_compliance_score_changes ON compliance_score_changes
+        USING (tenant_id::text = current_setting('app.tenant_id', true))
+        WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
+
     ALTER TABLE remediation_connectors ENABLE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS tenant_isolation_remediation_connectors ON remediation_connectors;
     CREATE POLICY tenant_isolation_remediation_connectors ON remediation_connectors
@@ -1231,6 +1328,9 @@ def run_startup_migrations():
     ALTER TABLE chat_messages FORCE ROW LEVEL SECURITY;
     ALTER TABLE secrets FORCE ROW LEVEL SECURITY;
     ALTER TABLE compliance_evidence FORCE ROW LEVEL SECURITY;
+    ALTER TABLE compliance_control_evidence FORCE ROW LEVEL SECURITY;
+    ALTER TABLE compliance_control_scores FORCE ROW LEVEL SECURITY;
+    ALTER TABLE compliance_score_changes FORCE ROW LEVEL SECURITY;
     ALTER TABLE remediation_connectors FORCE ROW LEVEL SECURITY;
     ALTER TABLE remediation_findings FORCE ROW LEVEL SECURITY;
     ALTER TABLE remediation_plans FORCE ROW LEVEL SECURITY;
