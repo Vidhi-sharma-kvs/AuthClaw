@@ -1,5 +1,6 @@
 import re
 import logging
+import bisect
 from typing import List, Dict, Any
 
 logger = logging.getLogger("authclaw.document_processing.scanners")
@@ -43,6 +44,10 @@ def scan_text_for_sensitive_data(text: str) -> List[Dict[str, Any]]:
     Returns a structured list of findings with recommendations, impact, priority, and location evidence.
     """
     findings = []
+    newline_offsets = [idx for idx, char in enumerate(text) if char == "\n"]
+
+    def line_number(offset: int) -> int:
+        return bisect.bisect_right(newline_offsets, offset) + 1
     
     # 1. Primary regex scanner
     for key, regex in PATTERNS.items():
@@ -87,7 +92,7 @@ def scan_text_for_sensitive_data(text: str) -> List[Dict[str, Any]]:
                 preview = f"{preview[:6]}...{preview[-6:]}"
                 
             # Determine line number for location evidence
-            line_no = text[:match.start()].count("\n") + 1
+            line_no = line_number(match.start())
             location_evidence = f"Line {line_no}"
             
             findings.append({
@@ -126,7 +131,7 @@ def scan_text_for_sensitive_data(text: str) -> List[Dict[str, Any]]:
             if len(preview) > 12:
                 preview = f"{preview[:4]}...{preview[-4:]}"
                 
-            line_no = text[:match.start()].count("\n") + 1
+            line_no = line_number(match.start())
             location_evidence = f"Line {line_no}"
             
             findings.append({

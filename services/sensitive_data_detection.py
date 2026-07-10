@@ -83,9 +83,9 @@ class SensitiveDataDetector:
     _cached_presidio_analyzer = None
     _cached_presidio_anonymizer = None
 
-    def __init__(self, tenant_id=None):
+    def __init__(self, tenant_id=None, use_presidio: Optional[bool] = None):
         self.tenant_id = tenant_id
-        self._use_presidio = self._presidio_requested()
+        self._use_presidio = self._presidio_requested() if use_presidio is None else bool(use_presidio)
         if self._use_presidio and SensitiveDataDetector._cached_presidio_analyzer is None:
             try:
                 from presidio_analyzer import AnalyzerEngine
@@ -105,14 +105,15 @@ class SensitiveDataDetector:
     def presidio_enabled(self) -> bool:
         return self._presidio_analyzer is not None
 
-    def inspect(self, text: str) -> List[SensitiveFinding]:
+    def inspect(self, text: str, use_presidio: Optional[bool] = None) -> List[SensitiveFinding]:
         findings = self._custom_findings(text)
         findings.extend(self._enterprise_findings(text))
-        findings.extend(self._presidio_findings(text))
+        if use_presidio is not False:
+            findings.extend(self._presidio_findings(text))
         return self._dedupe(findings)
 
-    def redact(self, text: str, username: str = "system") -> Tuple[str, List[Dict[str, object]]]:
-        findings = self.inspect(text)
+    def redact(self, text: str, username: str = "system", use_presidio: Optional[bool] = None) -> Tuple[str, List[Dict[str, object]]]:
+        findings = self.inspect(text, use_presidio=use_presidio)
         if not findings:
             return text, []
 
@@ -317,8 +318,21 @@ class SensitiveDataDetector:
         return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def sanitize_finding_metadata(findings: List[Dict[str, object]]) -> List[Dict[str, object]]:
-    detector = SensitiveDataDetector()
+_DETECTOR_CACHE: Dict[object, SensitiveDataDetector] = {}
+
+
+def get_sensitive_data_detector(tenant_id=None, use_presidio: Optional[bool] = None) -> SensitiveDataDetector:
+    presidio_key = "default" if use_presidio is None else bool(use_presidio)
+    key = (tenant_id if tenant_id is not None else "__default__", presidio_key)
+    detector = _DETECTOR_CACHE.get(key)
+    if detector is None:
+        detector = SensitiveDataDetector(tenant_id, use_presidio=use_presidio)
+        _DETECTOR_CACHE[key] = detector
+    return detector
+
+
+def sanitize_finding_metadata(findings: List[Dict[str, object]], detector: Optional[SensitiveDataDetector] = None) -> List[Dict[str, object]]:
+    detector = detector or get_sensitive_data_detector()
     sanitized = []
     for finding in findings:
         item = dict(finding)

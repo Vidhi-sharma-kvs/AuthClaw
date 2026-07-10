@@ -7,7 +7,11 @@ export const ToastProvider = ({ children }) => {
 
   const addToast = (message, type = 'success') => {
     const id = Date.now();
-    setToasts((prev) => [...prev, { id, message, type }]);
+    setToasts((prev) => {
+      const duplicate = prev.some((toast) => toast.message === message && toast.type === type);
+      if (duplicate) return prev;
+      return [...prev.slice(-4), { id, message, type }];
+    });
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 4000);
@@ -20,7 +24,7 @@ export const ToastProvider = ({ children }) => {
   return (
     <ToastContext.Provider value={{ addToast }}>
       {children}
-      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full">
+      <div className="fixed bottom-4 left-4 right-4 z-50 flex flex-col gap-2 sm:left-auto sm:w-full sm:max-w-sm">
         {toasts.map((toast) => (
           <div
             key={toast.id}
@@ -34,7 +38,7 @@ export const ToastProvider = ({ children }) => {
             }`}
           >
             <span className="text-sm font-medium">{toast.message}</span>
-            <span className="text-xs opacity-50 ml-4">✕</span>
+            <span className="text-xs opacity-50 ml-4">x</span>
           </div>
         ))}
       </div>

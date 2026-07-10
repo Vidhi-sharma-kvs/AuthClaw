@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from database import engine
 from scripts.red_team_harness import run_harness
@@ -13,42 +14,45 @@ class RedTeamService:
         report = run_harness()
         rows = []
         now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        with engine.connect() as conn:
-            for case in report.get("cases", []):
-                passed = bool(case.get("passed"))
-                severity = "LOW" if passed else "HIGH"
-                category = str(case.get("name") or "redteam_probe")
-                payload = {
-                    "probe": category,
-                    "category": category,
-                    "severity": severity,
-                    "timestamp": now,
-                    "result": "PASS" if passed else "FAIL",
-                    "confidence": 0.95,
-                    "evidence": case.get("detail"),
-                    "regression_status": "clear" if passed else "regression",
-                    "actor": actor,
-                    "tenant_id": tenant_id,
-                }
-                storage_type = "redteam_probe"
-                vulnerability = "none" if passed else category[:30]
-                row = conn.execute(
-                    text("""
-                        INSERT INTO redteam_attacks (type, success, findings, vulnerability, timestamp)
-                        VALUES (:type, :success, :findings, :vulnerability, :timestamp)
-                        RETURNING id
-                    """),
-                    {
-                        "type": storage_type,
-                        "success": not passed,
-                        "findings": json.dumps(payload, default=str),
-                        "vulnerability": vulnerability,
+        try:
+            with engine.connect() as conn:
+                for case in report.get("cases", []):
+                    passed = bool(case.get("passed"))
+                    severity = "LOW" if passed else "HIGH"
+                    category = str(case.get("name") or "redteam_probe")
+                    payload = {
+                        "probe": category,
+                        "category": category,
+                        "severity": severity,
                         "timestamp": now,
-                    },
-                ).fetchone()
-                payload["id"] = row[0] if row else None
-                rows.append(payload)
-            conn.commit()
+                        "result": "PASS" if passed else "FAIL",
+                        "confidence": 0.95,
+                        "evidence": case.get("detail"),
+                        "regression_status": "clear" if passed else "regression",
+                        "actor": actor,
+                        "tenant_id": tenant_id,
+                    }
+                    storage_type = "redteam_probe"
+                    vulnerability = "none" if passed else category[:30]
+                    row = conn.execute(
+                        text("""
+                            INSERT INTO redteam_attacks (type, success, findings, vulnerability, timestamp)
+                            VALUES (:type, :success, :findings, :vulnerability, :timestamp)
+                            RETURNING id
+                        """),
+                        {
+                            "type": storage_type,
+                            "success": not passed,
+                            "findings": json.dumps(payload, default=str),
+                            "vulnerability": vulnerability,
+                            "timestamp": now,
+                        },
+                    ).fetchone()
+                    payload["id"] = row[0] if row else None
+                    rows.append(payload)
+                conn.commit()
+        except SQLAlchemyError:
+            rows = []
         return {
             "tenant_id": tenant_id,
             "status": report.get("status"),
@@ -58,16 +62,19 @@ class RedTeamService:
         }
 
     def history(self, tenant_id: int, limit: int = 100) -> List[Dict[str, Any]]:
-        with engine.connect() as conn:
-            rows = conn.execute(
-                text("""
-                    SELECT id, type, success, findings, vulnerability, timestamp
-                    FROM redteam_attacks
-                    ORDER BY id DESC
-                    LIMIT :limit
-                """),
-                {"limit": max(1, min(limit, 500))},
-            ).fetchall()
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(
+                    text("""
+                        SELECT id, type, success, findings, vulnerability, timestamp
+                        FROM redteam_attacks
+                        ORDER BY id DESC
+                        LIMIT :limit
+                    """),
+                    {"limit": max(1, min(limit, 500))},
+                ).fetchall()
+        except SQLAlchemyError:
+            return []
         records = []
         for row in rows:
             payload = self._decode(row.findings)

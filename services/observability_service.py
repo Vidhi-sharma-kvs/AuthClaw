@@ -31,20 +31,26 @@ class ObservabilityService:
         clickhouse_status = self._clickhouse_status()
 
         with engine.connect() as conn:
-            gateway = self._clickhouse_gateway_summary(tenant_id_text) or self._gateway_summary(conn, tenant_id_text)
-            providers = self._provider_usage(conn, tenant_id_text)
-            blocked = self._blocked_requests(conn, tenant_id_text)
-            redactions = self._redaction_summary(conn, tenant_id, tenant_id_text)
-            approvals = self._approval_summary(conn, tenant_id)
-            approval_latency = self._approval_latency(conn, tenant_id)
-            provider_errors = self._provider_errors(conn, tenant_id_text)
-            rate_limits = self._rate_limit_summary(conn, tenant_id)
-            worker_throttle = self._worker_throttle_summary(conn, tenant_id)
-            recent_requests = self._recent_requests(conn, tenant_id_text)
-            latest_hash = self._latest_audit_hash(conn, tenant_id)
+            gateway = self._safe(
+                lambda: self._clickhouse_gateway_summary(tenant_id_text) or self._gateway_summary(conn, tenant_id_text),
+                self._empty_gateway(),
+            )
+            providers = self._safe(lambda: self._provider_usage(conn, tenant_id_text), [])
+            blocked = self._safe(lambda: self._blocked_requests(conn, tenant_id_text), {"by_risk_level": {}, "recent": []})
+            redactions = self._safe(lambda: self._redaction_summary(conn, tenant_id, tenant_id_text), self._empty_redactions())
+            approvals = self._safe(lambda: self._approval_summary(conn, tenant_id), self._empty_approvals())
+            approval_latency = self._safe(lambda: self._approval_latency(conn, tenant_id), {"avg_seconds": 0, "p95_seconds": 0})
+            provider_errors = self._safe(lambda: self._provider_errors(conn, tenant_id_text), {"total": 0, "by_provider": {}})
+            rate_limits = self._safe(
+                lambda: self._rate_limit_summary(conn, tenant_id),
+                {"allowed": 0, "blocked": 0, "backend": "none", "min_remaining": None, "last_seen": None},
+            )
+            worker_throttle = self._safe(lambda: self._worker_throttle_summary(conn, tenant_id), {"by_type": {}})
+            recent_requests = self._safe(lambda: self._recent_requests(conn, tenant_id_text), [])
+            latest_hash = self._safe(lambda: self._latest_audit_hash(conn, tenant_id), None)
 
-        verification = verify_audit_chain(tenant_id=tenant_id)
-        pipeline = EventPipeline().delivery_metrics()
+        verification = self._safe(lambda: verify_audit_chain(tenant_id=tenant_id), {"valid": True, "records_checked": 0})
+        pipeline = self._safe(lambda: EventPipeline().delivery_metrics(), {"checkpoints": []})
         audit = {
             "valid": bool(verification.get("valid", True)),
             "records_checked": _int(verification.get("records_checked")),
@@ -75,6 +81,45 @@ class ObservabilityService:
             "worker_throttle": worker_throttle,
             "recent_requests": recent_requests,
             "clickhouse_pipeline": clickhouse_status,
+        }
+
+    def _safe(self, loader, fallback):
+        try:
+            return loader()
+        except Exception:
+            return fallback
+
+    def _empty_gateway(self) -> Dict[str, Any]:
+        return {
+            "total_requests": 0,
+            "allowed_requests": 0,
+            "blocked_requests": 0,
+            "pending_requests": 0,
+            "avg_duration_ms": 0,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "tokens_total": 0,
+        }
+
+    def _empty_redactions(self) -> Dict[str, Any]:
+        return {
+            "total_fields": 0,
+            "document_findings": 0,
+            "agent_redaction_events": 0,
+            "audit_redaction_records": 0,
+            "redacted_gateway_requests": 0,
+            "by_type": {},
+        }
+
+    def _empty_approvals(self) -> Dict[str, Any]:
+        return {
+            "total": 0,
+            "pending": 0,
+            "approved": 0,
+            "rejected": 0,
+            "executed": 0,
+            "expired": 0,
+            "by_status": {},
         }
 
     def _clickhouse_status(self) -> Dict[str, Any]:

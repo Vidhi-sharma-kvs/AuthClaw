@@ -13,18 +13,26 @@ const RedTeam = () => {
 
   const loadData = async () => {
     setLoading(true);
-    try {
-      const [reportRes, historyRes] = await Promise.all([
-        apiClient.get('/redteam/report'),
-        apiClient.get('/redteam/history?limit=100'),
-      ]);
-      setReport(reportRes.data);
-      setHistory(historyRes.data || []);
-    } catch (error) {
-      addToast(error.response?.data?.detail || 'Failed to load red-team register.', 'error');
-    } finally {
-      setLoading(false);
+    const [reportRes, historyRes] = await Promise.allSettled([
+      apiClient.get('/redteam/report'),
+      apiClient.get('/redteam/history?limit=100'),
+    ]);
+
+    if (reportRes.status === 'fulfilled') {
+      setReport(reportRes.value.data);
+    } else {
+      setReport((current) => current || { total_probes: 0, successful_attacks: 0, regressions: [], by_severity: {}, failed_prompts: [] });
+      addToast(reportRes.reason?.response?.data?.detail || 'Failed to load red-team summary.', 'error');
     }
+
+    if (historyRes.status === 'fulfilled') {
+      setHistory(historyRes.value.data || []);
+    } else {
+      setHistory([]);
+      addToast(historyRes.reason?.response?.data?.detail || 'Failed to load red-team history.', 'error');
+    }
+
+    setLoading(false);
   };
 
   useEffect(() => {

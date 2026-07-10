@@ -4821,13 +4821,28 @@ def get_compliance_framework_explorer(
     authorization: Optional[str] = Header(None)
 ):
     tenant_id = resolve_tenant(x_api_key, authorization)
-    from services.compliance_evidence_engine import ComplianceEvidenceEngine
+    from services.compliance_evidence_engine import CONTROL_CATALOG, ComplianceEvidenceEngine
 
     engine = ComplianceEvidenceEngine()
-    scores = engine.calculate_scores(tenant_id)
-    controls = engine.catalog(framework)
-    evidence_rows = engine.evidence_export_rows(tenant_id, framework=framework)
-    changes = engine.score_changes(tenant_id, framework=framework)
+    try:
+        controls = engine.catalog(framework)
+    except Exception:
+        controls = [dict(item) for item in CONTROL_CATALOG]
+        if framework:
+            framework_key = framework.upper()
+            controls = [item for item in controls if item.get("framework") == framework_key]
+    try:
+        scores = engine.calculate_scores(tenant_id)
+    except Exception:
+        scores = {}
+    try:
+        evidence_rows = engine.evidence_export_rows(tenant_id, framework=framework)
+    except Exception:
+        evidence_rows = []
+    try:
+        changes = engine.score_changes(tenant_id, framework=framework)
+    except Exception:
+        changes = []
     evidence_by_control: Dict[str, List[Dict[str, Any]]] = {}
     for row in evidence_rows:
         evidence_by_control.setdefault(row["control_id"], []).append(row)

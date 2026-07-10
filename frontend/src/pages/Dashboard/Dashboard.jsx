@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { 
   ShieldCheck, 
   ShieldAlert, 
@@ -25,81 +25,126 @@ import {
   Button 
 } from '../../components/Common/DesignSystem';
 
+const INITIAL_DASHBOARD_DATA = {
+  keysCount: 0,
+  providers: [],
+  auditSum: null,
+  auditChain: [],
+  tenantInfo: null,
+  policies: [],
+  metrics: null,
+  gatewayStats: null,
+  governanceAnalytics: null,
+};
+
 const Dashboard = () => {
-  const [keysCount, setKeysCount] = useState(0);
-  const [providers, setProviders] = useState([]);
-  const [auditSum, setAuditSum] = useState(null);
-  const [auditChain, setAuditChain] = useState([]);
-  const [tenantInfo, setTenantInfo] = useState(null);
-  const [policies, setPolicies] = useState([]);
-  const [metrics, setMetrics] = useState(null);
-  const [gatewayStats, setGatewayStats] = useState(null);
-  const [governanceAnalytics, setGovernanceAnalytics] = useState(null);
+  const [dashboardData, setDashboardData] = useState(INITIAL_DASHBOARD_DATA);
   const [loading, setLoading] = useState(true);
+  const mountedRef = useRef(false);
+  const inFlightRef = useRef(false);
 
-  const fetchData = async () => {
-    try {
-      // Fetch dynamic active keys
-      const keysRes = await apiClient.get('/keys/list');
-      setKeysCount(keysRes.data.length);
-      
-      // Fetch dynamic connected providers
-      const provRes = await apiClient.get('/providers/list');
-      setProviders(provRes.data);
+  const {
+    keysCount,
+    providers,
+    auditSum,
+    auditChain,
+    tenantInfo,
+    policies,
+    metrics,
+    gatewayStats,
+    governanceAnalytics,
+  } = dashboardData;
 
-      // Fetch dynamic audit ledger
-      const auditSumData = await getAuditSummary();
-      setAuditSum(auditSumData);
-      
-      const chainRes = await apiClient.get('/audit/hash-chain?limit=5');
-      setAuditChain(chainRes.data);
+  const fetchData = useCallback(async ({ initial = false } = {}) => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    if (initial) setLoading(true);
 
-      // Get logged-in tenant status
-      const userStr = localStorage.getItem('authclaw_user');
-      if (userStr) {
-        const userObj = JSON.parse(userStr);
-        setTenantInfo(userObj);
-      }
-
-      // Fetch dynamic policies
-      const polRes = await apiClient.get('/policies/list');
-      setPolicies(polRes.data || []);
-
-      // Fetch live gateway execution metrics
-      const metricsRes = await apiClient.get('/metrics');
-      setMetrics(metricsRes.data);
-
-      const analyticsData = await getGovernanceAnalytics();
-      setGovernanceAnalytics(analyticsData);
-
-      setGatewayStats({
-        totalRequests: analyticsData.gateway.total_requests,
-        approvedRequests: analyticsData.gateway.allowed_requests,
-        blockedRequests: analyticsData.gateway.blocked_requests,
-        pendingApprovals: analyticsData.approvals.pending,
-        providerUsage: Object.fromEntries((analyticsData.providers || []).map((item) => [item.provider, item.requests])),
-        requests: analyticsData.recent_requests,
-        approvals: analyticsData.approvals,
-      });
-
-    } catch (error) {
-      console.error('Error loading operational dashboard metrics:', error);
+    const userStr = localStorage.getItem('authclaw_user');
+    let nextTenantInfo = null;
+    if (userStr) {
       try {
-        const gatewayStatsData = await getGatewayStats();
-        setGatewayStats(gatewayStatsData);
-      } catch (statsError) {
-        console.error('Error loading gateway fallback metrics:', statsError);
+        nextTenantInfo = JSON.parse(userStr);
+      } catch {
+        nextTenantInfo = null;
       }
-    } finally {
-      setLoading(false);
     }
-  };
+
+    try {
+      const results = await Promise.allSettled([
+        apiClient.get('/keys/list'),
+        apiClient.get('/providers/list'),
+        getAuditSummary(),
+        apiClient.get('/audit/hash-chain?limit=5'),
+        apiClient.get('/policies/list'),
+        apiClient.get('/metrics'),
+        getGovernanceAnalytics(),
+      ]);
+
+      const [keysRes, provRes, auditRes, chainRes, policiesRes, metricsRes, analyticsRes] = results;
+      let fallbackGatewayStats = null;
+
+      if (analyticsRes.status !== 'fulfilled') {
+        try {
+          fallbackGatewayStats = await getGatewayStats();
+        } catch (statsError) {
+          console.error('Error loading gateway fallback metrics:', statsError);
+        }
+      }
+
+      if (!mountedRef.current) return;
+
+      setDashboardData((prev) => {
+        const analyticsData = analyticsRes.status === 'fulfilled' ? analyticsRes.value : null;
+        const nextGatewayStats = analyticsData
+          ? {
+              totalRequests: analyticsData.gateway.total_requests,
+              approvedRequests: analyticsData.gateway.allowed_requests,
+              blockedRequests: analyticsData.gateway.blocked_requests,
+              pendingApprovals: analyticsData.approvals.pending,
+              providerUsage: Object.fromEntries((analyticsData.providers || []).map((item) => [item.provider, item.requests])),
+              requests: analyticsData.recent_requests,
+              approvals: analyticsData.approvals,
+            }
+          : fallbackGatewayStats || prev.gatewayStats;
+
+        return {
+          keysCount: keysRes.status === 'fulfilled' ? keysRes.value.data.length : prev.keysCount,
+          providers: provRes.status === 'fulfilled' ? provRes.value.data : prev.providers,
+          auditSum: auditRes.status === 'fulfilled' ? auditRes.value : prev.auditSum,
+          auditChain: chainRes.status === 'fulfilled' ? chainRes.value.data : prev.auditChain,
+          tenantInfo: nextTenantInfo,
+          policies: policiesRes.status === 'fulfilled' ? policiesRes.value.data || [] : prev.policies,
+          metrics: metricsRes.status === 'fulfilled' ? metricsRes.value.data : prev.metrics,
+          gatewayStats: nextGatewayStats,
+          governanceAnalytics: analyticsData || prev.governanceAnalytics,
+        };
+      });
+    } finally {
+      if (mountedRef.current) setLoading(false);
+      inFlightRef.current = false;
+    }
+  }, []);
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 15000);
-    return () => clearInterval(interval);
-  }, []);
+    mountedRef.current = true;
+    fetchData({ initial: true });
+    const interval = setInterval(() => fetchData(), 30000);
+    return () => {
+      mountedRef.current = false;
+      clearInterval(interval);
+    };
+  }, [fetchData]);
+
+  const providerUsageEntries = useMemo(
+    () => Object.entries(gatewayStats?.providerUsage || {}).slice(0, 3),
+    [gatewayStats]
+  );
+
+  const redactionEntries = useMemo(
+    () => Object.entries(governanceAnalytics?.redactions?.by_type || {}),
+    [governanceAnalytics]
+  );
 
   const handleAuditExport = async (format) => {
     try {
@@ -203,8 +248,8 @@ const Dashboard = () => {
             <Server className="w-4 h-4 text-blue-400" />
           </div>
           <div className="space-y-1.5 mt-2">
-            {gatewayStats?.providerUsage && Object.keys(gatewayStats.providerUsage).length > 0 ? (
-              Object.entries(gatewayStats.providerUsage).slice(0, 3).map(([provider, count]) => (
+            {providerUsageEntries.length > 0 ? (
+              providerUsageEntries.map(([provider, count]) => (
                 <div key={provider} className="flex justify-between text-[11px]">
                   <span className="text-[#475069] capitalize">{provider}</span>
                   <span className="font-mono text-[#0E1726] font-bold">{count}</span>
@@ -310,8 +355,8 @@ const Dashboard = () => {
             Redaction Analytics
           </h3>
           <div className="space-y-3">
-            {governanceAnalytics?.redactions?.by_type && Object.keys(governanceAnalytics.redactions.by_type).length ? (
-              Object.entries(governanceAnalytics.redactions.by_type).map(([type, count]) => (
+            {redactionEntries.length ? (
+              redactionEntries.map(([type, count]) => (
                 <div key={type} className="flex justify-between items-center text-xs bg-[#F5F7FA]/80 p-3 rounded-lg border border-[#E6E9F0]">
                   <span className="font-bold text-[#0E1726]">{type}</span>
                   <span className="font-mono text-fuchsia-300 font-bold">{count}</span>
@@ -509,4 +554,4 @@ const Dashboard = () => {
   );
 };
 
-export default Dashboard;
+export default React.memo(Dashboard);

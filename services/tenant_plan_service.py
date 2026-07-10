@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from database import engine
 
@@ -29,30 +30,36 @@ class TenantPlanService:
                 """),
                 {"tenant_id": tenant_id},
             ).fetchone()
-            usage = conn.execute(
-                text("""
-                    SELECT
-                        COUNT(*) AS requests,
-                        SUM(CASE WHEN allowed THEN 0 ELSE 1 END) AS blocked,
-                        COALESCE(MIN(remaining), 0) AS min_remaining,
-                        COALESCE(MAX(limit_count), 0) AS rate_limit
-                    FROM rate_limit_events
-                    WHERE tenant_id = :tenant_id
-                      AND created_at >= date_trunc('month', NOW())
-                """),
-                {"tenant_id": tenant_id},
-            ).fetchone()
-            history = conn.execute(
-                text("""
-                    SELECT id, created_at, response
-                    FROM audit_logs
-                    WHERE tenant_id = :tenant_id
-                      AND user_query LIKE 'Tenant plan%'
-                    ORDER BY id DESC
-                    LIMIT 20
-                """),
-                {"tenant_id": tenant_id},
-            ).fetchall()
+            try:
+                usage = conn.execute(
+                    text("""
+                        SELECT
+                            COUNT(*) AS requests,
+                            SUM(CASE WHEN allowed THEN 0 ELSE 1 END) AS blocked,
+                            COALESCE(MIN(remaining), 0) AS min_remaining,
+                            COALESCE(MAX(limit_count), 0) AS rate_limit
+                        FROM rate_limit_events
+                        WHERE tenant_id = :tenant_id
+                          AND created_at >= date_trunc('month', NOW())
+                    """),
+                    {"tenant_id": tenant_id},
+                ).fetchone()
+            except SQLAlchemyError:
+                usage = None
+            try:
+                history = conn.execute(
+                    text("""
+                        SELECT id, created_at, response
+                        FROM audit_logs
+                        WHERE tenant_id = :tenant_id
+                          AND user_query LIKE 'Tenant plan%'
+                        ORDER BY id DESC
+                        LIMIT 20
+                    """),
+                    {"tenant_id": tenant_id},
+                ).fetchall()
+            except SQLAlchemyError:
+                history = []
         if not tenant:
             return {}
         plan = str(tenant.plan or "enterprise").lower()

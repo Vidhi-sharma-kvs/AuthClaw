@@ -48,18 +48,26 @@ const Settings = () => {
   const canSubmitUserRole = validWorkEmail && selectedUserExists;
 
   const fetchData = async () => {
-    try {
-      const tenantRes = await apiClient.get('/tenants');
-      const userRes = await apiClient.get('/access-control/users');
-      
-      setTenants(tenantRes.data);
-      setUsers(userRes.data);
-    } catch (error) {
-      console.error('Error fetching settings:', error);
-      addToast('Error loading workspace configuration.', 'error');
-    } finally {
-      setLoading(false);
+    const [tenantRes, userRes] = await Promise.allSettled([
+      apiClient.get('/tenants'),
+      apiClient.get('/access-control/users'),
+    ]);
+
+    if (tenantRes.status === 'fulfilled') {
+      setTenants(tenantRes.value.data);
+    } else {
+      console.error('Error loading tenants:', tenantRes.reason);
+      addToast('Tenant configuration is not available yet.', 'error');
     }
+
+    if (userRes.status === 'fulfilled') {
+      setUsers(userRes.value.data);
+    } else {
+      console.error('Error loading access-control users:', userRes.reason);
+      addToast('RBAC user configuration is not available yet.', 'error');
+    }
+
+    setLoading(false);
   };
 
   useEffect(() => {

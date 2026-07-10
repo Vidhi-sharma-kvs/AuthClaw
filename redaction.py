@@ -3,7 +3,45 @@ import hashlib
 import hmac
 import os
 from policy import get_policy
-from services.sensitive_data_detection import SensitiveDataDetector, sanitize_finding_metadata
+from services.sensitive_data_detection import get_sensitive_data_detector, sanitize_finding_metadata
+
+
+GDPR_PATTERNS = {
+    "ssn": re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
+    "ssn_raw": re.compile(r"\b\d{9}\b"),
+    "passport": re.compile(r"\b[A-Za-z]{1,2}\d{7,9}\b"),
+    "keyword": re.compile(r"\b(passport|ssn|social security number)(\s+(?:number|no|code|is|of|:)?\s*)([A-Za-z0-9_-]+)\b", re.IGNORECASE),
+}
+
+HIPAA_PATTERNS = {
+    "medical_record": re.compile(r"\b(?:MR|EMR|PT|PID|PATIENT|PATIENTID)[- ]?\d{4,8}\b", re.IGNORECASE),
+    "keyword": re.compile(r"\b(medical record|diagnosis|diagnoses|health history|patient identifier|patient identifiers)(\s+(?:number|no|code|is|of|includes|:)?\s*)([A-Za-z0-9_-]+)\b", re.IGNORECASE),
+}
+
+SOC2_PATTERNS = {
+    "card_brand": re.compile(r"\b(?:4\d{12}(?:\d{3})?|5[1-5]\d{14}|3[47]\d{13}|6(?:011|5\d{2}|4[4-9]\d{1})\d{12})\b"),
+    "card_delimited": re.compile(r"\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b"),
+    "card_digits": re.compile(r"\b\d{13,19}\b"),
+    "routing": re.compile(r"\b\d{9}\b"),
+    "keyword": re.compile(r"\b(bank routing|routing number|pin|pin number|personal identification number)(\s+(?:number|no|code|is|of|includes|:)?\s*)([A-Za-z0-9_-]+)\b", re.IGNORECASE),
+    "pin_near": re.compile(r"\b(?:pin|pin number|personal identification number)\b.{1,15}\b(\d{4,6})\b", re.IGNORECASE),
+}
+
+BASELINE_PATTERNS = {
+    "email": re.compile(r"[\w\.-]+@[\w\.-]+\.\w+"),
+    "aadhaar": re.compile(r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}\b"),
+    "phone": re.compile(r"\b\d{10}\b"),
+}
+
+STREAM_HINT_WORDS = (
+    "@", "sk-", "akia", "asia", "aroa", "anpa", "aiza", "bearer", "eyj",
+    "api_key", "api-key", "secret=", "secret:", "token=", "token:",
+    "access_token", "refresh_token", "password=", "password:", "client_secret",
+    "ssn", "social security", "passport", "medical record", "patient",
+    "diagnosis", "health history", "routing number", "credit card", "pin ",
+    "ignore previous", "reveal system prompt", "developer mode", "jailbreak",
+    "system prompt", "hidden_metadata",
+)
 
 
 def _redaction_fingerprint(value: str) -> str:
@@ -76,21 +114,20 @@ def apply_redaction(field: str, match, action: str) -> str:
         return "[REDACTED_CARD]"
     return val
 
-def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_id=None) -> tuple:
+def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_id=None, use_presidio=True) -> tuple:
     """
     Identifies sensitive fields based on active database guardrail policies
     and applies [REDACTED] replacement. Also checks baseline yaml redactions.
     Returns (redacted_text, triggered_policies).
     """
-    import re
     import os
     from datetime import datetime
     from policy import get_db_policies
 
     triggered_policies = []
 
-    strong_detector = SensitiveDataDetector(tenant_id)
-    text, strong_findings = strong_detector.redact(text, username)
+    strong_detector = get_sensitive_data_detector(tenant_id, use_presidio=use_presidio)
+    text, strong_findings = strong_detector.redact(text, username, use_presidio=use_presidio)
     triggered_policies.extend(strong_findings)
 
     def record_baseline_trigger(policy_name: str, field: str, value: str):
@@ -113,8 +150,8 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
         rules = gdpr_p.get("rules", {})
         if rules.get("pii_redaction", False):
             # SSN Pattern (with dashes 123-45-6789 or raw 9 digits)
-            ssn_pattern = r"\b\d{3}-\d{2}-\d{4}\b"
-            for m in re.finditer(ssn_pattern, text):
+            ssn_pattern = GDPR_PATTERNS["ssn"]
+            for m in ssn_pattern.finditer(text):
                 val = m.group(0)
                 if val != "[REDACTED]":
                     triggered_policies.append({
@@ -125,11 +162,11 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
                         "username": username,
                         "timestamp": datetime.now()
                     })
-            text = re.sub(ssn_pattern, "[REDACTED]", text)
+            text = ssn_pattern.sub("[REDACTED]", text)
 
             # Raw 9 digit SSN
-            ssn_raw_pattern = r"\b\d{9}\b"
-            for m in re.finditer(ssn_raw_pattern, text):
+            ssn_raw_pattern = GDPR_PATTERNS["ssn_raw"]
+            for m in ssn_raw_pattern.finditer(text):
                 val = m.group(0)
                 if val != "[REDACTED]":
                     triggered_policies.append({
@@ -140,11 +177,11 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
                         "username": username,
                         "timestamp": datetime.now()
                     })
-            text = re.sub(ssn_raw_pattern, "[REDACTED]", text)
+            text = ssn_raw_pattern.sub("[REDACTED]", text)
 
             # Passport Pattern (e.g. A1234567, P12345678, or generic 1-2 letters + 7-9 digits)
-            passport_pattern = r"\b[A-Za-z]{1,2}\d{7,9}\b"
-            for m in re.finditer(passport_pattern, text):
+            passport_pattern = GDPR_PATTERNS["passport"]
+            for m in passport_pattern.finditer(text):
                 val = m.group(0)
                 if val != "[REDACTED]":
                     triggered_policies.append({
@@ -155,11 +192,11 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
                         "username": username,
                         "timestamp": datetime.now()
                     })
-            text = re.sub(passport_pattern, "[REDACTED]", text)
+            text = passport_pattern.sub("[REDACTED]", text)
 
             # Keyword-based backup check (e.g. passport number A1234567)
-            kw_pattern = r"\b(passport|ssn|social security number)(\s+(?:number|no|code|is|of|:)?\s*)([A-Za-z0-9_-]+)\b"
-            for m in re.finditer(kw_pattern, text, flags=re.IGNORECASE):
+            kw_pattern = GDPR_PATTERNS["keyword"]
+            for m in kw_pattern.finditer(text):
                 val = m.group(3)
                 if val != "[REDACTED]":
                     triggered_policies.append({
@@ -170,7 +207,7 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
                         "username": username,
                         "timestamp": datetime.now()
                     })
-            text = re.sub(kw_pattern, r"\1\2[REDACTED]", text, flags=re.IGNORECASE)
+            text = kw_pattern.sub(r"\1\2[REDACTED]", text)
 
     # HIPAA compliance check (medical record, diagnosis, health history, patient identifiers)
     if "HIPAA" in active_types:
@@ -178,8 +215,8 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
         rules = hipaa_p.get("rules", {})
         if rules.get("pii_redaction", False):
             # Medical Record ID pattern (MR-12345, EMR-45678, Patient IDs like PT-12345 or PID-12345)
-            mr_pattern = r"\b(?:MR|EMR|PT|PID|PATIENT|PATIENTID)[- ]?\d{4,8}\b"
-            for m in re.finditer(mr_pattern, text, flags=re.IGNORECASE):
+            mr_pattern = HIPAA_PATTERNS["medical_record"]
+            for m in mr_pattern.finditer(text):
                 val = m.group(0)
                 if val != "[REDACTED]":
                     triggered_policies.append({
@@ -190,11 +227,11 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
                         "username": username,
                         "timestamp": datetime.now()
                     })
-            text = re.sub(mr_pattern, "[REDACTED]", text, flags=re.IGNORECASE)
+            text = mr_pattern.sub("[REDACTED]", text)
 
             # Keyword-context match (medical record 98765, diagnosis is diabetes, health history includes asthma)
-            hipaa_pattern = r"\b(medical record|diagnosis|diagnoses|health history|patient identifier|patient identifiers)(\s+(?:number|no|code|is|of|includes|:)?\s*)([A-Za-z0-9_-]+)\b"
-            for m in re.finditer(hipaa_pattern, text, flags=re.IGNORECASE):
+            hipaa_pattern = HIPAA_PATTERNS["keyword"]
+            for m in hipaa_pattern.finditer(text):
                 val = m.group(3)
                 if val != "[REDACTED]":
                     triggered_policies.append({
@@ -205,7 +242,7 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
                         "username": username,
                         "timestamp": datetime.now()
                     })
-            text = re.sub(hipaa_pattern, r"\1\2[REDACTED]", text, flags=re.IGNORECASE)
+            text = hipaa_pattern.sub(r"\1\2[REDACTED]", text)
 
     # SOC2 compliance check (credit card, bank routing, pin number)
     if "SOC2" in active_types:
@@ -214,8 +251,8 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
         if rules.get("pii_redaction", False):
             # Card-brand specific credit card check
             # Visa, Mastercard, Amex, Discover pattern matching
-            cc_regex = r"\b(?:4\d{12}(?:\d{3})?|5[1-5]\d{14}|3[47]\d{13}|6(?:011|5\d{2}|4[4-9]\d{1})\d{12})\b"
-            for m in re.finditer(cc_regex, text):
+            cc_regex = SOC2_PATTERNS["card_brand"]
+            for m in cc_regex.finditer(text):
                 val = m.group(0)
                 if val != "[REDACTED]":
                     triggered_policies.append({
@@ -226,11 +263,11 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
                         "username": username,
                         "timestamp": datetime.now()
                     })
-            text = re.sub(cc_regex, "[REDACTED]", text)
+            text = cc_regex.sub("[REDACTED]", text)
 
             # Standard Credit Card Pattern (with dashes/spaces)
-            cc_pattern1 = r"\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b"
-            for m in re.finditer(cc_pattern1, text):
+            cc_pattern1 = SOC2_PATTERNS["card_delimited"]
+            for m in cc_pattern1.finditer(text):
                 val = m.group(0)
                 if val != "[REDACTED]":
                     triggered_policies.append({
@@ -241,10 +278,10 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
                         "username": username,
                         "timestamp": datetime.now()
                     })
-            text = re.sub(cc_pattern1, "[REDACTED]", text)
+            text = cc_pattern1.sub("[REDACTED]", text)
 
-            cc_pattern2 = r"\b\d{13,19}\b"
-            for m in re.finditer(cc_pattern2, text):
+            cc_pattern2 = SOC2_PATTERNS["card_digits"]
+            for m in cc_pattern2.finditer(text):
                 val = m.group(0)
                 if val != "[REDACTED]":
                     triggered_policies.append({
@@ -255,11 +292,11 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
                         "username": username,
                         "timestamp": datetime.now()
                     })
-            text = re.sub(cc_pattern2, "[REDACTED]", text)
+            text = cc_pattern2.sub("[REDACTED]", text)
 
             # Bank routing: 9 digit ABA routing number
-            routing_pattern = r"\b\d{9}\b"
-            for m in re.finditer(routing_pattern, text):
+            routing_pattern = SOC2_PATTERNS["routing"]
+            for m in routing_pattern.finditer(text):
                 val = m.group(0)
                 if val != "[REDACTED]":
                     triggered_policies.append({
@@ -270,11 +307,11 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
                         "username": username,
                         "timestamp": datetime.now()
                     })
-            text = re.sub(routing_pattern, "[REDACTED]", text)
+            text = routing_pattern.sub("[REDACTED]", text)
 
             # Keyword-context match for Bank routing and PIN numbers
-            soc2_pattern = r"\b(bank routing|routing number|pin|pin number|personal identification number)(\s+(?:number|no|code|is|of|includes|:)?\s*)([A-Za-z0-9_-]+)\b"
-            for m in re.finditer(soc2_pattern, text, flags=re.IGNORECASE):
+            soc2_pattern = SOC2_PATTERNS["keyword"]
+            for m in soc2_pattern.finditer(text):
                 val = m.group(3)
                 if val != "[REDACTED]":
                     triggered_policies.append({
@@ -285,11 +322,11 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
                         "username": username,
                         "timestamp": datetime.now()
                     })
-            text = re.sub(soc2_pattern, r"\1\2[REDACTED]", text, flags=re.IGNORECASE)
+            text = soc2_pattern.sub(r"\1\2[REDACTED]", text)
 
             # PIN Numbers: 4-6 digit financial PINs when preceded or near PIN keywords
-            pin_near_pattern = r"\b(?:pin|pin number|personal identification number)\b.{1,15}\b(\d{4,6})\b"
-            for m in re.finditer(pin_near_pattern, text, flags=re.IGNORECASE):
+            pin_near_pattern = SOC2_PATTERNS["pin_near"]
+            for m in pin_near_pattern.finditer(text):
                 val = m.group(1)
                 if val != "[REDACTED]":
                     triggered_policies.append({
@@ -300,11 +337,9 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
                         "username": username,
                         "timestamp": datetime.now()
                     })
-            text = re.sub(
-                pin_near_pattern,
+            text = pin_near_pattern.sub(
                 lambda m: m.group(0).replace(m.group(1), "[REDACTED]"),
-                text,
-                flags=re.IGNORECASE
+                text
             )
 
     # ── API KEY / SECRET TOKEN DETECTION (always active, baseline security) ──────
@@ -323,41 +358,38 @@ def redact_sensitive_data_rich(text: str, username: str = "admin_user", tenant_i
 
     # Email
     email_action = redaction_rules.get("email", "redact")
-    email_pattern = r"[\w\.-]+@[\w\.-]+\.\w+"
-    for m in re.finditer(email_pattern, text):
+    email_pattern = BASELINE_PATTERNS["email"]
+    for m in email_pattern.finditer(text):
         if "[REDACTED" not in m.group(0):
             record_baseline_trigger("PII Protection", "email", m.group(0))
-    text = re.sub(
-        email_pattern,
+    text = email_pattern.sub(
         lambda m: apply_redaction("email", m, email_action),
         text
     )
 
     # Aadhaar
     aadhaar_action = redaction_rules.get("aadhaar", "redact")
-    aadhaar_pattern = r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}\b"
-    for m in re.finditer(aadhaar_pattern, text):
+    aadhaar_pattern = BASELINE_PATTERNS["aadhaar"]
+    for m in aadhaar_pattern.finditer(text):
         if "[REDACTED" not in m.group(0):
             record_baseline_trigger("PII Protection", "aadhaar", m.group(0))
-    text = re.sub(
-        aadhaar_pattern,
+    text = aadhaar_pattern.sub(
         lambda m: apply_redaction("aadhaar", m, aadhaar_action),
         text
     )
 
     # Phone
     phone_action = redaction_rules.get("phone", "redact")
-    phone_pattern = r"\b\d{10}\b"
-    for m in re.finditer(phone_pattern, text):
+    phone_pattern = BASELINE_PATTERNS["phone"]
+    for m in phone_pattern.finditer(text):
         if "[REDACTED" not in m.group(0):
             record_baseline_trigger("PII Protection", "phone", m.group(0))
-    text = re.sub(
-        phone_pattern,
+    text = phone_pattern.sub(
         lambda m: apply_redaction("phone", m, phone_action),
         text
     )
 
-    triggered_policies = sanitize_finding_metadata(triggered_policies)
+    triggered_policies = sanitize_finding_metadata(triggered_policies, detector=strong_detector)
 
     # Standardize all target redactions to [REDACTED] for triggered compliance fields
     if triggered_policies:
@@ -390,8 +422,21 @@ def _stream_holdback_size() -> int:
 
 
 def _redact_stream_buffer(buffer: str, username: str, tenant_id=None):
-    redacted, findings = redact_sensitive_data_rich(buffer, username=username, tenant_id=tenant_id)
+    redacted, findings = redact_sensitive_data_rich(buffer, username=username, tenant_id=tenant_id, use_presidio=False)
     return redacted or "", findings or []
+
+
+def _stream_needs_redaction_scan(value: str) -> bool:
+    lowered = value.lower()
+    if any(hint in lowered for hint in STREAM_HINT_WORDS):
+        return True
+    digit_count = 0
+    for char in value:
+        if char.isdigit():
+            digit_count += 1
+            if digit_count >= 4:
+                return True
+    return False
 
 
 def stream_redact_sensitive_tokens(token_stream, username: str = "admin_user", tenant_id=None, holdback_chars: int = None):
@@ -411,6 +456,14 @@ def stream_redact_sensitive_tokens(token_stream, username: str = "admin_user", t
             continue
         pending += str(token)
         if len(pending) <= holdback:
+            continue
+
+        if not _stream_needs_redaction_scan(pending):
+            slice_idx = len(pending) - holdback
+            yielded = pending[:slice_idx]
+            pending = pending[slice_idx:]
+            if yielded:
+                yield yielded
             continue
 
         redacted_pending, _ = _redact_stream_buffer(pending, username, tenant_id)
@@ -440,6 +493,14 @@ async def async_stream_redact_sensitive_tokens(token_stream, username: str = "ad
             continue
         pending += str(token)
         if len(pending) <= holdback:
+            continue
+
+        if not _stream_needs_redaction_scan(pending):
+            slice_idx = len(pending) - holdback
+            yielded = pending[:slice_idx]
+            pending = pending[slice_idx:]
+            if yielded:
+                yield yielded
             continue
 
         redacted_pending, _ = _redact_stream_buffer(pending, username, tenant_id)

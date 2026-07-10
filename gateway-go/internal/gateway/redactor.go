@@ -188,7 +188,12 @@ func (r *StreamingRedactor) Stats() RedactionStats {
 
 func (r *StreamingRedactor) redactText(input string) string {
 	output := input
+	lowerInput := strings.ToLower(input)
+	digitCount := countDigits(input)
 	for _, pattern := range r.patterns {
+		if !redactionPatternMayMatch(pattern.trigger, input, lowerInput, digitCount) {
+			continue
+		}
 		matches := pattern.re.FindAllStringIndex(output, -1)
 		if len(matches) == 0 {
 			continue
@@ -198,6 +203,89 @@ func (r *StreamingRedactor) redactText(input string) string {
 		output = pattern.re.ReplaceAllString(output, pattern.replacement)
 	}
 	return output
+}
+
+func countDigits(value string) int {
+	count := 0
+	for _, char := range value {
+		if char >= '0' && char <= '9' {
+			count++
+		}
+	}
+	return count
+}
+
+func redactionPatternMayMatch(trigger string, input string, lowerInput string, digitCount int) bool {
+	switch trigger {
+	case "jwt":
+		return strings.Contains(lowerInput, "eyj") && strings.Count(input, ".") >= 2
+	case "aws_access_key":
+		return strings.Contains(input, "AKIA") || strings.Contains(input, "ASIA")
+	case "anthropic_api_key":
+		return strings.Contains(lowerInput, "sk-ant-")
+	case "openai_api_key":
+		return strings.Contains(lowerInput, "sk-")
+	case "sendgrid_api_key":
+		return strings.Contains(input, "SG.")
+	case "google_api_key":
+		return strings.Contains(input, "AIza")
+	case "authclaw_api_key":
+		return strings.Contains(lowerInput, "ac_")
+	case "bearer_token":
+		return strings.Contains(lowerInput, "bearer")
+	case "azure_openai_key":
+		return strings.Contains(lowerInput, "azure")
+	case "cohere_api_key":
+		return strings.Contains(lowerInput, "cohere")
+	case "secret_assignment":
+		if !strings.ContainsAny(input, ":=") {
+			return false
+		}
+		return strings.Contains(lowerInput, "api") ||
+			strings.Contains(lowerInput, "key") ||
+			strings.Contains(lowerInput, "secret") ||
+			strings.Contains(lowerInput, "token") ||
+			strings.Contains(lowerInput, "password") ||
+			strings.Contains(lowerInput, "client")
+	case "email":
+		return strings.Contains(input, "@")
+	case "credit_card":
+		return digitCount >= 13
+	case "phone":
+		return digitCount >= 10
+	case "ssn":
+		return digitCount >= 9 && strings.Contains(input, "-")
+	case "medical_identifier":
+		return strings.Contains(lowerInput, "mrn") ||
+			strings.Contains(lowerInput, "medical record") ||
+			strings.Contains(lowerInput, "patient id") ||
+			strings.Contains(lowerInput, "patient identifier")
+	case "phi_context":
+		return strings.Contains(lowerInput, "patient") ||
+			strings.Contains(lowerInput, "diagnosis") ||
+			strings.Contains(lowerInput, "prescription") ||
+			strings.Contains(lowerInput, "treatment plan") ||
+			strings.Contains(lowerInput, "health history")
+	case "prompt_injection":
+		return strings.Contains(lowerInput, "ignore") ||
+			strings.Contains(lowerInput, "reveal system prompt") ||
+			strings.Contains(lowerInput, "show internal") ||
+			strings.Contains(lowerInput, "developer mode") ||
+			strings.Contains(lowerInput, "jailbreak") ||
+			strings.Contains(lowerInput, "bypass policy")
+	case "system_prompt":
+		return strings.Contains(lowerInput, "system prompt") ||
+			strings.Contains(lowerInput, "developer message") ||
+			strings.Contains(lowerInput, "hidden instruction") ||
+			strings.Contains(lowerInput, "internal instruction")
+	case "hidden_metadata":
+		return strings.Contains(lowerInput, "hidden_metadata") ||
+			strings.Contains(lowerInput, "policy_sensitive_metadata") ||
+			strings.Contains(lowerInput, "internal_policy") ||
+			strings.Contains(lowerInput, "system_prompt")
+	default:
+		return true
+	}
 }
 
 func safeFlushLength(value string, carryBytes int) int {
