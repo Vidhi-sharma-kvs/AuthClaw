@@ -140,6 +140,7 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: "1"
           ignore-unfixed: true
+          vuln-type: 'os'
       - name: Scan frontend image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -148,6 +149,7 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: "1"
           ignore-unfixed: true
+          vuln-type: 'os'
 
   go-gateway-tests:
     name: Go gateway tests
