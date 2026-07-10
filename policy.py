@@ -542,10 +542,13 @@ def enforce_policy(text: str) -> tuple:
     if opa_result and not opa_result.get("allowed", True):
         return True, opa_result.get("reason", "OPA policy decision"), opa_result.get("category", "opa")
 
-    result = PolicyEngine().evaluate(text)
-    if result.action == ACTION_BLOCK:
-        category = result.triggered_categories[0].lower() if result.triggered_categories else "policy"
-        return True, result.reason, category
+    try:
+        result = PolicyEngine().evaluate(text)
+        if result.action == ACTION_BLOCK:
+            category = result.triggered_categories[0].lower() if result.triggered_categories else "policy"
+            return True, result.reason, category
+    except Exception as exc:
+        logger.warning("Database unavailable for policy evaluation, using offline fallback: %s", exc)
 
     # 1. Clean and normalize the text for robust pattern matching
     cleaned = text.lower()
