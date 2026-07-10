@@ -317,8 +317,17 @@ class ComplianceEvidenceEngine:
         frameworks["corpus_version"] = self.corpus_version
         return frameworks
 
-    def evidence_export_rows(self, tenant_id: int, framework: Optional[str] = None, control_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        self.calculate_scores(tenant_id)
+    def evidence_export_rows(
+        self,
+        tenant_id: int,
+        framework: Optional[str] = None,
+        control_id: Optional[str] = None,
+        *,
+        refresh_scores: bool = True,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        if refresh_scores:
+            self.calculate_scores(tenant_id)
         sql = """
             SELECT framework, control_id, source_type, source_id, evidence_hash,
                    reason, impact, created_at, metadata
@@ -333,6 +342,9 @@ class ComplianceEvidenceEngine:
             sql += " AND control_id = :control_id"
             params["control_id"] = control_id
         sql += " ORDER BY framework, control_id, created_at DESC"
+        if limit:
+            sql += " LIMIT :limit"
+            params["limit"] = max(1, min(int(limit), 1000))
         with engine.connect() as conn:
             rows = conn.execute(text(sql), params).fetchall()
         return [dict(row._mapping) for row in rows]
@@ -345,13 +357,16 @@ class ComplianceEvidenceEngine:
             writer.writerow([row["framework"], row["control_id"], row["source_type"], row["source_id"], row["evidence_hash"], row["reason"], row["impact"], row["created_at"]])
         return output.getvalue().encode("utf-8")
 
-    def score_changes(self, tenant_id: int, framework: Optional[str] = None) -> List[Dict[str, Any]]:
+    def score_changes(self, tenant_id: int, framework: Optional[str] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         params = {"tenant_id": tenant_id}
         sql = "SELECT * FROM compliance_score_changes WHERE tenant_id = :tenant_id"
         if framework:
             sql += " AND lower(framework) = lower(:framework)"
             params["framework"] = framework
         sql += " ORDER BY created_at DESC, id DESC"
+        if limit:
+            sql += " LIMIT :limit"
+            params["limit"] = max(1, min(int(limit), 500))
         with engine.connect() as conn:
             rows = conn.execute(text(sql), params).fetchall()
         return [dict(row._mapping) for row in rows]

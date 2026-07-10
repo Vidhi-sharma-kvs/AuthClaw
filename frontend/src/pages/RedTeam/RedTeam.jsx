@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, AlertTriangle, Play, RefreshCw, ShieldAlert, Target } from 'lucide-react';
 import apiClient from '../../services/api';
 import { Button, DataTable, EmptyState, GlassCard, MetricCard, StatusBadge } from '../../components/Common/DesignSystem';
@@ -10,13 +10,16 @@ const RedTeam = () => {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const { addToast } = useToast();
+  const mountedRef = useRef(false);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     const [reportRes, historyRes] = await Promise.allSettled([
       apiClient.get('/redteam/report'),
       apiClient.get('/redteam/history?limit=100'),
     ]);
+
+    if (!mountedRef.current) return;
 
     if (reportRes.status === 'fulfilled') {
       setReport(reportRes.value.data);
@@ -33,11 +36,15 @@ const RedTeam = () => {
     }
 
     setLoading(false);
-  };
+  }, [addToast]);
 
   useEffect(() => {
+    mountedRef.current = true;
     loadData();
-  }, []);
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [loadData]);
 
   const runRedTeam = async () => {
     setRunning(true);
@@ -125,7 +132,12 @@ const RedTeam = () => {
         </GlassCard>
       </div>
 
-      <DataTable columns={columns} data={history} loading={loading} />
+      <DataTable
+        columns={columns}
+        data={history}
+        loading={loading}
+        emptyMessage="No probe history has been recorded yet."
+      />
     </div>
   );
 };

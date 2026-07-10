@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import apiClient from '../services/api';
 
 const AuthContext = createContext(null);
@@ -10,8 +10,9 @@ export const AuthProvider = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Auto-refresh timer reference
-  const [refreshTimeoutId, setRefreshTimeoutId] = useState(null);
+  const refreshTimeoutRef = useRef(null);
+  const refreshPromiseRef = useRef(null);
+  const refreshAccessTokenRef = useRef(null);
 
   // Setup request interceptor to append JWT Bearer token
   useEffect(() => {
@@ -30,19 +31,23 @@ export const AuthProvider = ({ children }) => {
     };
   }, [accessToken]);
 
+  const clearRefreshTimer = useCallback(() => {
+    if (refreshTimeoutRef.current) {
+      clearTimeout(refreshTimeoutRef.current);
+      refreshTimeoutRef.current = null;
+    }
+  }, []);
+
   const logout = useCallback(() => {
+    clearRefreshTimer();
+    refreshPromiseRef.current = null;
     setUser(null);
     setAccessToken(null);
     setMfaSessionId(null);
     setIsAuthenticated(false);
     localStorage.removeItem('authclaw_refresh_token');
     localStorage.removeItem('authclaw_user');
-    
-    if (refreshTimeoutId) {
-      clearTimeout(refreshTimeoutId);
-      setRefreshTimeoutId(null);
-    }
-  }, [refreshTimeoutId]);
+  }, [clearRefreshTimer]);
 
   // Decodes JWT payload (non-secured frontend extract helper for expiry check)
   const decodeJwtPayload = (token) => {
@@ -61,6 +66,50 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const scheduleRefresh = useCallback((token) => {
+    clearRefreshTimer();
+    const payload = decodeJwtPayload(token);
+    if (payload && payload.exp) {
+      const expMs = payload.exp * 1000;
+      const delay = expMs - Date.now() - 60000; // Refresh 1 minute before expiry
+      refreshTimeoutRef.current = setTimeout(() => {
+        refreshAccessTokenRef.current?.();
+      }, Math.max(delay, 30000));
+    }
+  }, [clearRefreshTimer]);
+
+  const refreshAccessToken = useCallback(async () => {
+    if (refreshPromiseRef.current) {
+      return refreshPromiseRef.current;
+    }
+    const token = localStorage.getItem('authclaw_refresh_token');
+    if (!token) {
+      logout();
+      return null;
+    }
+
+    refreshPromiseRef.current = (async () => {
+      const response = await apiClient.post('/auth/refresh', { refresh_token: token });
+      const { access_token } = response.data;
+      setAccessToken(access_token);
+      scheduleRefresh(access_token);
+      return access_token;
+    })();
+
+    try {
+      return await refreshPromiseRef.current;
+    } catch (e) {
+      logout();
+      return null;
+    } finally {
+      refreshPromiseRef.current = null;
+    }
+  }, [logout, scheduleRefresh]);
+
+  useEffect(() => {
+    refreshAccessTokenRef.current = refreshAccessToken;
+  }, [refreshAccessToken]);
+
   const handleAuthSuccess = useCallback((data) => {
     const { access_token, refresh_token, user: userData } = data;
     setAccessToken(access_token);
@@ -70,52 +119,8 @@ export const AuthProvider = ({ children }) => {
 
     localStorage.setItem('authclaw_refresh_token', refresh_token);
     localStorage.setItem('authclaw_user', JSON.stringify(userData));
-
-    // Schedule auto refresh before token expires (exp is in seconds)
-    const payload = decodeJwtPayload(access_token);
-    if (payload && payload.exp) {
-      const expMs = payload.exp * 1000;
-      const delay = expMs - Date.now() - 60000; // Refresh 1 minute before expiry
-      
-      if (refreshTimeoutId) clearTimeout(refreshTimeoutId);
-
-      const timerId = setTimeout(() => {
-        refreshAccessToken();
-      }, Math.max(delay, 1000));
-      setRefreshTimeoutId(timerId);
-    }
-  }, [refreshTimeoutId]);
-
-  const refreshAccessToken = async () => {
-    const token = localStorage.getItem('authclaw_refresh_token');
-    if (!token) {
-      logout();
-      return null;
-    }
-
-    try {
-      const response = await apiClient.post('/auth/refresh', { refresh_token: token });
-      const { access_token } = response.data;
-      setAccessToken(access_token);
-
-      const payload = decodeJwtPayload(access_token);
-      if (payload && payload.exp) {
-        const expMs = payload.exp * 1000;
-        const delay = expMs - Date.now() - 60000;
-        
-        if (refreshTimeoutId) clearTimeout(refreshTimeoutId);
-        
-        const timerId = setTimeout(() => {
-          refreshAccessToken();
-        }, Math.max(delay, 1000));
-        setRefreshTimeoutId(timerId);
-      }
-      return access_token;
-    } catch (e) {
-      logout();
-      return null;
-    }
-  };
+    scheduleRefresh(access_token);
+  }, [scheduleRefresh]);
 
   // Check existing session on boot
   useEffect(() => {
@@ -134,7 +139,8 @@ export const AuthProvider = ({ children }) => {
     };
 
     initializeAuth();
-  }, []);
+    return clearRefreshTimer;
+  }, [clearRefreshTimer, refreshAccessToken]);
 
   const login = async (username, password) => {
     try {

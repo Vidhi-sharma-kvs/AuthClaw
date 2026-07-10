@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileCheck2, Filter, RefreshCw, ShieldCheck } from 'lucide-react';
 import apiClient from '../../services/api';
 import { Button, DataTable, GlassCard, MetricCard, StatusBadge, inputStyles, labelStyles } from '../../components/Common/DesignSystem';
@@ -11,23 +11,28 @@ const FrameworkExplorer = () => {
   const [payload, setPayload] = useState(null);
   const [loading, setLoading] = useState(true);
   const { addToast } = useToast();
+  const mountedRef = useRef(false);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const suffix = framework ? `?framework=${encodeURIComponent(framework)}` : '';
       const response = await apiClient.get(`/compliance/framework-explorer${suffix}`);
-      setPayload(response.data);
+      if (mountedRef.current) setPayload(response.data);
     } catch (error) {
       addToast(error.response?.data?.detail || 'Failed to load framework explorer.', 'error');
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
-  };
+  }, [addToast, framework]);
 
   useEffect(() => {
+    mountedRef.current = true;
     loadData();
-  }, [framework]);
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [loadData]);
 
   const controls = payload?.controls || [];
   const averageScore = useMemo(() => {
@@ -73,7 +78,12 @@ const FrameworkExplorer = () => {
         </div>
       </GlassCard>
 
-      <DataTable columns={columns} data={controls} loading={loading} />
+      <DataTable
+        columns={columns}
+        data={controls}
+        loading={loading}
+        emptyMessage="No framework controls or evidence are available for this tenant yet."
+      />
 
       <GlassCard hover={false}>
         <h2 className="text-sm font-bold text-[#0E1726] font-display mb-4">Evidence Detail</h2>

@@ -142,6 +142,7 @@ export const DataTable = ({
   columns,
   data,
   loading = false,
+  emptyMessage = 'No records found.',
   onSort,
   sortField,
   onRowClick,
@@ -184,7 +185,7 @@ export const DataTable = ({
             ) : data.length === 0 ? (
               <tr>
                 <td colSpan={columns.length} className="px-6 py-12 text-center text-[#6B7488] italic">
-                  No records found.
+                  {emptyMessage}
                 </td>
               </tr>
             ) : (

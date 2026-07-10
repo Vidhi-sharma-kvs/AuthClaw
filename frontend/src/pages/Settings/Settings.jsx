@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import apiClient from '../../services/api';
 import { 
   Users, 
@@ -24,6 +24,7 @@ const Settings = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const { addToast } = useToast();
+  const mountedRef = useRef(false);
 
   // User Role Form State
   const [userModalOpen, setUserModalOpen] = useState(false);
@@ -41,17 +42,23 @@ const Settings = () => {
     'Auditor': 'audit_read',
     'Viewer': 'read_only'
   };
-  const existingUserEmails = users.map((user) => String(user.username || '').toLowerCase());
+  const existingUserEmails = useMemo(
+    () => users.map((user) => String(user.username || '').toLowerCase()),
+    [users]
+  );
   const normalizedUserEmail = userForm.username.trim().toLowerCase();
   const validWorkEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedUserEmail);
   const selectedUserExists = existingUserEmails.includes(normalizedUserEmail);
   const canSubmitUserRole = validWorkEmail && selectedUserExists;
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
+    setLoading(true);
     const [tenantRes, userRes] = await Promise.allSettled([
       apiClient.get('/tenants'),
       apiClient.get('/access-control/users'),
     ]);
+
+    if (!mountedRef.current) return;
 
     if (tenantRes.status === 'fulfilled') {
       setTenants(tenantRes.value.data);
@@ -68,11 +75,15 @@ const Settings = () => {
     }
 
     setLoading(false);
-  };
+  }, [addToast]);
 
   useEffect(() => {
+    mountedRef.current = true;
     fetchData();
-  }, []);
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [fetchData]);
 
   // RBAC User handlers
   const handleUserSubmit = async (e) => {
@@ -280,6 +291,7 @@ const Settings = () => {
             columns={userColumns}
             data={users}
             loading={loading}
+            emptyMessage="No tenant users are available yet."
           />
         </div>
       )}

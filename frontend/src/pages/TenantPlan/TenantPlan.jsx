@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { CreditCard, Gauge, RefreshCw, Save, ShieldCheck } from 'lucide-react';
 import apiClient from '../../services/api';
 import { Button, DataTable, GlassCard, MetricCard, StatusBadge, inputStyles, labelStyles } from '../../components/Common/DesignSystem';
@@ -13,23 +13,30 @@ const TenantPlan = () => {
   const [saving, setSaving] = useState(false);
   const { addToast } = useToast();
   const { user } = useAuth();
+  const mountedRef = useRef(false);
 
-  const loadPlan = async () => {
+  const loadPlan = useCallback(async () => {
     setLoading(true);
     try {
       const response = await apiClient.get('/tenant/plan');
-      setPlan(response.data);
-      setSelectedPlan(response.data.current_plan || 'enterprise');
+      if (mountedRef.current) {
+        setPlan(response.data);
+        setSelectedPlan(response.data.current_plan || 'enterprise');
+      }
     } catch (error) {
       addToast(error.response?.data?.detail || 'Failed to load tenant plan.', 'error');
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
-  };
+  }, [addToast]);
 
   useEffect(() => {
+    mountedRef.current = true;
     loadPlan();
-  }, []);
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [loadPlan]);
 
   const savePlan = async () => {
     setSaving(true);
@@ -109,7 +116,12 @@ const TenantPlan = () => {
 
       <GlassCard hover={false}>
         <h2 className="text-sm font-bold text-[#0E1726] font-display mb-4">Upgrade History</h2>
-        <DataTable columns={historyColumns} data={plan?.upgrade_history || []} loading={loading} />
+        <DataTable
+          columns={historyColumns}
+          data={plan?.upgrade_history || []}
+          loading={loading}
+          emptyMessage="No plan upgrade history exists yet."
+        />
       </GlassCard>
     </div>
   );

@@ -4814,6 +4814,50 @@ def get_compliance_framework_scores(
     return ComplianceEvidenceEngine().calculate_scores(tenant_id)
 
 
+def _compact_framework_evidence(row: Dict[str, Any]) -> Dict[str, Any]:
+    created_at = row.get("created_at")
+    reason = str(row.get("reason") or "")
+    return {
+        "framework": row.get("framework"),
+        "control_id": row.get("control_id"),
+        "source_type": row.get("source_type"),
+        "source_id": row.get("source_id"),
+        "evidence_hash": row.get("evidence_hash"),
+        "reason": reason[:500],
+        "impact": row.get("impact"),
+        "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
+    }
+
+
+def _compact_framework_scores(scores: Dict[str, Any]) -> Dict[str, Any]:
+    compact: Dict[str, Any] = {}
+    for key, value in scores.items():
+        if key.endswith("_controls") and isinstance(value, dict):
+            compact[key] = {
+                "passed": value.get("passed", 0),
+                "failed": value.get("failed", 0),
+                "watch": value.get("watch", 0),
+                "items": [
+                    {
+                        "framework": item.get("framework"),
+                        "control_id": item.get("control_id"),
+                        "title": item.get("title"),
+                        "score": item.get("score"),
+                        "status": item.get("status"),
+                        "evidence_count": item.get("evidence_count", 0),
+                        "negative_findings": item.get("negative_findings", 0),
+                        "reason": item.get("reason"),
+                        "source_event": item.get("source_event"),
+                        "calculated_at": item.get("calculated_at"),
+                    }
+                    for item in value.get("items", [])
+                ],
+            }
+        else:
+            compact[key] = value
+    return compact
+
+
 @app.get("/compliance/framework-explorer")
 def get_compliance_framework_explorer(
     framework: Optional[str] = None,
@@ -4836,16 +4880,16 @@ def get_compliance_framework_explorer(
     except Exception:
         scores = {}
     try:
-        evidence_rows = engine.evidence_export_rows(tenant_id, framework=framework)
+        evidence_rows = engine.evidence_export_rows(tenant_id, framework=framework, refresh_scores=False, limit=300)
     except Exception:
         evidence_rows = []
     try:
-        changes = engine.score_changes(tenant_id, framework=framework)
+        changes = engine.score_changes(tenant_id, framework=framework, limit=50)
     except Exception:
         changes = []
     evidence_by_control: Dict[str, List[Dict[str, Any]]] = {}
     for row in evidence_rows:
-        evidence_by_control.setdefault(row["control_id"], []).append(row)
+        evidence_by_control.setdefault(row["control_id"], []).append(_compact_framework_evidence(row))
     score_items: Dict[str, Dict[str, Any]] = {}
     for key, value in scores.items():
         if key.endswith("_controls") and isinstance(value, dict):
@@ -4855,7 +4899,7 @@ def get_compliance_framework_explorer(
         "tenant_id": tenant_id,
         "framework_filter": framework,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "framework_scores": scores,
+        "framework_scores": _compact_framework_scores(scores),
         "controls": [
             {
                 **control,
